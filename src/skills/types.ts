@@ -55,24 +55,6 @@ export interface Skill {
   unavailableReason?: string | undefined;
 }
 
-export interface ToolCall {
-  /** The tool/command to execute */
-  tool: string;
-
-  /** Arguments or the full command */
-  args: string;
-
-  /** Whether this requires user approval */
-  requiresApproval?: boolean;
-}
-
-export interface ToolResult {
-  success: boolean;
-  output?: string | undefined;
-  error?: string | undefined;
-  exitCode?: number | undefined;
-}
-
 export interface SkillRegistry {
   /** All loaded skills */
   skills: Map<string, Skill>;
