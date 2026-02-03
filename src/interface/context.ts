@@ -6,7 +6,7 @@
 
 import type { Skill } from '../skills/types.js';
 import { buildSystemPrompt, type PromptBuilderOptions, type Channel, type PromptMode } from './prompt-builder.js';
-import type { Session, ConversationMessage } from './session.js';
+import { getMessageText, type Session, type ConversationMessage } from './session.js';
 
 export interface ContextConfig {
   /** Maximum tokens for context (rough estimate: 1 token ≈ 4 chars) */
@@ -66,13 +66,17 @@ export function estimateTokens(text: string): number {
 
 /**
  * Format a conversation message for context
+ * Handles both string content and content block arrays
  */
 export function formatMessage(message: ConversationMessage, includeTimestamp = false): string {
   const roleLabel = message.role === 'user' ? 'User' : 'Assistant';
   const senderNote = message.sender ? ` (${message.sender})` : '';
   const timestamp = includeTimestamp ? ` [${message.timestamp}]` : '';
 
-  return `${roleLabel}${senderNote}${timestamp}: ${message.content}`;
+  // Extract text content (handles both string and content blocks)
+  const textContent = getMessageText(message);
+
+  return `${roleLabel}${senderNote}${timestamp}: ${textContent}`;
 }
 
 /**
