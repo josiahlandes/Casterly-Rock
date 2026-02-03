@@ -2,7 +2,9 @@
 
 This document provides a detailed, session-by-session breakdown for implementing native tool use and bundled architecture improvements.
 
-**Total Scope:** ~15-20 hours across 8-10 sessions
+**Total Scope:** ~12-15 hours across 8 sessions
+
+> **Note:** This is a clean migration—no backwards compatibility with text-parsing. The old `parseToolCalls()` approach will be removed entirely.
 
 ---
 
@@ -13,8 +15,8 @@ This document provides a detailed, session-by-session breakdown for implementing
 
 ### Objectives
 - Define all new TypeScript types for native tool use
-- Extend provider interface with capability discovery
-- Keep backwards compatible with existing code
+- Replace provider interface with tool-aware version
+- Remove text-parsing types
 
 ### Tasks
 
@@ -52,21 +54,29 @@ This document provides a detailed, session-by-session breakdown for implementing
 - [ ] Descriptions are clear about when to use
 - [ ] Include all required/optional parameters
 
-#### 1.3 Extend Provider Interface
+#### 1.3 Replace Provider Interface
 **File:** `src/providers/base.ts`
 
 ```typescript
-// Add to existing file:
-- ProviderCapabilities interface
-- getCapabilities() method (optional)
-- generateWithTools() method (optional)
-- supportsTools() helper
+// Replace existing interface:
+interface LlmProvider {
+  id: string;
+  kind: ProviderKind;
+  model: string;
+
+  // Remove old generate() - all generation uses tools now
+  generateWithTools(
+    request: GenerateRequest,
+    tools: ToolSchema[],
+    previousResults?: ToolResultMessage[]
+  ): Promise<GenerateWithToolsResponse>;
+}
 ```
 
 **Acceptance Criteria:**
-- [ ] Existing code still compiles
-- [ ] New methods are optional (?)
-- [ ] No breaking changes to LlmProvider interface
+- [ ] Old `generate()` method removed
+- [ ] All providers implement `generateWithTools()`
+- [ ] Types are clean and simple
 
 #### 1.4 Create Tool Registry
 **File:** `src/tools/schemas/registry.ts` (new)
@@ -123,8 +133,7 @@ This document provides a detailed, session-by-session breakdown for implementing
 - [ ] Correctly formats tool schemas for Ollama
 - [ ] Parses tool calls from response
 - [ ] Returns structured `GenerateWithToolsResponse`
-- [ ] Existing `generate()` method unchanged
-- [ ] Handles models without tool support gracefully
+- [ ] Throws clear error if model doesn't support tools
 
 #### 2.2 Add Ollama Chat Types
 **File:** `src/providers/ollama.ts`
@@ -200,7 +209,6 @@ Document:
 - [ ] Handles `tool_use` content blocks
 - [ ] Handles `tool_result` for multi-turn conversations
 - [ ] Returns structured `GenerateWithToolsResponse`
-- [ ] Existing `generate()` method unchanged
 
 #### 3.2 Add Claude Tool Types
 **File:** `src/providers/claude.ts`
@@ -252,25 +260,26 @@ messages: [
 
 ### Tasks
 
-#### 4.1 Refactor Tool Executor
+#### 4.1 Rewrite Tool Executor
 **File:** `src/tools/executor.ts`
 
 ```typescript
-// Add new functions:
+// Remove old text-parsing code, implement:
 - executeNativeToolCall(call: NativeToolCall): Promise<NativeToolResult>
 - createBashExecutor(options): NativeToolExecutor
+- executeCommand() (keep - used internally)
 
-// Keep existing:
-- parseToolCalls() (for fallback)
-- executeCommand()
-- executeToolCalls()
+// DELETE:
+- parseToolCalls()
+- looksLikeCommand()
+- Old ToolCall/ToolResult types
 ```
 
 **Acceptance Criteria:**
-- [ ] Handles `NativeToolCall` format
+- [ ] Handles `NativeToolCall` format only
 - [ ] Returns `NativeToolResult` with toolCallId
-- [ ] Preserves all safety checks
-- [ ] Existing text-parsing functions still work
+- [ ] Preserves all safety checks (BLOCKED_COMMANDS, etc.)
+- [ ] Old text-parsing code removed
 
 #### 4.2 Create Tool Orchestrator
 **File:** `src/tools/orchestrator.ts` (new)
@@ -317,96 +326,117 @@ Export new types and functions:
 
 ---
 
-## Session 5: Daemon Integration (Part 1)
+## Session 5: Daemon Integration
 **Estimated Time:** 2-2.5 hours
 **Dependencies:** Sessions 1-4
 **Risk:** Medium (core message loop changes)
 
 ### Objectives
-- Update daemon to detect tool-capable providers
-- Implement native tool loop alongside text parsing
-- Add feature flag for gradual rollout
+- Rewrite daemon message loop for native tool use
+- Remove all text-parsing code
+- Simplify the processing pipeline
 
 ### Tasks
 
-#### 5.1 Add Tool Use Detection
+#### 5.1 Rewrite Message Processing Loop
 **File:** `src/imessage/daemon.ts`
 
 ```typescript
-// In processMessage():
-const useNativeTools = provider.supportsTools?.() ?? false;
-```
+// Replace entire tool loop with clean native implementation:
+const toolRegistry = createToolRegistry();
+const orchestrator = createToolOrchestrator();
+orchestrator.registerExecutor(createBashExecutor());
 
-#### 5.2 Implement Native Tool Loop
-**File:** `src/imessage/daemon.ts`
+let previousResults: ToolResultMessage[] = [];
 
-```typescript
-// New tool loop for native tools:
-if (useNativeTools && provider.generateWithTools) {
-  // Native tool use path
-  const toolRegistry = createToolRegistry();
-  const orchestrator = createToolOrchestrator();
-  orchestrator.registerExecutor(createBashExecutor());
+while (iteration < maxToolIterations) {
+  iteration++;
 
-  while (iteration < maxToolIterations) {
-    const response = await provider.generateWithTools(
-      { prompt, systemPrompt },
-      toolRegistry.getTools(),
-      previousResults
-    );
+  const response = await provider.generateWithTools(
+    { prompt: conversationContext, systemPrompt },
+    toolRegistry.getTools(),
+    previousResults
+  );
 
-    if (response.toolCalls.length === 0) {
-      finalResponse = response.text;
-      break;
-    }
+  safeLogger.info('LLM response', {
+    provider: response.providerId,
+    toolCalls: response.toolCalls.length,
+    hasText: response.text.length > 0,
+    stopReason: response.stopReason,
+  });
 
-    const results = await orchestrator.executeAll(response.toolCalls);
-    previousResults = results.map(r => ({
-      callId: r.toolCallId,
-      result: r.success ? r.output : `Error: ${r.error}`
-    }));
+  if (response.toolCalls.length === 0) {
+    finalResponse = response.text;
+    break;
   }
-} else {
-  // Existing text-parsing path (fallback)
-  // ... keep existing code ...
+
+  // Execute all tool calls
+  const results = await orchestrator.executeAll(response.toolCalls);
+
+  // Log results
+  for (const result of results) {
+    safeLogger.info('Tool executed', {
+      toolCallId: result.toolCallId,
+      success: result.success,
+      outputLength: result.output?.length ?? 0,
+    });
+  }
+
+  // Set up for next iteration
+  previousResults = results.map(r => ({
+    callId: r.toolCallId,
+    result: r.success ? (r.output ?? 'Success') : `Error: ${r.error}`,
+  }));
+
+  // Include any text from response
+  if (response.text) {
+    finalResponse += response.text + '\n';
+  }
 }
 ```
 
-#### 5.3 Add Configuration Flag
-**File:** `src/config/schema.ts`
+#### 5.2 Remove Old Imports and Code
+**File:** `src/imessage/daemon.ts`
+
+Delete:
+- [ ] Import of `parseToolCalls`
+- [ ] All text-parsing tool extraction code
+- [ ] String concatenation for tool results
+- [ ] `filterMessageSendToolCalls` (rewrite for native format)
+
+#### 5.3 Update Tool Filter for Native Format
+**File:** `src/imessage/tool-filter.ts`
 
 ```typescript
-// Add to AppConfig:
-features?: {
-  useNativeTools?: boolean;  // Default: true
+// Rewrite to handle NativeToolCall:
+export function filterToolCalls(calls: NativeToolCall[]): {
+  allowed: NativeToolCall[];
+  blocked: NativeToolCall[];
 }
 ```
 
 #### 5.4 Update Logging
 **File:** `src/imessage/daemon.ts`
 
-Add detailed logging for native tool path:
-- [ ] Log when using native vs text-parsing
 - [ ] Log each tool call with name and input
-- [ ] Log tool results
-- [ ] Log iteration count
+- [ ] Log tool results with success/error
+- [ ] Log iteration count and stop reason
 
 ### Session 5 Deliverables
-- [ ] Daemon detects tool-capable providers
-- [ ] Native tool loop implemented
-- [ ] Fallback to text parsing works
-- [ ] Feature flag added
-- [ ] Commit: "feat(daemon): integrate native tool use loop"
+- [ ] Daemon uses native tool loop only
+- [ ] All text-parsing code removed
+- [ ] Tool filter updated
+- [ ] Commit: "feat(daemon): rewrite for native tool use"
 
 ---
 
-## Session 6: Daemon Integration (Part 2) & Testing
-**Estimated Time:** 2 hours
+## Session 6: Testing & System Prompt
+**Estimated Time:** 1.5-2 hours
 **Dependencies:** Session 5
-**Risk:** Medium
+**Risk:** Low
 
 ### Objectives
-- Complete daemon integration
+- Update system prompt for tool use
 - End-to-end testing
 - Fix issues found in testing
 
@@ -416,45 +446,36 @@ Add detailed logging for native tool path:
 **File:** `src/interface/prompt-builder.ts`
 
 ```typescript
-function buildCapabilitiesSection(skills: Skill[], useNativeTools: boolean): string {
-  if (useNativeTools) {
-    return `## Capabilities
+function buildCapabilitiesSection(skills: Skill[]): string {
+  return `## Capabilities
+
 You have access to tools that let you interact with the local system.
-When you need to perform an action, use the appropriate tool.
+When you need to perform an action (read files, execute commands, etc.),
+use the appropriate tool.
 
-**Important:** You can ONLY perform actions by calling tools.
-Any claims about actions taken are meaningless unless you actually called the tool.`;
-  }
-  // Existing text-based instructions
+**Critical:** You can ONLY perform actions by calling tools.
+Do not claim to have done something without actually calling the tool.
+The system will only execute actions through tool calls.
+
+Available tools will be provided in the API request.`;
 }
 ```
 
-#### 6.2 Handle Tool Filter for iMessage
-**File:** `src/imessage/tool-filter.ts`
-
-Update to handle native tool calls:
-```typescript
-function filterNativeToolCalls(calls: NativeToolCall[]): {
-  allowed: NativeToolCall[];
-  blocked: NativeToolCall[];
-}
-```
-
-#### 6.3 End-to-End Testing
+#### 6.2 End-to-End Testing
 **Action:** Manual testing with iMessage daemon
 
 Test scenarios:
-- [ ] Simple greeting (no tools) → Works with native path
-- [ ] "What files are on my desktop?" → Tool called, results returned
-- [ ] "Create a file called test.txt" → Tool called, file created
-- [ ] "Delete test.txt" → Approval required (if applicable)
-- [ ] Multi-step: "List files, then create a summary" → Multiple tool calls
-- [ ] Fallback: Force text-parsing path, verify still works
+- [ ] Simple greeting (no tools) → Response without tool calls
+- [ ] "What files are on my desktop?" → bash tool called, results returned
+- [ ] "Create a file called test.txt" → bash tool called, file created
+- [ ] "Delete test.txt" → bash tool called (check safety gates)
+- [ ] Multi-step: "List files, then create a summary" → Multiple tool iterations
+- [ ] Error handling: Invalid command → Graceful error in response
 
-#### 6.4 Fix Issues
+#### 6.3 Fix Issues
 Reserve time for fixing issues found during testing.
 
-#### 6.5 Update Documentation
+#### 6.4 Update Documentation
 **File:** `docs/PLAN-hallucination-prevention.md`
 
 - [ ] Mark completed phases
@@ -462,26 +483,26 @@ Reserve time for fixing issues found during testing.
 - [ ] Note known issues
 
 ### Session 6 Deliverables
-- [ ] Full daemon integration working
+- [ ] System prompt updated
 - [ ] All test scenarios passing
 - [ ] Documentation updated
-- [ ] Commit: "feat(daemon): complete native tool use integration"
+- [ ] Commit: "feat: complete native tool use integration"
 
 ---
 
-## Session 7: Router via Tool Use
+## Session 8: Router via Tool Use
 **Estimated Time:** 1.5-2 hours
-**Dependencies:** Sessions 1-3
+**Dependencies:** Sessions 1-4
 **Risk:** Low (isolated change)
 
 ### Objectives
-- Migrate router classifier to use native tool use
-- Eliminate JSON parsing fragility
+- Rewrite router classifier to use native tool use
+- Eliminate JSON parsing completely
 - Improve routing reliability
 
 ### Tasks
 
-#### 7.1 Define Route Decision Tool
+#### 8.1 Define Route Decision Tool
 **File:** `src/router/tools.ts` (new)
 
 ```typescript
@@ -510,7 +531,7 @@ export const ROUTE_DECISION_TOOL: ToolSchema = {
 };
 ```
 
-#### 7.2 Update Classifier
+#### 8.2 Rewrite Classifier
 **File:** `src/router/classifier.ts`
 
 ```typescript
@@ -520,26 +541,31 @@ export async function classifyRoute(
   context: RouteClassifierContext,
   sensitiveCategories: SensitiveCategory[]
 ): Promise<RouteDecision> {
-  // ... existing sensitive category check ...
-
-  // Use native tool use if available
-  if (deps.localProvider.supportsTools?.() && deps.localProvider.generateWithTools) {
-    return classifyWithToolUse(text, deps, context, sensitiveCategories);
+  // Check sensitive categories first (unchanged)
+  if (sensitiveCategories.some(cat => context.alwaysLocalCategories.includes(cat))) {
+    return {
+      route: 'local',
+      reason: 'Matched always-local sensitive category',
+      confidence: 1,
+      sensitiveCategories
+    };
   }
 
-  // Fallback to text parsing
-  return classifyWithTextParsing(text, deps, context, sensitiveCategories);
-}
-
-async function classifyWithToolUse(...): Promise<RouteDecision> {
+  // Use tool call for routing decision
   const response = await deps.localProvider.generateWithTools(
-    { prompt: text, systemPrompt: ROUTER_PROMPT_FOR_TOOLS },
+    { prompt: text, systemPrompt: ROUTER_PROMPT },
     [ROUTE_DECISION_TOOL]
   );
 
   if (response.toolCalls.length === 0) {
-    // Model didn't call tool - use default
-    return createFallbackDecision(...);
+    // Model didn't call tool - use default route
+    safeLogger.warn('Router: model did not call route_decision tool');
+    return {
+      route: context.defaultRoute,
+      reason: 'Model did not provide routing decision',
+      confidence: 0.5,
+      sensitiveCategories
+    };
   }
 
   const decision = response.toolCalls[0].input as {
@@ -548,7 +574,6 @@ async function classifyWithToolUse(...): Promise<RouteDecision> {
     confidence: number;
   };
 
-  // Validate and return
   return {
     route: decision.route,
     reason: decision.reason,
@@ -558,7 +583,13 @@ async function classifyWithToolUse(...): Promise<RouteDecision> {
 }
 ```
 
-#### 7.3 Update Router Prompt
+**Delete:**
+- [ ] `extractJson()` function
+- [ ] `parseRouteResponse()` function
+- [ ] All JSON parsing regex code
+- [ ] Old `ROUTER_PROMPT` with JSON instructions
+
+#### 8.3 Update Router Prompt
 **File:** `src/router/classifier.ts`
 
 ```typescript
@@ -580,91 +611,83 @@ ROUTE TO CLOUD (only for complex tasks):
 DEFAULT TO LOCAL. Only route to cloud if clearly needed.`;
 ```
 
-#### 7.4 Write Classifier Tests
+#### 8.4 Write Classifier Tests
 **File:** `tests/router/classifier.test.ts`
 
-- [ ] Test tool-based classification
-- [ ] Test fallback to text parsing
+- [ ] Test tool-based classification returns correct route
 - [ ] Test confidence threshold handling
-- [ ] Test sensitive category override
+- [ ] Test sensitive category override (bypasses LLM)
+- [ ] Test handling when model doesn't call tool
 
 ### Session 7 Deliverables
 - [ ] Router uses tool use for classification
-- [ ] Text parsing fallback works
+- [ ] Old JSON parsing code deleted
 - [ ] Tests passing
-- [ ] Commit: "feat(router): migrate classifier to native tool use"
+- [ ] Commit: "feat(router): rewrite classifier with native tool use"
 
 ---
 
-## Session 8: Cleanup & Polish
-**Estimated Time:** 1.5-2 hours
-**Dependencies:** Sessions 1-7
+## Session 7: Cleanup & Documentation
+**Estimated Time:** 1-1.5 hours
+**Dependencies:** Sessions 1-6
 **Risk:** Low
 
 ### Objectives
-- Remove deprecated code paths (if stable)
-- Add deprecation warnings
-- Final documentation
-- Performance testing
+- Delete all old text-parsing code
+- Update configuration defaults
+- Finalize documentation
 
 ### Tasks
 
-#### 8.1 Add Deprecation Warnings
-**File:** `src/skills/executor.ts`
+#### 7.1 Delete Old Code
+**Files:** Multiple
 
-```typescript
-export function parseToolCalls(text: string): ToolCall[] {
-  safeLogger.warn('Using deprecated text-parsing for tool calls', {
-    hint: 'Consider using a model with native tool support'
-  });
-  // ... existing implementation
-}
-```
+Delete completely:
+- [ ] `src/skills/executor.ts`: `parseToolCalls()`, `looksLikeCommand()`, old types
+- [ ] `src/router/classifier.ts`: `extractJson()`, `parseRouteResponse()`
+- [ ] Any remaining text-parsing utilities
+- [ ] Old `ToolCall` and `ToolResult` types (replaced by Native versions)
 
-#### 8.2 Update Configuration Defaults
+#### 7.2 Update Configuration Defaults
 **File:** `config/default.yaml`
 
 ```yaml
 local:
   provider: ollama
-  model: qwen2.5:7b-instruct  # Updated for tool support
-  # ...
+  model: qwen2.5:7b-instruct  # Tool-capable model required
+  baseUrl: http://localhost:11434
+  timeoutMs: 30000
 
-features:
-  useNativeTools: true
+cloud:
+  provider: claude
+  model: claude-sonnet-4-20250514
+  apiKeyEnv: ANTHROPIC_API_KEY
+  timeoutMs: 45000
 ```
 
-#### 8.3 Performance Comparison
-**Action:** Benchmark testing
-
-Compare:
-- [ ] Response latency: native vs text-parsing
-- [ ] Token usage: native vs text-parsing
-- [ ] Reliability: tool call success rate
-
-#### 8.4 Final Documentation Update
+#### 7.3 Final Documentation Update
 **Files:** Multiple docs
 
-- [ ] Update `docs/architecture.md` with tool use flow
-- [ ] Update `docs/api-reference.md` with new APIs
-- [ ] Update `docs/install.md` with model recommendations
+- [ ] Update `docs/architecture.md` with native tool use flow
+- [ ] Update `docs/api-reference.md` with new provider interface
+- [ ] Update `docs/install.md` with model requirements
 - [ ] Mark `PLAN-hallucination-prevention.md` as complete
+- [ ] Archive or delete `PLAN-architecture-rework.md` notes
 
-#### 8.5 Create Migration Guide
-**File:** `docs/MIGRATION-native-tools.md` (new)
+#### 7.4 Update README (if exists)
+Note that tool-capable models are now required.
 
-Document:
-- What changed
-- How to update custom code
-- How to revert if issues
-- Known limitations
+### Session 7 Deliverables
+- [ ] All old code deleted
+- [ ] Config updated with tool-capable model
+- [ ] Documentation current
+- [ ] Commit: "chore: cleanup and finalize native tool use migration"
 
-### Session 8 Deliverables
-- [ ] Deprecation warnings in place
-- [ ] Config defaults updated
-- [ ] Performance documented
-- [ ] All documentation current
-- [ ] Commit: "docs: finalize native tool use migration"
+---
+
+---
+
+## Optional Extensions
 
 ---
 
@@ -807,24 +830,45 @@ tools:
 | 2 | Ollama Tool Support | 2-2.5h | Medium |
 | 3 | Claude Tool Support | 1.5-2h | Low |
 | 4 | Executor & Orchestrator | 2h | Low |
-| 5 | Daemon Integration (1) | 2-2.5h | Medium |
-| 6 | Daemon Integration (2) | 2h | Medium |
-| 7 | Router via Tool Use | 1.5-2h | Low |
-| 8 | Cleanup & Polish | 1.5-2h | Low |
-| 9 | Message Types (optional) | 2-2.5h | Medium |
-| 10 | Skills as Tools (optional) | 2h | Low |
+| 5 | Daemon Integration | 2-2.5h | Medium |
+| 6 | Testing & System Prompt | 1.5-2h | Low |
+| 7 | Cleanup & Documentation | 1-1.5h | Low |
+| 8 | Router via Tool Use | 1.5-2h | Low |
+| 9 | Message Types *(optional)* | 2-2.5h | Medium |
+| 10 | Skills as Tools *(optional)* | 2h | Low |
 
-**Core Migration (Sessions 1-8):** ~14-17 hours
-**Full Implementation (Sessions 1-10):** ~18-22 hours
+**Core Migration (Sessions 1-8):** ~12-15 hours
+**Full Implementation (Sessions 1-10):** ~16-19 hours
+
+---
+
+## Prerequisites
+
+Before starting:
+
+1. **Tool-capable model installed:**
+   ```bash
+   ollama pull qwen2.5:7b-instruct
+   ```
+
+2. **Verify model supports tools:**
+   ```bash
+   # Test with Ollama API directly
+   curl http://localhost:11434/api/chat -d '{
+     "model": "qwen2.5:7b-instruct",
+     "messages": [{"role": "user", "content": "List files"}],
+     "tools": [{"type": "function", "function": {"name": "bash", "parameters": {}}}]
+   }'
+   ```
 
 ---
 
 ## Rollback Plan
 
-If issues are found after deployment:
+Since we're not preserving backwards compatibility:
 
-1. **Quick rollback:** Set `features.useNativeTools: false` in config
-2. **Code rollback:** Revert to text-parsing path (preserved as fallback)
-3. **Model rollback:** Switch back to original model in config
+1. **Git rollback:** `git revert` the migration commits
+2. **Model:** Keep old model available during transition
+3. **Testing:** Test thoroughly in Session 6 before cleanup in Session 7
 
-All changes are designed to be backwards compatible with fallback paths.
+**Recommendation:** Don't delete old code (Session 7) until you've run in production for a few days.
