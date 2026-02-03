@@ -129,9 +129,17 @@ src/
 │   ├── orchestrator.ts      # Multi-tool orchestration
 │   └── index.ts             # Module exports
 │
-└── skills/                  # Extensible skills
-    ├── types.ts             # Skill definitions (with optional tools)
-    └── loader.ts            # Skill discovery and tool registration
+├── skills/                  # Extensible skills
+│   ├── types.ts             # Skill definitions (with optional tools)
+│   └── loader.ts            # Skill discovery and tool registration
+│
+├── testing/                 # Testing & verification (see docs/testing.md)
+│   ├── trace.ts             # Trace collector, event types
+│   ├── test-cases.ts        # Built-in test definitions
+│   ├── test-runner.ts       # Test execution & evaluation
+│   └── testable-runner.ts   # Pipeline wrapper with instrumentation
+│
+└── test-cli.ts              # Test CLI entry point
 ```
 
 ## Data Flow
