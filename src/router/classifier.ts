@@ -171,12 +171,15 @@ export async function classifyRoute(
   // Use local LLM for routing decision
   let llmResponse: string;
   try {
-    const result = await deps.localProvider.generate({
-      systemPrompt: ROUTER_PROMPT,
-      prompt: text,
-      temperature: 0.1,
-      maxTokens: 150
-    });
+    const result = await deps.localProvider.generateWithTools(
+      {
+        systemPrompt: ROUTER_PROMPT,
+        prompt: text,
+        temperature: 0.1,
+        maxTokens: 150,
+      },
+      [] // No tools for routing - just text generation
+    );
     llmResponse = result.text;
 
     // Log the raw LLM routing response for debugging

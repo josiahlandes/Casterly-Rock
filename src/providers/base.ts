@@ -4,6 +4,8 @@ import type {
   GenerateWithToolsResponse,
 } from '../tools/schemas/types.js';
 
+export type { GenerateWithToolsResponse } from '../tools/schemas/types.js';
+
 export type ProviderKind = 'local' | 'cloud';
 
 /**

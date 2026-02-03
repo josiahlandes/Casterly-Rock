@@ -2,6 +2,7 @@ import { loadConfig } from '../config/index.js';
 import { safeLogger } from '../logging/safe-logger.js';
 import { buildProviders } from '../providers/index.js';
 import { routeRequest } from '../router/index.js';
+import { createToolRegistry } from '../tools/index.js';
 
 function parseArgs(argv: string[]): { input: string; execute: boolean } {
   const args = argv.slice(2);
@@ -42,7 +43,8 @@ export async function runCli(): Promise<void> {
     return;
   }
 
-  const response = await provider.generate({ prompt: input });
+  const toolRegistry = createToolRegistry();
+  const response = await provider.generateWithTools({ prompt: input }, toolRegistry.getTools());
   safeLogger.info('Provider response received.', {
     provider: response.providerId,
     model: response.model

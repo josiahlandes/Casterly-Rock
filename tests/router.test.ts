@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AppConfig } from '../src/config/schema.js';
-import type { LlmProvider, GenerateRequest } from '../src/providers/base.js';
+import type { LlmProvider, GenerateRequest, GenerateWithToolsResponse } from '../src/providers/base.js';
 import { routeRequest } from '../src/router/index.js';
 import {
   extractJson,
@@ -18,15 +18,17 @@ function stubProvider(
     id,
     kind,
     model: 'stub-model',
-    async generate(req: GenerateRequest) {
+    async generateWithTools(req: GenerateRequest): Promise<GenerateWithToolsResponse> {
       const text =
         typeof responseText === 'function'
           ? responseText(req)
           : responseText ?? 'stub-response';
       return {
         text,
+        toolCalls: [],
         providerId: id,
-        model: 'stub-model'
+        model: 'stub-model',
+        stopReason: 'end_turn',
       };
     }
   };
@@ -37,7 +39,7 @@ function stubFailingProvider(id: string, kind: 'local' | 'cloud'): LlmProvider {
     id,
     kind,
     model: 'stub-model',
-    async generate() {
+    async generateWithTools(): Promise<GenerateWithToolsResponse> {
       throw new Error('Provider failed');
     }
   };
