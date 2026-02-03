@@ -70,13 +70,13 @@ export interface NativeToolResult {
   success: boolean;
 
   /** Output from successful execution */
-  output?: string;
+  output?: string | undefined;
 
   /** Error message if execution failed */
-  error?: string;
+  error?: string | undefined;
 
   /** Exit code for command execution */
-  exitCode?: number;
+  exitCode?: number | undefined;
 }
 
 /**
