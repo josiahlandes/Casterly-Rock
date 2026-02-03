@@ -1,0 +1,25 @@
+local:
+  provider: ollama
+  model: llama3.1:8b-instruct-q4_K_M
+  baseUrl: http://localhost:11434
+  timeoutMs: 30000
+
+cloud:
+  provider: claude
+  model: claude-sonnet-4-20250514
+  apiKeyEnv: ANTHROPIC_API_KEY
+  timeoutMs: 45000
+
+router:
+  defaultRoute: local
+  confidenceThreshold: 0.7
+
+sensitivity:
+  alwaysLocal:
+    - calendar
+    - finances
+    - voice_memos
+    - health
+    - credentials
+    - documents
+    - contacts
