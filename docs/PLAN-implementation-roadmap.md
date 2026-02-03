@@ -654,9 +654,9 @@ Delete completely:
 ```yaml
 local:
   provider: ollama
-  model: qwen2.5:7b-instruct  # Tool-capable model required
+  model: qwen3:14b  # Tool-capable model required (~9GB RAM)
   baseUrl: http://localhost:11434
-  timeoutMs: 30000
+  timeoutMs: 60000  # Increased for 14B model
 
 cloud:
   provider: claude
@@ -848,14 +848,14 @@ Before starting:
 
 1. **Tool-capable model installed:**
    ```bash
-   ollama pull qwen2.5:7b-instruct
+   ollama pull qwen3:14b
    ```
 
 2. **Verify model supports tools:**
    ```bash
    # Test with Ollama API directly
    curl http://localhost:11434/api/chat -d '{
-     "model": "qwen2.5:7b-instruct",
+     "model": "qwen3:14b",
      "messages": [{"role": "user", "content": "List files"}],
      "tools": [{"type": "function", "function": {"name": "bash", "parameters": {}}}]
    }'

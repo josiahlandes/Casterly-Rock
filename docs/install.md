@@ -61,7 +61,7 @@ This installs:
 
 2. Pull a model:
    ```bash
-   ollama pull llama3.1:8b-instruct-q4_K_M
+   ollama pull qwen3:14b
    ```
 
 3. Verify Ollama is running:
@@ -90,9 +90,9 @@ Edit `config/default.yaml`:
 ```yaml
 local:
   provider: ollama
-  model: llama3.1:8b-instruct-q4_K_M    # Your installed model
+  model: qwen3:14b                      # Tool-capable model (~9GB RAM)
   baseUrl: http://localhost:11434
-  timeoutMs: 30000
+  timeoutMs: 60000
 
 cloud:
   provider: claude
@@ -282,7 +282,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 Pull the model specified in config:
 
 ```bash
-ollama pull llama3.1:8b-instruct-q4_K_M
+ollama pull qwen3:14b
 ```
 
 ### iMessage permissions (macOS)

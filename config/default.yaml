@@ -1,8 +1,8 @@
 local:
   provider: ollama
-  model: llama3.1:8b-instruct-q4_K_M
+  model: qwen3:14b
   baseUrl: http://localhost:11434
-  timeoutMs: 30000
+  timeoutMs: 60000
 
 cloud:
   provider: claude
