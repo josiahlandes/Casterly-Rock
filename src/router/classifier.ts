@@ -1,5 +1,6 @@
 import type { LlmProvider } from '../providers/base.js';
 import { safeLogger } from '../logging/safe-logger.js';
+import { ROUTE_DECISION_TOOL } from '../tools/schemas/core.js';
 import type { SensitiveCategory } from './patterns.js';
 
 export type RouteTarget = 'local' | 'cloud';
@@ -21,7 +22,10 @@ export interface RouteClassifierDependencies {
   localProvider: LlmProvider;
 }
 
-export const ROUTER_PROMPT = `You are a privacy-aware router. Analyze this request and decide:
+/**
+ * System prompt for the router - instructs model to use the route_decision tool
+ */
+export const ROUTER_PROMPT = `You are a privacy-aware router. Analyze the user's request and call the route_decision tool with your decision.
 
 ROUTE TO LOCAL (default - use for most messages):
 - Greetings: "hi", "hello", "hey", "what's up", "good morning", etc.
@@ -46,40 +50,7 @@ ROUTE TO CLOUD (ONLY for complex tasks that explicitly need it):
 
 DEFAULT TO LOCAL. Only route to cloud if the message CLEARLY requires advanced capabilities.
 
-Respond with ONLY valid JSON (no markdown, no explanation):
-{"route": "local" or "cloud", "reason": "brief explanation", "confidence": 0.0-1.0}`;
-
-interface LlmRouteResponse {
-  route: unknown;
-  reason: unknown;
-  confidence: unknown;
-}
-
-function extractJson(text: string): string | null {
-  const trimmed = text.trim();
-
-  // Try direct parse first
-  if (trimmed.startsWith('{')) {
-    const endBrace = trimmed.lastIndexOf('}');
-    if (endBrace !== -1) {
-      return trimmed.slice(0, endBrace + 1);
-    }
-  }
-
-  // Try to extract JSON from markdown code blocks
-  const codeBlockMatch = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/.exec(trimmed);
-  if (codeBlockMatch?.[1]) {
-    return codeBlockMatch[1];
-  }
-
-  // Try to find JSON object anywhere in the text
-  const jsonMatch = /\{[^{}]*"route"[^{}]*\}/.exec(trimmed);
-  if (jsonMatch) {
-    return jsonMatch[0];
-  }
-
-  return null;
-}
+You MUST call the route_decision tool with your decision.`;
 
 function isValidRouteTarget(value: unknown): value is RouteTarget {
   return value === 'local' || value === 'cloud';
@@ -87,56 +58,6 @@ function isValidRouteTarget(value: unknown): value is RouteTarget {
 
 function isValidConfidence(value: unknown): value is number {
   return typeof value === 'number' && value >= 0 && value <= 1 && !Number.isNaN(value);
-}
-
-function parseRouteResponse(
-  text: string,
-  context: RouteClassifierContext
-): { route: RouteTarget; reason: string; confidence: number } | null {
-  const jsonString = extractJson(text);
-  if (!jsonString) {
-    safeLogger.warn('Failed to extract JSON from LLM response');
-    return null;
-  }
-
-  let parsed: LlmRouteResponse;
-  try {
-    parsed = JSON.parse(jsonString) as LlmRouteResponse;
-  } catch {
-    safeLogger.warn('Failed to parse JSON from LLM response');
-    return null;
-  }
-
-  // Validate required fields
-  if (!isValidRouteTarget(parsed.route)) {
-    safeLogger.warn('Invalid or missing route field in LLM response');
-    return null;
-  }
-
-  if (typeof parsed.reason !== 'string' || parsed.reason.trim() === '') {
-    safeLogger.warn('Invalid or missing reason field in LLM response');
-    return null;
-  }
-
-  if (!isValidConfidence(parsed.confidence)) {
-    safeLogger.warn('Invalid or missing confidence field in LLM response');
-    return null;
-  }
-
-  // Enforce local bias when confidence is below threshold
-  if (parsed.route === 'cloud' && parsed.confidence < context.confidenceThreshold) {
-    return {
-      route: 'local',
-      reason: `LLM suggested cloud but confidence ${parsed.confidence.toFixed(2)} below threshold; routing locally`,
-      confidence: parsed.confidence
-    };
-  }
-
-  return {
-    route: parsed.route,
-    reason: parsed.reason,
-    confidence: parsed.confidence
-  };
 }
 
 function createFallbackDecision(
@@ -148,7 +69,7 @@ function createFallbackDecision(
     route: context.defaultRoute,
     reason,
     confidence: Math.max(0.51, context.confidenceThreshold - 0.1),
-    sensitiveCategories
+    sensitiveCategories,
   };
 }
 
@@ -164,12 +85,11 @@ export async function classifyRoute(
       route: 'local',
       reason: 'Matched always-local sensitive category',
       confidence: 1,
-      sensitiveCategories
+      sensitiveCategories,
     };
   }
 
-  // Use local LLM for routing decision
-  let llmResponse: string;
+  // Use local LLM for routing decision via native tool use
   try {
     const result = await deps.localProvider.generateWithTools(
       {
@@ -178,17 +98,102 @@ export async function classifyRoute(
         temperature: 0.1,
         maxTokens: 150,
       },
-      [] // No tools for routing - just text generation
+      [ROUTE_DECISION_TOOL]
     );
-    llmResponse = result.text;
 
-    // Log the raw LLM routing response for debugging
+    // Log the response for debugging
     safeLogger.info('Router LLM response', {
-      rawResponse: llmResponse.substring(0, 200),
+      toolCalls: result.toolCalls.length,
+      stopReason: result.stopReason,
     });
+
+    // Check if model called the route_decision tool
+    if (result.toolCalls.length === 0) {
+      safeLogger.warn('Router: model did not call route_decision tool');
+      return createFallbackDecision(
+        context,
+        sensitiveCategories,
+        'Model did not provide routing decision via tool call'
+      );
+    }
+
+    // Get the first tool call (should be route_decision)
+    const toolCall = result.toolCalls[0];
+    if (!toolCall) {
+      safeLogger.warn('Router: no tool call found in response');
+      return createFallbackDecision(
+        context,
+        sensitiveCategories,
+        'No tool call found in response'
+      );
+    }
+
+    if (toolCall.name !== 'route_decision') {
+      safeLogger.warn('Router: model called unexpected tool', { toolName: toolCall.name });
+      return createFallbackDecision(
+        context,
+        sensitiveCategories,
+        `Model called unexpected tool: ${toolCall.name}`
+      );
+    }
+
+    // Extract decision from tool call input
+    const input = toolCall.input as {
+      route?: unknown;
+      reason?: unknown;
+      confidence?: unknown;
+    };
+
+    // Validate route
+    if (!isValidRouteTarget(input.route)) {
+      safeLogger.warn('Router: invalid route in tool call', { route: input.route });
+      return createFallbackDecision(
+        context,
+        sensitiveCategories,
+        'Invalid route value in tool call'
+      );
+    }
+
+    // Validate reason
+    const reason = typeof input.reason === 'string' && input.reason.trim() !== ''
+      ? input.reason
+      : 'No reason provided';
+
+    // Validate confidence
+    const confidence = isValidConfidence(input.confidence)
+      ? input.confidence
+      : 0.7; // Default confidence
+
+    // Enforce local bias when confidence is below threshold
+    if (input.route === 'cloud' && confidence < context.confidenceThreshold) {
+      safeLogger.info('Router: cloud decision below threshold, routing locally', {
+        confidence,
+        threshold: context.confidenceThreshold,
+      });
+      return {
+        route: 'local',
+        reason: `LLM suggested cloud but confidence ${confidence.toFixed(2)} below threshold; routing locally`,
+        confidence,
+        sensitiveCategories,
+      };
+    }
+
+    // Log the routing decision with reasoning
+    safeLogger.info('Router decision', {
+      route: input.route,
+      reason,
+      confidence,
+    });
+
+    return {
+      route: input.route,
+      reason,
+      confidence,
+      sensitiveCategories,
+    };
   } catch (error) {
     safeLogger.warn('Local LLM call failed for routing; falling back to default route', {
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
     return createFallbackDecision(
       context,
@@ -196,34 +201,4 @@ export async function classifyRoute(
       'LLM routing failed; fell back to default routing policy'
     );
   }
-
-  // Parse and validate the LLM response
-  const parsed = parseRouteResponse(llmResponse, context);
-  if (!parsed) {
-    safeLogger.warn('Router failed to parse LLM response', {
-      rawResponse: llmResponse.substring(0, 200),
-    });
-    return createFallbackDecision(
-      context,
-      sensitiveCategories,
-      'Invalid LLM response; fell back to default routing policy'
-    );
-  }
-
-  // Log the routing decision with reasoning
-  safeLogger.info('Router decision', {
-    route: parsed.route,
-    reason: parsed.reason,
-    confidence: parsed.confidence,
-  });
-
-  return {
-    route: parsed.route,
-    reason: parsed.reason,
-    confidence: parsed.confidence,
-    sensitiveCategories
-  };
 }
-
-// Exported for testing
-export { extractJson, parseRouteResponse };
