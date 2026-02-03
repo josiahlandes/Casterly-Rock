@@ -3,6 +3,8 @@
  * These mirror the OpenClaw SKILL.md frontmatter schema for compatibility
  */
 
+import type { ToolSchema } from '../tools/schemas/types.js';
+
 export interface SkillInstallOption {
   id: string;
   kind: 'brew' | 'apt' | 'npm' | 'pip' | 'manual';
@@ -33,6 +35,8 @@ export interface SkillFrontmatter {
   description: string;
   homepage?: string;
   metadata?: SkillMetadata;
+  /** Native tool schemas defined by this skill */
+  tools?: ToolSchema[] | undefined;
 }
 
 export interface Skill {
@@ -53,6 +57,9 @@ export interface Skill {
 
   /** Reason if not available */
   unavailableReason?: string | undefined;
+
+  /** Native tool schemas defined by this skill (convenience accessor) */
+  tools: ToolSchema[];
 }
 
 export interface SkillRegistry {
@@ -70,6 +77,9 @@ export interface SkillRegistry {
 
   /** Find skills relevant to a user message and return their full instructions */
   getRelevantSkillInstructions(message: string): string;
+
+  /** Get all native tools defined by available skills */
+  getTools(): ToolSchema[];
 
   /** Reload skills from disk */
   reload(): Promise<void>;
