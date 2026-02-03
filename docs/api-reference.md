@@ -5,6 +5,7 @@ This document provides detailed API reference for Casterly's core modules.
 ## Table of Contents
 
 - [Providers](#providers)
+- [Tools](#tools)
 - [Router](#router)
 - [Security](#security)
 - [Interface Layer](#interface-layer)
@@ -24,7 +25,11 @@ interface LlmProvider {
   id: string;
   kind: ProviderKind;
   model: string;
-  generate(request: GenerateRequest): Promise<GenerateResponse>;
+  generateWithTools(
+    request: GenerateRequest,
+    tools: ToolSchema[],
+    previousResults?: ToolResultMessage[]
+  ): Promise<GenerateWithToolsResponse>;
 }
 ```
 
@@ -52,21 +57,25 @@ interface GenerateRequest {
 | `maxTokens` | `number` | `1024` | Maximum response tokens |
 | `temperature` | `number` | `0.7` | Creativity (0.0-1.0) |
 
-#### `GenerateResponse`
+#### `GenerateWithToolsResponse`
 
 ```typescript
-interface GenerateResponse {
+interface GenerateWithToolsResponse {
   text: string;
+  toolCalls: NativeToolCall[];
   providerId: string;
   model: string;
+  stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
 }
 ```
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `text` | `string` | LLM response text |
+| `toolCalls` | `NativeToolCall[]` | Structured tool call requests |
 | `providerId` | `string` | Which provider generated the response |
 | `model` | `string` | Which model was used |
+| `stopReason` | `string` | Why generation stopped |
 
 #### `ProviderError`
 
@@ -98,17 +107,23 @@ class BillingError extends ProviderError {
 ```typescript
 class OllamaProvider implements LlmProvider {
   constructor(config: OllamaConfig)
-  generate(request: GenerateRequest): Promise<GenerateResponse>
+  generateWithTools(
+    request: GenerateRequest,
+    tools: ToolSchema[],
+    previousResults?: ToolResultMessage[]
+  ): Promise<GenerateWithToolsResponse>
 }
 ```
+
+Uses Ollama's `/api/chat` endpoint with OpenAI-compatible tool format.
 
 #### `OllamaConfig`
 
 ```typescript
 interface OllamaConfig {
-  model: string;
+  model: string;        // Must be tool-capable (e.g., qwen3:14b)
   baseUrl: string;      // Default: "http://localhost:11434"
-  timeoutMs?: number;   // Default: 30000
+  timeoutMs?: number;   // Default: 60000 (14B models need longer)
 }
 ```
 
@@ -121,9 +136,15 @@ interface OllamaConfig {
 ```typescript
 class ClaudeProvider implements LlmProvider {
   constructor(config: ClaudeConfig)
-  generate(request: GenerateRequest): Promise<GenerateResponse>
+  generateWithTools(
+    request: GenerateRequest,
+    tools: ToolSchema[],
+    previousResults?: ToolResultMessage[]
+  ): Promise<GenerateWithToolsResponse>
 }
 ```
+
+Uses Anthropic Messages API with `tool_use` and `tool_result` content blocks.
 
 #### `ClaudeConfig`
 
@@ -150,6 +171,186 @@ function buildProviders(config: AppConfig): {
 ```
 
 Creates provider instances from application configuration.
+
+---
+
+## Tools
+
+### `src/tools/schemas/types.ts`
+
+#### `ToolSchema`
+
+```typescript
+interface ToolSchema {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+```
+
+#### `NativeToolCall`
+
+```typescript
+interface NativeToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `string` | Unique call ID for result matching |
+| `name` | `string` | Tool name (e.g., "bash") |
+| `input` | `object` | Tool-specific parameters |
+
+#### `NativeToolResult`
+
+```typescript
+interface NativeToolResult {
+  toolCallId: string;
+  success: boolean;
+  output?: string;
+  error?: string;
+  exitCode?: number;
+}
+```
+
+#### `ToolResultMessage`
+
+```typescript
+interface ToolResultMessage {
+  callId: string;
+  result: string;
+  isError?: boolean;
+}
+```
+
+Used for multi-turn tool conversations.
+
+---
+
+### `src/tools/schemas/core.ts`
+
+#### `BASH_TOOL`
+
+```typescript
+const BASH_TOOL: ToolSchema = {
+  name: 'bash',
+  description: 'Execute a shell command on the local system.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      command: { type: 'string', description: 'The shell command to execute.' }
+    },
+    required: ['command']
+  }
+};
+```
+
+#### `ROUTE_DECISION_TOOL`
+
+```typescript
+const ROUTE_DECISION_TOOL: ToolSchema = {
+  name: 'route_decision',
+  description: 'Declare your routing decision for the user request.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      route: { type: 'string', enum: ['local', 'cloud'] },
+      reason: { type: 'string' },
+      confidence: { type: 'number' }
+    },
+    required: ['route', 'reason', 'confidence']
+  }
+};
+```
+
+---
+
+### `src/tools/executor.ts`
+
+#### `executeBashToolCall()`
+
+```typescript
+function executeBashToolCall(
+  call: NativeToolCall,
+  options?: BashExecutorOptions
+): Promise<NativeToolResult>
+```
+
+Executes a bash command with safety checks.
+
+#### `createBashExecutor()`
+
+```typescript
+function createBashExecutor(
+  options?: BashExecutorOptions
+): NativeToolExecutor
+```
+
+Creates a reusable bash executor for the orchestrator.
+
+#### Safety Gates
+
+Commands are classified into three categories:
+
+| Category | Behavior | Examples |
+|----------|----------|----------|
+| **BLOCKED** | Never executed | `rm -rf /`, `mkfs`, fork bombs |
+| **APPROVAL_REQUIRED** | User confirmation needed | `rm`, `sudo`, `mv`, `chmod` |
+| **SAFE** | Executed immediately | `ls`, `cat`, `grep`, `curl` |
+
+---
+
+### `src/tools/orchestrator.ts`
+
+#### `ToolOrchestrator` Interface
+
+```typescript
+interface ToolOrchestrator {
+  registerExecutor(executor: NativeToolExecutor): void;
+  canExecute(toolName: string): boolean;
+  execute(call: NativeToolCall): Promise<NativeToolResult>;
+  executeAll(calls: NativeToolCall[]): Promise<NativeToolResult[]>;
+  getRegisteredTools(): string[];
+}
+```
+
+#### `createToolOrchestrator()`
+
+```typescript
+function createToolOrchestrator(): ToolOrchestrator
+```
+
+Creates a tool orchestrator for managing multiple executors.
+
+---
+
+### `src/tools/schemas/registry.ts`
+
+#### `ToolRegistry` Interface
+
+```typescript
+interface ToolRegistry {
+  register(tool: ToolSchema): void;
+  get(name: string): ToolSchema | undefined;
+  getTools(): ToolSchema[];
+  has(name: string): boolean;
+}
+```
+
+#### `createToolRegistry()`
+
+```typescript
+function createToolRegistry(): ToolRegistry
+```
+
+Creates a tool registry with core tools pre-registered.
 
 ---
 
@@ -199,25 +400,27 @@ interface RouterDependencies {
 
 ### `src/router/classifier.ts`
 
-#### `classifyWithLlm()`
+#### `classifyRoute()`
 
 ```typescript
-async function classifyWithLlm(
-  input: string,
-  provider: LlmProvider,
-  config: RouterConfig
-): Promise<ClassificationResult>
+async function classifyRoute(
+  text: string,
+  deps: RouteClassifierDependencies,
+  context: RouteClassifierContext,
+  sensitiveCategories: SensitiveCategory[]
+): Promise<RouteDecision>
 ```
 
-Uses local LLM to classify ambiguous requests.
+Uses local LLM with native tool use (`route_decision` tool) to classify requests.
+The model calls the tool with structured input rather than returning JSON text.
 
-#### `ClassificationResult`
+#### `RouteClassifierContext`
 
 ```typescript
-interface ClassificationResult {
-  route: 'local' | 'cloud';
-  reason: string;
-  confidence: number;
+interface RouteClassifierContext {
+  defaultRoute: RouteTarget;
+  confidenceThreshold: number;
+  alwaysLocalCategories: SensitiveCategory[];
 }
 ```
 
@@ -515,10 +718,30 @@ interface Session {
 ```typescript
 interface ConversationMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: number;
+  content: MessageContent;  // string | ContentBlock[]
+  timestamp: string;
+  sender?: string;
 }
 ```
+
+#### `ContentBlock` Types
+
+```typescript
+type TextBlock = { type: 'text'; text: string };
+type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+type ToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+
+type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+type MessageContent = string | ContentBlock[];
+```
+
+#### `getMessageText()`
+
+```typescript
+function getMessageText(message: ConversationMessage): string
+```
+
+Extracts text content from a message (handles both string and content blocks).
 
 ---
 
@@ -553,6 +776,7 @@ interface Skill {
   path: string;
   available: boolean;
   unavailableReason?: string;
+  tools: ToolSchema[];  // Native tools defined by this skill
 }
 ```
 
@@ -563,6 +787,7 @@ interface SkillFrontmatter {
   name: string;
   description: string;
   homepage?: string;
+  tools?: ToolSchema[];  // Native tool definitions
   metadata?: {
     openclaw?: {
       emoji?: string;
@@ -584,67 +809,32 @@ interface SkillFrontmatter {
 #### `loadSkills()`
 
 ```typescript
-function loadSkills(
-  skillsPath: string
-): Promise<Skill[]>
+function loadSkills(): Map<string, Skill>
 ```
 
-Discovers and loads skills from a directory.
+Discovers and loads skills from configured directories.
 
----
-
-### `src/skills/executor.ts`
-
-#### `parseToolCalls()`
+#### `createSkillRegistry()`
 
 ```typescript
-function parseToolCalls(
-  response: string
-): ToolCall[]
+function createSkillRegistry(): SkillRegistry
 ```
 
-Extracts bash commands from LLM response.
+Creates a skill registry for managing skills.
 
-#### `ToolCall`
+#### `SkillRegistry`
 
 ```typescript
-interface ToolCall {
-  type: 'bash';
-  command: string;
+interface SkillRegistry {
+  skills: Map<string, Skill>;
+  get(id: string): Skill | undefined;
+  getAvailable(): Skill[];
+  getPromptSection(): string;
+  getRelevantSkillInstructions(message: string): string;
+  getTools(): ToolSchema[];  // Collect tools from all skills
+  reload(): Promise<void>;
 }
 ```
-
-#### `executeCommand()`
-
-```typescript
-function executeCommand(
-  command: string,
-  timeout?: number
-): ExecutionResult
-```
-
-Executes a shell command with safety checks.
-
-#### `ExecutionResult`
-
-```typescript
-interface ExecutionResult {
-  success: boolean;
-  output?: string;
-  error?: string;
-  exitCode?: number;
-}
-```
-
-#### Safety Gates
-
-Commands are classified into three categories:
-
-| Category | Behavior | Examples |
-|----------|----------|----------|
-| **BLOCKED** | Never executed | `rm -rf /`, `mkfs`, fork bombs |
-| **APPROVAL_REQUIRED** | User confirmation needed | `rm`, `sudo`, `mv`, `chmod` |
-| **SAFE** | Executed immediately | `ls`, `cat`, `grep`, `curl` |
 
 ---
 
@@ -802,21 +992,31 @@ try {
 
 ## Usage Examples
 
-### Basic Generation
+### Basic Generation with Tools
 
 ```typescript
 import { buildProviders } from './providers';
 import { loadConfig } from './config';
+import { createToolRegistry } from './tools';
 
 const config = loadConfig();
 const providers = buildProviders(config);
+const toolRegistry = createToolRegistry();
 
-const response = await providers.local.generate({
-  prompt: "What is the capital of France?",
-  systemPrompt: "You are a helpful assistant."
-});
+const response = await providers.local.generateWithTools(
+  {
+    prompt: "What files are on the desktop?",
+    systemPrompt: "You are a helpful assistant."
+  },
+  toolRegistry.getTools()
+);
 
-console.log(response.text);
+if (response.toolCalls.length > 0) {
+  // Execute tool calls
+  console.log('Tool requested:', response.toolCalls[0].name);
+} else {
+  console.log(response.text);
+}
 ```
 
 ### Routing a Request
@@ -826,7 +1026,10 @@ import { routeRequest } from './router';
 
 const decision = await routeRequest(
   "What's on my calendar today?",
-  { localProvider: providers.local, config: config.router }
+  {
+    config,
+    providers: { local: providers.local, cloud: providers.cloud }
+  }
 );
 
 if (decision.route === 'local') {
@@ -834,20 +1037,33 @@ if (decision.route === 'local') {
 }
 ```
 
-### Building Context
+### Native Tool Loop
 
 ```typescript
-import { buildSystemPrompt, assembleContext } from './interface';
+import { createToolOrchestrator, createBashExecutor } from './tools';
 
-const prompt = buildSystemPrompt({
-  mode: 'full',
-  skills: [],
-  channel: 'cli'
-});
+const orchestrator = createToolOrchestrator();
+orchestrator.registerExecutor(createBashExecutor());
 
-const context = assembleContext({
-  systemPrompt: prompt.systemPrompt,
-  history: session.getHistory(),
-  currentMessage: userInput
-});
+let previousResults: ToolResultMessage[] = [];
+
+while (true) {
+  const response = await provider.generateWithTools(
+    { prompt, systemPrompt },
+    toolRegistry.getTools(),
+    previousResults
+  );
+
+  if (response.toolCalls.length === 0) {
+    console.log(response.text);
+    break;
+  }
+
+  const results = await orchestrator.executeAll(response.toolCalls);
+  previousResults = results.map(r => ({
+    callId: r.toolCallId,
+    result: r.success ? r.output! : `Error: ${r.error}`,
+    isError: !r.success
+  }));
+}
 ```

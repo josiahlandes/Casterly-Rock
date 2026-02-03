@@ -60,10 +60,14 @@ Casterly routes requests between local and cloud LLM providers based on content 
             └─────────────┬─────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Skills Layer                                 │
+│                     Tools Layer                                 │
 │  ┌─────────────────────────────┐  ┌───────────────────────────┐ │
-│  │   Command Parser            │  │   Executor                │ │
-│  │   (bash code blocks)        │  │   (safety gates)          │ │
+│  │   Tool Registry             │  │   Executor                │ │
+│  │   (native tool schemas)     │  │   (safety gates)          │ │
+│  └─────────────────────────────┘  └───────────────────────────┘ │
+│  ┌─────────────────────────────┐  ┌───────────────────────────┐ │
+│  │   Orchestrator              │  │   Skills → Tools          │ │
+│  │   (multi-turn loop)         │  │   (auto-registration)     │ │
 │  └─────────────────────────────┘  └───────────────────────────┘ │
 └─────────────────────────┬───────────────────────────────────────┘
                           │
@@ -111,15 +115,23 @@ src/
 │   └── users.ts             # Multi-user support
 │
 ├── imessage/                # iMessage integration
-│   ├── daemon.ts            # Polling loop
+│   ├── daemon.ts            # Polling loop with native tool use
 │   ├── reader.ts            # Database reader
 │   ├── sender.ts            # Message sender
-│   └── tool-filter.ts       # Tool restrictions
+│   └── tool-filter.ts       # Tool call restrictions
+│
+├── tools/                   # Native tool use system
+│   ├── schemas/
+│   │   ├── types.ts         # ToolSchema, NativeToolCall, etc.
+│   │   ├── core.ts          # BASH_TOOL, ROUTE_DECISION_TOOL
+│   │   └── registry.ts      # Tool registry
+│   ├── executor.ts          # Bash tool executor with safety gates
+│   ├── orchestrator.ts      # Multi-tool orchestration
+│   └── index.ts             # Module exports
 │
 └── skills/                  # Extensible skills
-    ├── types.ts             # Skill definitions
-    ├── loader.ts            # Skill discovery
-    └── executor.ts          # Command execution
+    ├── types.ts             # Skill definitions (with optional tools)
+    └── loader.ts            # Skill discovery and tool registration
 ```
 
 ## Data Flow
@@ -147,9 +159,9 @@ User Message
      │
      ▼ (if not obviously sensitive)
 ┌────────────────────────────────────────────────────────────────┐
-│ 3. LLM CLASSIFICATION                                          │
-│    • Call local Ollama with classification prompt              │
-│    • Output: {route, reason, confidence}                       │
+│ 3. LLM CLASSIFICATION (via Native Tool Use)                    │
+│    • Call local Ollama with route_decision tool                │
+│    • Model calls tool with: {route, reason, confidence}        │
 │    • Low confidence → fallback to local                        │
 └────────────────────────────────────────────────────────────────┘
      │
@@ -163,19 +175,20 @@ User Message
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ 5. LLM INFERENCE                                               │
-│    • Call selected provider (local or cloud)                   │
+│ 5. LLM INFERENCE WITH TOOLS                                    │
+│    • Call generateWithTools() on selected provider             │
+│    • Pass tool schemas (bash, skill tools)                     │
 │    • Handle billing errors (fallback to local)                 │
-│    • Parse response                                            │
 └────────────────────────────────────────────────────────────────┘
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ 6. TOOL EXECUTION (if commands in response)                    │
-│    • Parse bash code blocks                                    │
+│ 6. NATIVE TOOL LOOP (if tool calls in response)                │
+│    • Model returns structured NativeToolCall objects           │
 │    • Check safety gates (blocked, approval, safe)              │
-│    • Execute and collect results                               │
-│    • Continue conversation with results                        │
+│    • Execute via tool orchestrator                             │
+│    • Return tool results to model for next iteration           │
+│    • Continue until model returns text-only response           │
 └────────────────────────────────────────────────────────────────┘
      │
      ▼
@@ -214,21 +227,26 @@ Input Text
 
 ### Providers
 
-The provider system abstracts LLM interactions behind a common interface:
+The provider system abstracts LLM interactions with native tool use support:
 
 | Provider | Type | Use Case |
 |----------|------|----------|
 | Ollama | Local | Privacy-sensitive requests, always available |
 | Claude | Cloud | Advanced reasoning, complex tasks |
 
-Both providers implement `LlmProvider` interface with `generate()` method.
+Both providers implement `LlmProvider` interface with `generateWithTools()` method.
+This enables structured tool calling where the model returns `NativeToolCall` objects
+instead of text-based command blocks.
 
 ### Router
 
 Two-stage routing ensures privacy:
 
 1. **Pattern Matching** (fast): Regex patterns catch obvious sensitive content
-2. **LLM Classification** (smart): Local model classifies ambiguous requests
+2. **LLM Classification via Tool Use** (smart): Local model calls `route_decision` tool with structured decision
+
+The router uses native tool calling to get structured routing decisions, eliminating
+JSON parsing errors that occurred with text-based classification.
 
 ### Security
 
@@ -243,12 +261,21 @@ Two-stage routing ensures privacy:
 - **Context**: Assembles complete prompt within token budget
 - **Memory**: Long-term memory across sessions
 
+### Tools
+
+Native tool use system for LLM interactions:
+
+- **Tool Registry**: Manages available tools (bash, skill tools)
+- **Executor**: Runs bash commands with safety gates
+- **Orchestrator**: Handles multi-tool execution in loops
+
 ### Skills
 
-OpenClaw-compatible skill system:
+OpenClaw-compatible skill system with native tool support:
 
 - Skills defined in `SKILL.md` files with frontmatter
-- Automatic discovery and loading
+- Optional `tools` array in frontmatter for native tool definitions
+- Automatic discovery and tool registration
 - Safety gates for command execution
 
 ## Sensitive Data Categories
@@ -271,12 +298,13 @@ Configuration is loaded from `config/default.yaml` and validated at startup:
 ```yaml
 local:
   provider: ollama
-  model: qwen:7b
+  model: qwen3:14b          # Tool-capable model required
   baseUrl: http://localhost:11434
+  timeoutMs: 60000          # 14B models need longer timeout
 
 cloud:
   provider: claude
-  model: claude-sonnet-4
+  model: claude-sonnet-4-20250514
   apiKeyEnv: ANTHROPIC_API_KEY
 
 router:
@@ -290,6 +318,9 @@ sensitivity:
     - health
     - credentials
 ```
+
+**Important**: Native tool use requires a tool-capable local model.
+Recommended: `qwen3:14b` (~9GB RAM, 0.971 F1 on tool calling benchmarks)
 
 ## Protected Paths
 

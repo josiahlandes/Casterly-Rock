@@ -1,5 +1,22 @@
 # Plan: Native Tool Use API Migration
 
+> **STATUS: COMPLETE** ✅
+>
+> This plan has been fully implemented. The native tool use migration was completed
+> across 10 sessions. See `docs/PLAN-implementation-roadmap.md` for session details.
+>
+> **Key outcomes:**
+> - All providers now use `generateWithTools()` instead of `generate()`
+> - Router uses `route_decision` tool instead of JSON parsing
+> - Daemon uses native tool loop with orchestrator
+> - Old text-parsing code (`parseToolCalls()`) has been removed
+> - Model: `qwen3:14b` selected for tool calling support
+>
+> The hallucination problem is eliminated because models must call structured tools
+> to perform actions - they cannot claim actions in text without API calls.
+
+---
+
 ## Problem Statement
 
 The local LLM (DeepSeek V2 16B) sometimes claims to have performed actions (like "I've deleted the files") without actually executing any bash commands. This is a form of hallucination where the model generates text that implies completed actions without using the tool execution mechanism.
