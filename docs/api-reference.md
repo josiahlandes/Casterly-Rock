@@ -184,11 +184,32 @@ Creates provider instances from application configuration.
 interface ToolSchema {
   name: string;
   description: string;
-  inputSchema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required?: string[];
-  };
+  inputSchema: ToolInputSchema;
+}
+```
+
+#### `ToolInputSchema`
+
+```typescript
+interface ToolInputSchema {
+  type: 'object';
+  properties: Record<string, ToolProperty>;
+  required: string[];  // Non-optional
+}
+```
+
+#### `ToolProperty`
+
+```typescript
+type JsonSchemaType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array' | 'null';
+
+interface ToolProperty {
+  type: JsonSchemaType;
+  description: string;
+  enum?: string[];                            // For string enums
+  items?: ToolProperty;                       // For array item types
+  properties?: Record<string, ToolProperty>;  // For nested objects
+  required?: string[];                        // For nested object requirements
 }
 ```
 
