@@ -1,0 +1,394 @@
+# 3D Printing Configuration
+# Presets for filaments, quality settings, and printer connection
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRINTER CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+printer:
+  name: "Elegoo Centauri Carbon"
+  address: "192.168.1.100"    # UPDATE with your printer's IP
+  port: 80
+  api_type: "moonraker"       # Options: moonraker, elegoo, octoprint
+  # api_key: ""               # Uncomment and set if your printer requires auth
+
+# Output directory for sliced files
+output_dir: "~/.casterly/prints"
+
+# Slicer configuration
+slicer:
+  executable: "orca-slicer"
+  # Alternative: /Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer
+  printer_profile: "Elegoo Centauri Carbon"
+  # Path to OrcaSlicer config if not using default location
+  # config_dir: "~/.config/OrcaSlicer"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FILAMENT PRESETS
+# ═══════════════════════════════════════════════════════════════════════════════
+# Each preset defines material-specific settings
+
+filament_presets:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PLA Variants
+  # ─────────────────────────────────────────────────────────────────────────────
+  pla_basic:
+    display_name: "PLA Basic"
+    material: "PLA"
+    nozzle_temp: 210
+    nozzle_temp_first_layer: 215
+    bed_temp: 60
+    bed_temp_first_layer: 65
+    flow_ratio: 1.0
+    retraction_length: 0.8
+    retraction_speed: 35
+    fan_speed_min: 100
+    fan_speed_max: 100
+    fan_start_layer: 2
+    notes: "Standard PLA settings, works with most brands"
+
+  pla_plus:
+    display_name: "PLA+ / PLA Pro"
+    material: "PLA"
+    nozzle_temp: 215
+    nozzle_temp_first_layer: 220
+    bed_temp: 60
+    bed_temp_first_layer: 65
+    flow_ratio: 1.0
+    retraction_length: 0.8
+    retraction_speed: 35
+    fan_speed_min: 80
+    fan_speed_max: 100
+    fan_start_layer: 3
+    notes: "PLA+ has better layer adhesion, slightly higher temps"
+
+  pla_silk:
+    display_name: "Silk PLA"
+    material: "PLA"
+    nozzle_temp: 220
+    nozzle_temp_first_layer: 225
+    bed_temp: 60
+    bed_temp_first_layer: 65
+    flow_ratio: 0.98
+    retraction_length: 1.0
+    retraction_speed: 30
+    fan_speed_min: 50
+    fan_speed_max: 80
+    fan_start_layer: 3
+    notes: "Silk PLA needs higher temps, slower cooling for shine"
+
+  pla_matte:
+    display_name: "Matte PLA"
+    material: "PLA"
+    nozzle_temp: 210
+    nozzle_temp_first_layer: 215
+    bed_temp: 60
+    bed_temp_first_layer: 65
+    flow_ratio: 1.0
+    retraction_length: 0.8
+    retraction_speed: 35
+    fan_speed_min: 100
+    fan_speed_max: 100
+    fan_start_layer: 2
+    notes: "Matte finish PLA, standard settings work well"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PETG Variants
+  # ─────────────────────────────────────────────────────────────────────────────
+  petg_standard:
+    display_name: "PETG Standard"
+    material: "PETG"
+    nozzle_temp: 240
+    nozzle_temp_first_layer: 245
+    bed_temp: 80
+    bed_temp_first_layer: 85
+    flow_ratio: 0.95
+    retraction_length: 1.0
+    retraction_speed: 25
+    fan_speed_min: 30
+    fan_speed_max: 50
+    fan_start_layer: 3
+    notes: "Standard PETG, reduce fan for better layer adhesion"
+
+  petg_strong:
+    display_name: "PETG Strong"
+    material: "PETG"
+    nozzle_temp: 250
+    nozzle_temp_first_layer: 255
+    bed_temp: 85
+    bed_temp_first_layer: 90
+    flow_ratio: 0.97
+    retraction_length: 1.2
+    retraction_speed: 25
+    fan_speed_min: 20
+    fan_speed_max: 40
+    fan_start_layer: 4
+    notes: "Higher temps for maximum layer bonding strength"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ABS
+  # ─────────────────────────────────────────────────────────────────────────────
+  abs_standard:
+    display_name: "ABS Standard"
+    material: "ABS"
+    nozzle_temp: 250
+    nozzle_temp_first_layer: 255
+    bed_temp: 100
+    bed_temp_first_layer: 105
+    flow_ratio: 1.0
+    retraction_length: 0.6
+    retraction_speed: 40
+    fan_speed_min: 0
+    fan_speed_max: 30
+    fan_start_layer: 5
+    chamber_temp: 45
+    notes: "ABS requires enclosure, minimal cooling"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # TPU / Flexible
+  # ─────────────────────────────────────────────────────────────────────────────
+  tpu_95a:
+    display_name: "TPU 95A"
+    material: "TPU"
+    nozzle_temp: 230
+    nozzle_temp_first_layer: 235
+    bed_temp: 50
+    bed_temp_first_layer: 55
+    flow_ratio: 1.05
+    retraction_length: 0.0
+    retraction_speed: 20
+    fan_speed_min: 50
+    fan_speed_max: 80
+    fan_start_layer: 2
+    notes: "95A shore hardness TPU, no retraction recommended"
+
+  tpu_flexible:
+    display_name: "TPU Soft/Flexible"
+    material: "TPU"
+    nozzle_temp: 225
+    nozzle_temp_first_layer: 230
+    bed_temp: 45
+    bed_temp_first_layer: 50
+    flow_ratio: 1.08
+    retraction_length: 0.0
+    retraction_speed: 15
+    fan_speed_min: 60
+    fan_speed_max: 100
+    fan_start_layer: 2
+    notes: "Very flexible TPU, print slow!"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Specialty
+  # ─────────────────────────────────────────────────────────────────────────────
+  wood_pla:
+    display_name: "Wood Fill PLA"
+    material: "PLA"
+    nozzle_temp: 200
+    nozzle_temp_first_layer: 205
+    bed_temp: 60
+    bed_temp_first_layer: 65
+    flow_ratio: 1.05
+    retraction_length: 1.5
+    retraction_speed: 25
+    fan_speed_min: 100
+    fan_speed_max: 100
+    fan_start_layer: 2
+    notes: "Wood fill clogs easily, use 0.6mm nozzle, lower temps"
+
+  carbon_fiber:
+    display_name: "Carbon Fiber PLA/PETG"
+    material: "CF-PLA"
+    nozzle_temp: 230
+    nozzle_temp_first_layer: 235
+    bed_temp: 70
+    bed_temp_first_layer: 75
+    flow_ratio: 0.95
+    retraction_length: 0.8
+    retraction_speed: 35
+    fan_speed_min: 80
+    fan_speed_max: 100
+    fan_start_layer: 2
+    notes: "REQUIRES hardened steel nozzle! CF is abrasive"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUALITY PRESETS
+# ═══════════════════════════════════════════════════════════════════════════════
+# Each preset defines print quality and speed settings
+
+quality_presets:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Speed-focused
+  # ─────────────────────────────────────────────────────────────────────────────
+  speed_draft:
+    display_name: "Speed Draft"
+    layer_height: 0.32
+    first_layer_height: 0.35
+    infill_percentage: 10
+    infill_pattern: "grid"
+    wall_loops: 2
+    top_layers: 3
+    bottom_layers: 3
+    print_speed: 200
+    first_layer_speed: 50
+    travel_speed: 300
+    outer_wall_speed: 150
+    inner_wall_speed: 200
+    infill_speed: 250
+    notes: "Maximum speed, minimal quality - for quick tests"
+
+  draft:
+    display_name: "Draft"
+    layer_height: 0.28
+    first_layer_height: 0.30
+    infill_percentage: 15
+    infill_pattern: "grid"
+    wall_loops: 2
+    top_layers: 4
+    bottom_layers: 4
+    print_speed: 150
+    first_layer_speed: 40
+    travel_speed: 250
+    outer_wall_speed: 100
+    inner_wall_speed: 150
+    infill_speed: 180
+    notes: "Fast printing for prototypes and fit checks"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Balanced
+  # ─────────────────────────────────────────────────────────────────────────────
+  standard:
+    display_name: "Standard"
+    layer_height: 0.20
+    first_layer_height: 0.25
+    infill_percentage: 20
+    infill_pattern: "gyroid"
+    wall_loops: 3
+    top_layers: 5
+    bottom_layers: 4
+    print_speed: 100
+    first_layer_speed: 30
+    travel_speed: 200
+    outer_wall_speed: 60
+    inner_wall_speed: 100
+    infill_speed: 120
+    notes: "Balanced quality and speed - good for most prints"
+
+  standard_strong:
+    display_name: "Standard Strong"
+    layer_height: 0.20
+    first_layer_height: 0.25
+    infill_percentage: 40
+    infill_pattern: "gyroid"
+    wall_loops: 4
+    top_layers: 6
+    bottom_layers: 5
+    print_speed: 80
+    first_layer_speed: 25
+    travel_speed: 180
+    outer_wall_speed: 50
+    inner_wall_speed: 80
+    infill_speed: 100
+    notes: "Standard quality with increased strength"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Quality-focused
+  # ─────────────────────────────────────────────────────────────────────────────
+  fine:
+    display_name: "Fine"
+    layer_height: 0.12
+    first_layer_height: 0.20
+    infill_percentage: 20
+    infill_pattern: "gyroid"
+    wall_loops: 3
+    top_layers: 7
+    bottom_layers: 5
+    print_speed: 60
+    first_layer_speed: 20
+    travel_speed: 150
+    outer_wall_speed: 40
+    inner_wall_speed: 60
+    infill_speed: 80
+    notes: "High quality for detailed prints"
+
+  ultra_fine:
+    display_name: "Ultra Fine"
+    layer_height: 0.08
+    first_layer_height: 0.15
+    infill_percentage: 20
+    infill_pattern: "gyroid"
+    wall_loops: 4
+    top_layers: 10
+    bottom_layers: 7
+    print_speed: 40
+    first_layer_speed: 15
+    travel_speed: 120
+    outer_wall_speed: 25
+    inner_wall_speed: 40
+    infill_speed: 50
+    notes: "Maximum detail - very slow, use for display pieces"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Special Purpose
+  # ─────────────────────────────────────────────────────────────────────────────
+  structural:
+    display_name: "Structural"
+    layer_height: 0.20
+    first_layer_height: 0.25
+    infill_percentage: 60
+    infill_pattern: "cubic"
+    wall_loops: 5
+    top_layers: 8
+    bottom_layers: 6
+    print_speed: 60
+    first_layer_speed: 20
+    travel_speed: 150
+    outer_wall_speed: 40
+    inner_wall_speed: 60
+    infill_speed: 80
+    notes: "Maximum strength for functional parts"
+
+  vase_mode:
+    display_name: "Vase Mode (Spiral)"
+    layer_height: 0.20
+    first_layer_height: 0.25
+    infill_percentage: 0
+    wall_loops: 1
+    spiral_mode: true
+    top_layers: 0
+    bottom_layers: 3
+    print_speed: 40
+    first_layer_speed: 20
+    travel_speed: 150
+    outer_wall_speed: 40
+    notes: "Single continuous wall, no top - for vases and containers"
+
+  flexible:
+    display_name: "Flexible (TPU)"
+    layer_height: 0.20
+    first_layer_height: 0.25
+    infill_percentage: 15
+    infill_pattern: "gyroid"
+    wall_loops: 3
+    top_layers: 5
+    bottom_layers: 4
+    print_speed: 30
+    first_layer_speed: 15
+    travel_speed: 100
+    outer_wall_speed: 25
+    inner_wall_speed: 30
+    infill_speed: 35
+    notes: "Slow speeds for flexible materials"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEFAULT SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+defaults:
+  filament_preset: "pla_basic"
+  quality_preset: "standard"
+  # Auto-upload after slicing
+  auto_upload: false
+  # Generate thumbnail preview
+  generate_thumbnail: true
+  # Keep original model in output folder
+  keep_original_model: true
