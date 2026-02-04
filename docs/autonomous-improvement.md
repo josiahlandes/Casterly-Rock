@@ -19,6 +19,92 @@ The local-first constraint is itself a safety feature - Tyrion can only affect h
 3. **Automated invariants over human gates** - Safety through validation, not approval
 4. **Reflection as memory** - Every cycle logged for future learning
 5. **Graceful degradation** - If something breaks, auto-revert and try differently
+6. **Git as source of truth** - All changes flow through GitHub; the repo is the canonical state
+
+---
+
+## Git Workflow
+
+The GitHub repository is the **source and destination** for all autonomous changes. Tyrion never modifies files outside of a proper git workflow.
+
+### Branch Strategy
+
+```
+main (protected)
+  │
+  ├── auto/analyze-2026-02-04-001    (analysis results)
+  ├── auto/hyp-a3f2c                  (hypothesis implementation)
+  ├── auto/hyp-b7d1e                  (another hypothesis)
+  └── ...
+```
+
+### Cycle Git Operations
+
+```
+1. ANALYZE
+   - git fetch origin main
+   - git checkout main && git pull
+   - Read logs, codebase, identify issues
+
+2. HYPOTHESIZE
+   - Generate improvement ideas
+   - No git changes yet
+
+3. IMPLEMENT
+   - git checkout -b auto/hyp-{id}
+   - Make code changes
+   - git add . && git commit -m "auto: {description}"
+   - git push -u origin auto/hyp-{id}
+
+4. VALIDATE
+   - Run tests on branch
+   - Check invariants
+   - If fail: git branch -D auto/hyp-{id} (local + remote)
+
+5. INTEGRATE
+   - Option A (direct): git checkout main && git merge auto/hyp-{id} && git push
+   - Option B (PR): gh pr create --base main --head auto/hyp-{id}
+   - Clean up: git branch -d auto/hyp-{id}
+
+6. REFLECT
+   - Log outcome to ~/.casterly/autonomous/reflections/
+   - Update MEMORY.md if significant
+   - Commit reflection: git add MEMORY.md && git commit && git push
+```
+
+### Integration Modes
+
+```yaml
+git:
+  # Where changes are pushed
+  remote: origin
+  base_branch: main
+
+  # How to integrate validated changes
+  integration_mode: direct  # or "pull_request"
+
+  # PR mode settings (if integration_mode: pull_request)
+  pull_request:
+    auto_merge: true           # Merge PR automatically if CI passes
+    require_ci: true           # Wait for GitHub Actions
+    labels: ["autonomous"]
+    draft: false
+
+  # Branch cleanup
+  cleanup:
+    delete_merged: true
+    delete_failed: true
+    max_age_hours: 24
+```
+
+### Why GitHub as Source of Truth
+
+1. **Audit trail** - Every change is a commit with message and timestamp
+2. **Rollback** - `git revert` any bad change instantly
+3. **Collaboration** - Human can review auto/ branches anytime
+4. **CI integration** - GitHub Actions validate changes
+5. **Sync across machines** - Pull latest improvements anywhere
+6. **Backup** - Remote repo survives local hardware failure
 
 ---
 
@@ -297,6 +383,88 @@ tools:
         learnings:
           type: string
       required: [hypothesis_id, outcome]
+
+  # Git operations
+  - name: git_fetch_latest
+    description: Fetch latest changes from remote and sync with main branch
+    input_schema:
+      type: object
+      properties: {}
+      required: []
+
+  - name: git_create_branch
+    description: Create a new branch for implementing a hypothesis
+    input_schema:
+      type: object
+      properties:
+        hypothesis_id:
+          type: string
+        description:
+          type: string
+      required: [hypothesis_id]
+
+  - name: git_commit_changes
+    description: Stage and commit changes with a descriptive message
+    input_schema:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+      required: [message]
+
+  - name: git_push_branch
+    description: Push the current branch to remote
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+        set_upstream:
+          type: boolean
+      required: [branch]
+
+  - name: git_merge_to_main
+    description: Merge a validated branch into main
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+        delete_after_merge:
+          type: boolean
+      required: [branch]
+
+  - name: git_create_pr
+    description: Create a pull request for a branch (alternative to direct merge)
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+      required: [branch, title]
+
+  - name: git_cleanup_branch
+    description: Delete a branch locally and remotely after failed validation
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+        reason:
+          type: string
+      required: [branch, reason]
 ---
 
 # Self-Improvement Skill
@@ -356,6 +524,36 @@ autonomous:
   max_concurrent_branches: 3
   sandbox_timeout_seconds: 300
   sandbox_memory_mb: 2048
+
+# Git Configuration
+# GitHub repository is the source of truth for all changes
+git:
+  remote: origin
+  base_branch: main
+
+  # Branch naming
+  branch_prefix: "auto/"
+
+  # Integration strategy
+  integration_mode: direct  # "direct" = merge to main, "pull_request" = create PR
+
+  # Pull request settings (if integration_mode: pull_request)
+  pull_request:
+    auto_merge: true
+    require_ci: true
+    labels: ["autonomous", "auto-generated"]
+    reviewers: []  # Add GitHub usernames for optional review
+    draft: false
+
+  # Sync behavior
+  fetch_before_cycle: true
+  push_after_integrate: true
+
+  # Cleanup
+  cleanup:
+    delete_merged_branches: true
+    delete_failed_branches: true
+    max_stale_branch_age_hours: 48
 
 # Safety Invariants
 # These are checked AFTER every change - if any fail, auto-revert
