@@ -1,7 +1,7 @@
 # Autonomous Self-Improvement System
 
-> **Status**: Design document - implementation pending local compute infrastructure
-> **Prerequisites**: Mac Studio M5 Max 64GB+ with Qwen3-Coder-Next or equivalent
+> **Status**: Design document - ready for Phase 0 (API validation)
+> **Prerequisites**: Phase 0 requires Claude API access (~$150/mo). Phase 1+ benefits from local hardware.
 > **Last Updated**: 2026-02-04
 
 ## Vision
@@ -553,6 +553,111 @@ Each improvement cycle produces a reflection entry:
 
 ## Implementation Roadmap
 
+### Phase 0: API Validation (Bootstrap)
+
+> **Goal**: Validate the autonomous improvement concept using Claude API before committing to hardware.
+> **Duration**: 1-3 months
+> **Cost**: ~$150/month (Sonnet 4, 12 cycles/night)
+
+This phase uses Claude API to iterate on the system design, work out bugs, and gather real metrics before investing in dedicated hardware.
+
+#### Why Start with API
+
+1. **Validate before investing** - Prove the concept works before spending $2,800+ on hardware
+2. **Refine prompts** - Optimize analyze/hypothesize/implement prompts with real feedback
+3. **Tune thresholds** - Find optimal confidence levels empirically
+4. **Battle-test invariants** - Discover edge cases in safety checks
+5. **Gather metrics** - Real data on cycles needed, success rates, token usage
+6. **Portable learnings** - Everything learned transfers to local deployment
+
+#### Phase 0 Tasks
+
+- [ ] Implement provider abstraction layer (swap API ↔ local with config change)
+- [ ] Create `config/autonomous.yaml` with API-specific settings
+- [ ] Build minimal loop: analyze → hypothesize → implement → validate
+- [ ] Run overnight (12 cycles, ~$5/night) to gather initial data
+- [ ] Track metrics: success rate, tokens/cycle, time/cycle, failure modes
+- [ ] Iterate on prompts based on failure analysis
+- [ ] Document learnings in reflection logs
+
+#### API Configuration
+
+```yaml
+autonomous:
+  # Phase 0: API-based validation
+  provider: claude
+  model: claude-sonnet-4  # Cost-effective for iteration
+
+  # Conservative limits for API phase
+  cycle_interval_minutes: 60      # Slower to manage costs
+  max_cycles_per_day: 12          # Overnight only
+  quiet_hours:
+    start: "06:00"
+    end: "22:00"
+    enabled: true                 # Only run at night
+
+  # Cost tracking
+  budget:
+    daily_limit_usd: 10
+    monthly_limit_usd: 200
+    alert_threshold: 0.8          # Alert at 80% of budget
+```
+
+#### Hybrid Escalation (Optional)
+
+For complex hypotheses, escalate to Opus:
+
+```yaml
+escalation:
+  enabled: true
+  default_model: claude-sonnet-4
+  escalation_model: claude-opus-4.5
+
+  escalate_when:
+    - complexity: high
+    - previous_failures: "> 2"
+    - affects_core_modules: true
+```
+
+#### Migration Path to Local
+
+When ready to move to local hardware:
+
+```yaml
+# Before (API)
+autonomous:
+  provider: claude
+  model: claude-sonnet-4
+
+# After (Local)
+autonomous:
+  provider: ollama
+  model: qwen3-coder-next
+
+  # Remove cost constraints
+  cycle_interval_minutes: 30
+  max_cycles_per_day: 48
+  quiet_hours:
+    enabled: false
+  budget:
+    enabled: false
+```
+
+The provider abstraction ensures this is a config change, not a code change.
+
+#### Success Criteria for Phase 0
+
+Before proceeding to Phase 1 (or hardware purchase):
+
+- [ ] ≥50 successful improvement cycles completed
+- [ ] Success rate ≥30% (hypotheses that pass validation)
+- [ ] At least 5 meaningful improvements integrated to main
+- [ ] No invariant violations in production
+- [ ] Cost per successful improvement understood
+- [ ] Prompt templates stabilized (no major changes in 2 weeks)
+
+---
+
 ### Phase 1: Foundation
 - [ ] Create `src/autonomous/` directory structure
 - [ ] Implement basic loop with analyze → implement → validate cycle
@@ -607,17 +712,80 @@ The daemon will run inference continuously. Expect:
 
 ---
 
-## Why This Works Locally (And Not in Cloud)
+## Why Local is the End Goal (But API is a Valid Start)
 
-1. **Cost**: Each cycle might use 10k-100k tokens. At $15-75/M tokens, 48 cycles/day = $7-360/day = $200-10,000/month. Unsustainable.
+### API Phase (Bootstrap)
 
-2. **Latency**: Local inference removes network round-trips, enabling faster iteration.
+Running via Claude API is viable for **validation and iteration**:
 
-3. **Privacy**: Self-improvement logs contain full codebase context. Never leaves your machine.
+| Metric | API (Sonnet, 12 cycles/night) |
+|--------|-------------------------------|
+| Monthly cost | ~$150 |
+| Cycles/day | 12 |
+| Best for | Refining prompts, tuning thresholds, proving concept |
 
-4. **Rate Limits**: No API throttling. Run as fast as hardware allows.
+This is sustainable for 1-3 months while iterating on the design.
 
-5. **Reliability**: No dependency on external services. Internet outage doesn't stop improvement.
+### Local Phase (Production)
+
+Once validated, local deployment is superior for **continuous operation**:
+
+| Metric | API (48 cycles/day) | Local (48 cycles/day) |
+|--------|---------------------|----------------------|
+| Monthly cost | $630-3,100 | $0 (after hardware) |
+| Latency | Network round-trips | Instant |
+| Privacy | Code sent to cloud | Never leaves machine |
+| Rate limits | API throttling | None |
+| Reliability | Depends on internet | Fully offline |
+
+### The Math
+
+| Scenario | Break-even vs Mac Studio ($2,800) |
+|----------|-----------------------------------|
+| Sonnet, 12 cycles/night ($150/mo) | 19 months |
+| Sonnet, 48 cycles/day ($630/mo) | 4.5 months |
+| Opus, 12 cycles/night ($780/mo) | 3.5 months |
+| Opus, 48 cycles/day ($3,100/mo) | < 1 month |
+
+**Recommendation**: Start with API to validate, migrate to local when:
+- Design is stable
+- Success rate is acceptable
+- Monthly API costs exceed ~$300 (9-month break-even)
+
+---
+
+## Provider Abstraction
+
+The autonomous loop should be provider-agnostic. All inference calls go through a unified interface:
+
+```typescript
+// src/autonomous/provider.ts
+
+interface AutonomousProvider {
+  analyze(context: AnalysisContext): Promise<Observation[]>;
+  hypothesize(observations: Observation[]): Promise<Hypothesis[]>;
+  implement(hypothesis: Hypothesis): Promise<Implementation>;
+  reflect(outcome: CycleOutcome): Promise<Reflection>;
+}
+
+// Factory function reads from config
+export function createProvider(config: AutonomousConfig): AutonomousProvider {
+  switch (config.provider) {
+    case 'claude':
+      return new ClaudeAutonomousProvider(config);
+    case 'ollama':
+      return new OllamaAutonomousProvider(config);
+    default:
+      throw new Error(`Unknown provider: ${config.provider}`);
+  }
+}
+```
+
+This ensures:
+1. **Config-driven switching** - Change provider without code changes
+2. **Consistent interface** - Same loop logic regardless of backend
+3. **Easy testing** - Mock provider for unit tests
+4. **Future flexibility** - Add new providers (OpenAI, local fine-tuned, etc.)
 
 ---
 
@@ -637,8 +805,27 @@ The daemon will run inference continuously. Expect:
 
 ## Notes
 
-This document captures the design discussion from 2026-02-04. Implementation is gated on acquiring appropriate local hardware (Mac Studio M5 Max 64GB or better) to run Qwen3-Coder-Next or equivalent model continuously without API costs.
+This document captures the design discussion from 2026-02-04.
 
-The system is designed to be conservative by default - confidence thresholds are high, invariants are strict, and the first implementation should err on the side of doing less rather than more.
+### Development Strategy
 
-When ready to build, start with Phase 1 and validate each phase works correctly before proceeding.
+**Phase 0 (Now)**: Build and validate using Claude API (~$150/month with Sonnet 4, 12 cycles/night). This allows iterating on the design without hardware investment.
+
+**Phase 1+ (Later)**: When M5 Mac Studios release (expected early 2026), evaluate migration to local hardware. If API costs have grown or the system is proven valuable, local deployment eliminates ongoing costs.
+
+### Design Philosophy
+
+The system is designed to be conservative by default:
+- High confidence thresholds
+- Strict invariants
+- Auto-revert on any violation
+- Provider-agnostic architecture for easy migration
+
+### Getting Started
+
+1. Begin with Phase 0 (API validation)
+2. Run overnight cycles to minimize costs
+3. Track success rate and learnings
+4. Migrate to local when design stabilizes and hardware is available
+
+The provider abstraction ensures migration from API to local is a configuration change, not a rewrite.
