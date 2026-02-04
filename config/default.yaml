@@ -1,25 +1,95 @@
+# Casterly Configuration
+# Local-first privacy-aware LLM router
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROVIDER CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
 local:
   provider: ollama
-  model: qwen3:14b
+  model: qwen3:14b              # Tool-capable model required for native tool use
   baseUrl: http://localhost:11434
-  timeoutMs: 60000
+  timeoutMs: 60000              # 14B models need longer timeout
+  # Alternative models: llama3.1:8b, mistral:7b (less tool capability)
 
 cloud:
   provider: claude
   model: claude-sonnet-4-20250514
-  apiKeyEnv: ANTHROPIC_API_KEY
+  apiKeyEnv: ANTHROPIC_API_KEY  # Set this env var with your API key
   timeoutMs: 45000
+  # Fallback: If billing error occurs, routes to local automatically
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROUTER CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
 
 router:
-  defaultRoute: local
-  confidenceThreshold: 0.7
+  defaultRoute: local           # Safe default - privacy first
+  confidenceThreshold: 0.7      # Below this, force local routing
+  # Router uses native tool calling (route_decision tool) for classification
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SENSITIVITY DETECTION
+# ═══════════════════════════════════════════════════════════════════════════════
 
 sensitivity:
+  # These categories ALWAYS route locally, regardless of LLM classification
   alwaysLocal:
-    - calendar
-    - finances
-    - voice_memos
-    - health
-    - credentials
-    - documents
-    - contacts
+    - calendar      # Schedules, appointments, meetings
+    - finances      # Bank accounts, SSN, credit cards, transactions
+    - voice_memos   # Personal audio recordings
+    - health        # Medical info, prescriptions, symptoms
+    - credentials   # Passwords, API keys, tokens, secrets
+    - documents     # Private notes, journals, contracts
+    - contacts      # Personal relationships, phone numbers, addresses
+    - location      # GPS data, home/work addresses
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SESSION MANAGEMENT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+session:
+  scope: per-peer               # Options: main, per-peer, per-channel
+  maxHistoryMessages: 50        # Messages to keep in memory
+  dailyResetHour: 4             # Reset sessions at 4 AM (null to disable)
+  basePath: ~/.casterly/sessions
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOOLS CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tools:
+  # Native tool use is enabled by default
+  enabled: true
+  maxIterations: 5              # Max tool call loops per request
+
+  # Bash tool safety settings
+  bash:
+    autoApprove: false          # Set true for non-interactive mode
+    blockedPatterns:
+      - "rm -rf /"
+      - ":(){ :|:& };:"         # Fork bomb
+      - "dd if=/dev/"
+      - "> /dev/sd"
+      - "mkfs"
+      - "chmod -R 777 /"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SKILLS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+skills:
+  # Paths to search for SKILL.md files
+  paths:
+    - ~/.casterly/workspace/skills
+    - ./skills
+  # Skills can define native tools in their frontmatter
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+logging:
+  level: info                   # Options: debug, info, warn, error
+  redactSensitive: true         # Always redact sensitive content in logs
+  # Never log raw user content - use safe-logger module
