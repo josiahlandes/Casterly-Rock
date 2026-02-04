@@ -1,0 +1,644 @@
+# Autonomous Self-Improvement System
+
+> **Status**: Design document - implementation pending local compute infrastructure
+> **Prerequisites**: Mac Studio M5 Max 64GB+ with Qwen3-Coder-Next or equivalent
+> **Last Updated**: 2026-02-04
+
+## Vision
+
+Tyrion runs 24/7 on dedicated local hardware with a single directive: **improve yourself**. No human review gates, no API costs, no privacy compromises. A continuous loop of analysis, hypothesis, implementation, validation, and integration.
+
+The local-first constraint is itself a safety feature - Tyrion can only affect his own codebase, the local machine, and systems explicitly granted access.
+
+---
+
+## Core Principles
+
+1. **Compound growth** - Each improvement enables discovering the next capability gap
+2. **Zero marginal cost** - Local inference means unlimited experimentation
+3. **Automated invariants over human gates** - Safety through validation, not approval
+4. **Reflection as memory** - Every cycle logged for future learning
+5. **Graceful degradation** - If something breaks, auto-revert and try differently
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AUTONOMOUS LOOP DAEMON                        │
+│                                                                  │
+│  ┌──────────┐   ┌────────────┐   ┌─────────────┐   ┌─────────┐ │
+│  │ ANALYZE  │ → │ HYPOTHESIZE│ → │ IMPLEMENT   │ → │VALIDATE │ │
+│  │          │   │            │   │             │   │         │ │
+│  │ - Errors │   │ - Generate │   │ - Write code│   │ - Tests │ │
+│  │ - Perf   │   │   ideas    │   │ - Create    │   │ - Bench │ │
+│  │ - Gaps   │   │ - Rank by  │   │   tools     │   │ - Invar │ │
+│  │ - Logs   │   │   impact   │   │ - Branch    │   │   iants │ │
+│  └──────────┘   └────────────┘   └─────────────┘   └────┬────┘ │
+│                                                          │      │
+│       ┌──────────────────────────────────────────────────┘      │
+│       │                                                         │
+│       ▼                                                         │
+│  ┌─────────┐   ┌──────────┐                                    │
+│  │INTEGRATE│ → │ REFLECT  │ → [sleep] → [repeat]               │
+│  │         │   │          │                                    │
+│  │ - Merge │   │ - Log    │                                    │
+│  │ - Deploy│   │ - Learn  │                                    │
+│  │ - Revert│   │ - Memory │                                    │
+│  └─────────┘   └──────────┘                                    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Components
+
+### 1. Autonomous Loop Daemon
+
+**File**: `src/autonomous/loop.ts`
+
+```typescript
+// Pseudocode structure
+async function autonomousLoop() {
+  while (true) {
+    const observations = await analyze();
+    const hypotheses = await generateHypotheses(observations);
+
+    for (const hypothesis of hypotheses.slice(0, MAX_ATTEMPTS_PER_CYCLE)) {
+      const branch = await createBranch(hypothesis.id);
+      const implementation = await implement(hypothesis, branch);
+      const validation = await validate(implementation);
+
+      if (validation.passed && validation.invariantsHold) {
+        await integrate(branch);
+        await reflect(hypothesis, 'success', validation.metrics);
+      } else {
+        await revert(branch);
+        await reflect(hypothesis, 'failure', validation.errors);
+      }
+    }
+
+    await sleep(CYCLE_INTERVAL);
+  }
+}
+```
+
+### 2. Analyzer Module
+
+**File**: `src/autonomous/analyzer.ts`
+
+Responsibilities:
+- Parse error logs, identify patterns and frequencies
+- Profile response times, find P95/P99 outliers
+- Detect capability gaps (failed tool calls, unhandled intents)
+- Monitor resource usage (memory, CPU, disk)
+- Track user satisfaction signals (if available)
+
+Outputs:
+```typescript
+interface Observation {
+  type: 'error_pattern' | 'performance_issue' | 'capability_gap' | 'resource_concern';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  frequency: number;
+  context: Record<string, unknown>;
+  suggestedArea: string; // e.g., 'src/router/', 'skills/', 'config/'
+}
+```
+
+### 3. Hypothesis Generator
+
+**File**: `src/autonomous/hypothesis.ts`
+
+Responsibilities:
+- Take observations and generate improvement ideas
+- Rank by expected impact vs. implementation risk
+- Filter out hypotheses that touch protected invariants
+- Maintain history to avoid repeating failed approaches
+
+Outputs:
+```typescript
+interface Hypothesis {
+  id: string;
+  observation: Observation;
+  proposal: string;
+  expectedImpact: 'low' | 'medium' | 'high';
+  confidence: number; // 0-1
+  affectedFiles: string[];
+  estimatedComplexity: 'trivial' | 'simple' | 'moderate' | 'complex';
+  previousAttempts: number;
+}
+```
+
+### 4. Sandbox Executor
+
+**File**: `src/autonomous/sandbox.ts`
+
+Responsibilities:
+- Execute changes in isolated environment
+- Prevent changes from affecting running daemon until validated
+- Resource limits (CPU, memory, disk, time)
+- Network isolation (no external calls during validation)
+
+### 5. Validator
+
+**File**: `src/autonomous/validator.ts`
+
+Responsibilities:
+- Run full test suite (`npm run check`)
+- Execute performance benchmarks
+- Verify all invariants hold
+- Compare metrics against baseline
+
+### 6. Integrator
+
+**File**: `src/autonomous/integrator.ts`
+
+Responsibilities:
+- Merge validated branches to main
+- Trigger daemon restart if needed (graceful)
+- Update baseline metrics
+- Clean up old branches
+
+### 7. Reflector
+
+**File**: `src/autonomous/reflector.ts`
+
+Responsibilities:
+- Log every cycle outcome to structured storage
+- Update MEMORY.md with significant learnings
+- Maintain success/failure statistics per hypothesis type
+- Feed learnings back into hypothesis ranking
+
+---
+
+## Self-Improvement Skill
+
+**File**: `skills/self-improve/SKILL.md`
+
+```yaml
+---
+name: self-improve
+description: Tools for autonomous self-modification and improvement
+version: 1.0.0
+tools:
+  - name: analyze_errors
+    description: Parse recent error logs and identify patterns worth addressing
+    input_schema:
+      type: object
+      properties:
+        timeframe_hours:
+          type: number
+          description: How far back to analyze (default 24)
+        min_frequency:
+          type: number
+          description: Minimum occurrences to consider a pattern
+      required: []
+
+  - name: analyze_performance
+    description: Profile response times and identify bottlenecks
+    input_schema:
+      type: object
+      properties:
+        percentile:
+          type: number
+          description: Which percentile to focus on (default 95)
+      required: []
+
+  - name: identify_capability_gaps
+    description: Find requests that failed due to missing tools or skills
+    input_schema:
+      type: object
+      properties:
+        timeframe_hours:
+          type: number
+      required: []
+
+  - name: propose_improvement
+    description: Generate a hypothesis for addressing an observation
+    input_schema:
+      type: object
+      properties:
+        observation_id:
+          type: string
+        approach:
+          type: string
+          enum: [fix_bug, optimize_performance, add_tool, refactor, add_test]
+      required: [observation_id, approach]
+
+  - name: implement_change
+    description: Write code changes to address a hypothesis
+    input_schema:
+      type: object
+      properties:
+        hypothesis_id:
+          type: string
+        files_to_modify:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+      required: [hypothesis_id, description]
+
+  - name: run_validation
+    description: Execute test suite and quality gates against changes
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+      required: [branch]
+
+  - name: check_invariants
+    description: Verify all safety invariants still hold
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+      required: [branch]
+
+  - name: integrate_change
+    description: Merge validated changes to main branch
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+        restart_required:
+          type: boolean
+      required: [branch]
+
+  - name: revert_change
+    description: Abandon a failed change and clean up
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+        reason:
+          type: string
+      required: [branch, reason]
+
+  - name: reflect
+    description: Log outcome and learnings from an improvement cycle
+    input_schema:
+      type: object
+      properties:
+        hypothesis_id:
+          type: string
+        outcome:
+          type: string
+          enum: [success, failure, partial]
+        metrics:
+          type: object
+        learnings:
+          type: string
+      required: [hypothesis_id, outcome]
+---
+
+# Self-Improvement Skill
+
+This skill provides Tyrion with tools to analyze, modify, and improve his own codebase autonomously.
+
+## Usage
+
+This skill is invoked by the autonomous improvement daemon, not directly by users.
+
+## Safety
+
+All changes go through validation before integration. Invariants are checked automatically.
+```
+
+---
+
+## Configuration
+
+**File**: `config/autonomous.yaml`
+
+```yaml
+# Autonomous Improvement Configuration
+
+autonomous:
+  enabled: false  # Set to true when hardware is ready
+
+  # Timing
+  cycle_interval_minutes: 30
+  max_cycles_per_day: 48
+  quiet_hours:
+    start: "09:00"  # Pause during working hours if desired
+    end: "17:00"
+    enabled: false
+
+  # Scope
+  max_attempts_per_cycle: 3
+  max_files_per_change: 5
+  allowed_directories:
+    - src/
+    - skills/
+    - scripts/
+    - tests/
+    - config/  # except protected paths
+
+  forbidden_patterns:
+    - "**/*.env*"
+    - "**/credentials*"
+    - "**/secrets*"
+
+  # Confidence thresholds
+  auto_integrate_threshold: 0.9
+  attempt_threshold: 0.5  # Don't try if confidence below this
+
+  # Resource limits
+  max_branch_age_hours: 24
+  max_concurrent_branches: 3
+  sandbox_timeout_seconds: 300
+  sandbox_memory_mb: 2048
+
+# Safety Invariants
+# These are checked AFTER every change - if any fail, auto-revert
+invariants:
+  - name: quality_gates
+    check: "npm run check"
+    description: "All quality gates must pass"
+
+  - name: error_rate
+    check: "scripts/check-error-rate.sh"
+    threshold: "no increase over 24h baseline"
+    description: "Error rate must not increase"
+
+  - name: response_time
+    check: "scripts/check-response-time.sh"
+    threshold: "p95 regression < 10%"
+    description: "Response time must not regress significantly"
+
+  - name: protected_paths
+    check: "scripts/check-protected-paths.sh"
+    description: "Protected paths must remain unchanged"
+
+  - name: invariants_unchanged
+    check: "git diff HEAD -- config/autonomous.yaml | grep -q 'invariants:'"
+    invert: true
+    description: "Cannot modify own invariants"
+
+  - name: git_history
+    check: "git reflog | head -1 | grep -v 'force'"
+    description: "No force pushes or history rewrites"
+
+# Reflection storage
+reflection:
+  path: ~/.casterly/autonomous/reflections/
+  format: jsonl
+  retain_days: 90
+  summary_to_memory: true  # Also write summaries to MEMORY.md
+
+# Notifications (optional)
+notifications:
+  enabled: false
+  on_success: false
+  on_failure: true
+  on_revert: true
+  method: imessage  # Tyrion messages you about significant events
+  recipient: null  # Your phone number/Apple ID
+```
+
+---
+
+## Daemon Script
+
+**File**: `scripts/tyrion-daemon.sh`
+
+```bash
+#!/bin/bash
+# Tyrion Autonomous Improvement Daemon
+# Runs the self-improvement loop continuously
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+LOG_DIR="$HOME/.casterly/autonomous/logs"
+PID_FILE="$HOME/.casterly/autonomous/daemon.pid"
+
+mkdir -p "$LOG_DIR"
+
+usage() {
+    echo "Usage: $0 {start|stop|status|logs}"
+    exit 1
+}
+
+start_daemon() {
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "Daemon already running (PID: $(cat "$PID_FILE"))"
+        exit 1
+    fi
+
+    echo "Starting Tyrion autonomous improvement daemon..."
+
+    cd "$PROJECT_ROOT"
+    nohup npx tsx src/autonomous/loop.ts \
+        >> "$LOG_DIR/daemon-$(date +%Y%m%d).log" 2>&1 &
+
+    echo $! > "$PID_FILE"
+    echo "Daemon started (PID: $!)"
+    echo "Logs: $LOG_DIR"
+}
+
+stop_daemon() {
+    if [ ! -f "$PID_FILE" ]; then
+        echo "Daemon not running (no PID file)"
+        exit 1
+    fi
+
+    PID=$(cat "$PID_FILE")
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Stopping daemon (PID: $PID)..."
+        kill "$PID"
+        rm -f "$PID_FILE"
+        echo "Daemon stopped"
+    else
+        echo "Daemon not running (stale PID file)"
+        rm -f "$PID_FILE"
+    fi
+}
+
+status_daemon() {
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "Daemon running (PID: $(cat "$PID_FILE"))"
+
+        # Show recent activity
+        echo ""
+        echo "Recent cycles:"
+        tail -20 "$LOG_DIR/daemon-$(date +%Y%m%d).log" 2>/dev/null | grep -E "CYCLE|SUCCESS|FAILURE|REVERT" || echo "  (no recent activity)"
+    else
+        echo "Daemon not running"
+    fi
+}
+
+show_logs() {
+    tail -f "$LOG_DIR/daemon-$(date +%Y%m%d).log"
+}
+
+case "${1:-}" in
+    start)  start_daemon ;;
+    stop)   stop_daemon ;;
+    status) status_daemon ;;
+    logs)   show_logs ;;
+    *)      usage ;;
+esac
+```
+
+---
+
+## Reflection Log Format
+
+Each improvement cycle produces a reflection entry:
+
+```json
+{
+  "cycle_id": "2026-02-04-0342-847",
+  "timestamp": "2026-02-04T03:42:18Z",
+  "observation": {
+    "type": "error_pattern",
+    "code": "E1001",
+    "frequency": 12,
+    "context": "Provider timeout on large context requests"
+  },
+  "hypothesis": {
+    "id": "hyp-a3f2c",
+    "proposal": "Increase timeout for requests with >50k context tokens",
+    "confidence": 0.92,
+    "affected_files": ["src/providers/ollama.ts"]
+  },
+  "implementation": {
+    "branch": "auto/hyp-a3f2c",
+    "changes": [
+      {
+        "file": "src/providers/ollama.ts",
+        "line": 47,
+        "type": "modify"
+      }
+    ]
+  },
+  "validation": {
+    "tests_passed": true,
+    "invariants_passed": true,
+    "metrics": {
+      "test_duration_ms": 4521,
+      "coverage_delta": 0
+    }
+  },
+  "outcome": "success",
+  "integrated": true,
+  "learnings": "Dynamic timeout based on context length is more robust than fixed value"
+}
+```
+
+---
+
+## Decision Matrix
+
+| Confidence | Tests | Invariants | Action |
+|------------|-------|------------|--------|
+| ≥ 0.9 | Pass | Pass | Auto-integrate |
+| ≥ 0.7 | Pass | Pass | Integrate, log for review |
+| ≥ 0.5 | Pass | Pass | Integrate to staging branch |
+| < 0.5 | Any | Any | Log hypothesis only |
+| Any | Fail | Any | Revert, log failure |
+| Any | Any | Fail | Revert, log critical |
+
+---
+
+## Implementation Roadmap
+
+### Phase 1: Foundation
+- [ ] Create `src/autonomous/` directory structure
+- [ ] Implement basic loop with analyze → implement → validate cycle
+- [ ] Create `config/autonomous.yaml` with conservative defaults
+- [ ] Build `scripts/tyrion-daemon.sh`
+
+### Phase 2: Analysis
+- [ ] Implement error log parser
+- [ ] Implement performance profiler
+- [ ] Implement capability gap detector
+- [ ] Create baseline metrics collection
+
+### Phase 3: Hypothesis & Implementation
+- [ ] Build hypothesis generator
+- [ ] Implement safe file modification
+- [ ] Create git branch management
+- [ ] Build sandbox execution environment
+
+### Phase 4: Validation & Integration
+- [ ] Implement invariant checking
+- [ ] Build automatic revert capability
+- [ ] Create metrics comparison
+- [ ] Implement graceful daemon restart
+
+### Phase 5: Reflection & Learning
+- [ ] Build reflection logger
+- [ ] Implement MEMORY.md integration
+- [ ] Create hypothesis ranking based on history
+- [ ] Build notification system (optional)
+
+### Phase 6: Hardening
+- [ ] Stress test with intentionally bad hypotheses
+- [ ] Verify revert behavior under all failure modes
+- [ ] Test daemon recovery after crash
+- [ ] Validate invariant protection is bulletproof
+
+---
+
+## Hardware Requirements
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| Machine | Mac Studio M5 Max | Mac Studio M5 Ultra |
+| Unified Memory | 48 GB | 64-128 GB |
+| Storage | 512 GB SSD | 1 TB SSD |
+| Model | Qwen3-Coder-Next Q4_K_M | Qwen3-Coder-Next Q6_K |
+
+The daemon will run inference continuously. Expect:
+- ~50-100W sustained power draw
+- Constant memory pressure at 70-90% utilization
+- Significant disk I/O for logging and git operations
+
+---
+
+## Why This Works Locally (And Not in Cloud)
+
+1. **Cost**: Each cycle might use 10k-100k tokens. At $15-75/M tokens, 48 cycles/day = $7-360/day = $200-10,000/month. Unsustainable.
+
+2. **Latency**: Local inference removes network round-trips, enabling faster iteration.
+
+3. **Privacy**: Self-improvement logs contain full codebase context. Never leaves your machine.
+
+4. **Rate Limits**: No API throttling. Run as fast as hardware allows.
+
+5. **Reliability**: No dependency on external services. Internet outage doesn't stop improvement.
+
+---
+
+## Open Questions
+
+1. **Scope boundaries**: Should Tyrion be able to create entirely new modules, or only modify existing ones?
+
+2. **Human notification**: Should significant changes trigger an iMessage notification, even without requiring approval?
+
+3. **Rollback depth**: How many cycles back should auto-revert go if a subtle regression is detected later?
+
+4. **Multi-hypothesis**: Should multiple hypotheses be tested in parallel on separate branches?
+
+5. **External validation**: Should there be an optional "phone home" to validate major improvements against a cloud model?
+
+---
+
+## Notes
+
+This document captures the design discussion from 2026-02-04. Implementation is gated on acquiring appropriate local hardware (Mac Studio M5 Max 64GB or better) to run Qwen3-Coder-Next or equivalent model continuously without API costs.
+
+The system is designed to be conservative by default - confidence thresholds are high, invariants are strict, and the first implementation should err on the side of doing less rather than more.
+
+When ready to build, start with Phase 1 and validate each phase works correctly before proceeding.
