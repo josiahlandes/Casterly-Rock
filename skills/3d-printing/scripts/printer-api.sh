@@ -1,6 +1,6 @@
 #!/bin/bash
 # printer-api.sh - Interact with the 3D printer via its network API
-# Supports Moonraker (Klipper), OctoPrint, and Elegoo native APIs
+# Supports: SDCP (Elegoo Centauri Carbon), Moonraker (Klipper), OctoPrint
 # Usage: printer-api.sh <command> [args...]
 
 set -e
@@ -8,9 +8,11 @@ set -e
 COMMAND="$1"
 shift || true
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 CONFIG_FILE="${HOME}/.casterly/config/3d-printing.yaml"
 if [[ ! -f "$CONFIG_FILE" ]]; then
-    CONFIG_FILE="$(dirname "$0")/../../../config/3d-printing.yaml"
+    CONFIG_FILE="${SCRIPT_DIR}/../../../config/3d-printing.yaml"
 fi
 
 # Parse printer config
@@ -25,6 +27,65 @@ API_TYPE=$(get_printer_config "api_type")
 API_KEY=$(get_printer_config "api_key")
 
 BASE_URL="http://${PRINTER_ADDRESS}:${PRINTER_PORT}"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SDCP Support (Elegoo Centauri Carbon)
+# Uses WebSocket protocol - delegate to Node.js client
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if [[ "$API_TYPE" == "sdcp" ]] || [[ "$API_TYPE" == "elegoo" ]]; then
+    SDCP_CLIENT="${SCRIPT_DIR}/sdcp-client.mjs"
+
+    if [[ ! -f "$SDCP_CLIENT" ]]; then
+        echo "Error: SDCP client not found at $SDCP_CLIENT"
+        exit 1
+    fi
+
+    # Check for Node.js
+    if ! command -v node &> /dev/null; then
+        echo "Error: Node.js required for SDCP protocol (Elegoo Centauri Carbon)"
+        echo "Install Node.js: https://nodejs.org/"
+        exit 1
+    fi
+
+    # Check for ws module
+    if ! node -e "require('ws')" 2>/dev/null; then
+        echo "Installing WebSocket module..."
+        npm install -g ws 2>/dev/null || npm install ws --prefix "${SCRIPT_DIR}" 2>/dev/null
+    fi
+
+    # Map commands to SDCP client
+    case "$COMMAND" in
+        info)    node "$SDCP_CLIENT" info ;;
+        status)  node "$SDCP_CLIENT" status ;;
+        upload)  node "$SDCP_CLIENT" upload "$@" ;;
+        start)   node "$SDCP_CLIENT" start "$@" ;;
+        pause)   node "$SDCP_CLIENT" pause ;;
+        resume)  node "$SDCP_CLIENT" resume ;;
+        cancel)  node "$SDCP_CLIENT" cancel ;;
+        files)   node "$SDCP_CLIENT" files ;;
+        *)
+            echo "SDCP Client for Elegoo Centauri Carbon"
+            echo ""
+            echo "Usage: printer-api.sh <command> [args...]"
+            echo ""
+            echo "Commands:"
+            echo "  info              Get printer information"
+            echo "  status            Get current print status"
+            echo "  upload <file>     Upload gcode file to printer"
+            echo "  start <filename>  Start printing a file"
+            echo "  pause             Pause current print"
+            echo "  resume            Resume paused print"
+            echo "  cancel            Cancel current print"
+            echo "  files             List files on printer"
+            ;;
+    esac
+    exit 0
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HTTP-based APIs (Moonraker, OctoPrint)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # HTTP request helper
 api_request() {

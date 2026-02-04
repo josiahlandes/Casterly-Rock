@@ -9,8 +9,9 @@ printer:
   name: "Elegoo Centauri Carbon"
   address: "192.168.1.100"    # UPDATE with your printer's IP
   port: 80
-  api_type: "moonraker"       # Options: moonraker, elegoo, octoprint
-  # api_key: ""               # Uncomment and set if your printer requires auth
+  api_type: "sdcp"            # Options: sdcp (Elegoo), moonraker (Klipper), octoprint
+  # Note: Elegoo Centauri Carbon uses SDCP protocol over WebSocket (ws://IP/websocket)
+  # No authentication required for local network access
 
 # Output directory for sliced files
 output_dir: "~/.casterly/prints"
