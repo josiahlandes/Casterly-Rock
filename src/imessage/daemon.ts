@@ -25,6 +25,7 @@ import {
   type UserProfile,
   type UsersConfig,
 } from '../interface/index.js';
+import { wrapError, formatErrorForUser } from '../errors/index.js';
 import { getMessagesSince, getLatestMessageRowId, type Message } from './reader.js';
 import { sendMessage, checkMessagesAvailable } from './sender.js';
 import { filterToolCalls } from './tool-filter.js';
@@ -313,11 +314,17 @@ async function processMessage(
       safeLogger.error('Failed to send response', { error: result.error });
     }
   } catch (error) {
+    const casterlyError = wrapError(error);
+
     safeLogger.error('Failed to generate response', {
-      error: error instanceof Error ? error.message : String(error),
+      code: casterlyError.code,
+      category: casterlyError.category,
+      message: casterlyError.message,
+      details: casterlyError.details,
     });
 
-    const result = sendMessage(sender, 'Sorry, I encountered an error processing your message.');
+    const errorMessage = formatErrorForUser(casterlyError, 'imessage');
+    const result = sendMessage(sender, errorMessage);
     if (!result.success) {
       safeLogger.error('Failed to send error message', { error: result.error });
     }
