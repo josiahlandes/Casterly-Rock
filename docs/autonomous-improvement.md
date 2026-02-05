@@ -736,6 +736,137 @@ Each improvement cycle produces a reflection entry:
 
 ---
 
+## Raising the Ceiling
+
+The autonomous system can only improve what it can observe. These strategies expand what it can see and act on.
+
+### 1. Richer Instrumentation
+
+Current logging captures errors, but misses intent and context:
+
+```typescript
+// Current: just errors
+{ code: "TOOL_FAIL", message: "bash timeout" }
+
+// Better: capture intent + outcome
+{
+  code: "TOOL_FAIL",
+  message: "bash timeout",
+  userIntent: "list large directory",
+  suggestedFix: "add pagination or use find",
+  frequency: 47
+}
+```
+
+Log patterns that reveal capability gaps:
+- "User asked for X, we couldn't do it" → missing capability
+- "Tool called but result unused" → unnecessary tool calls
+- "User rephrased same question 3x" → unclear responses
+- "Request succeeded but took >30s" → performance issue
+
+### 2. Design Context Files
+
+Create files the analyzer reads to understand *why* things exist:
+
+**`docs/ARCHITECTURE.md`**:
+```markdown
+## Design Decisions
+
+### Why we use X instead of Y
+We chose X because... This means the system should never...
+
+### Known Limitations
+- Can't do Z because of dependency on...
+- Performance degrades when...
+
+### Improvement Priorities
+1. Reduce tool call latency
+2. Better error messages for file operations
+3. Add git integration
+```
+
+### 3. User Feedback Loop
+
+Add structured feedback the analyzer can read:
+
+```yaml
+# ~/.casterly/feedback.yaml
+feedback:
+  - id: fb-001
+    type: feature_request
+    content: "Would be nice to have a git tool"
+    votes: 5
+
+  - id: fb-002
+    type: bug_report
+    content: "Bash tool hangs on interactive commands"
+    frequency: 12
+```
+
+The analyzer generates hypotheses directly from high-vote feedback.
+
+### 4. Semantic Annotations
+
+Add parseable hints in code:
+
+```typescript
+// @autonomous-hint: This function is slow because of N+1 queries
+// @autonomous-priority: high
+// @autonomous-approach: consider batching
+async function fetchUserData() { ... }
+```
+
+The analyzer can grep for these and prioritize accordingly.
+
+### 5. External Knowledge Access
+
+Provide documentation for dependencies:
+
+```yaml
+# config/autonomous.yaml
+context:
+  docs:
+    - path: docs/ollama-api.md
+    - path: docs/tool-schema.md
+```
+
+These are included in the analysis context.
+
+### 6. Expand Allowed Scope
+
+Cautiously expand what can be modified:
+
+```yaml
+# Current (conservative)
+max_files_per_change: 5
+allowed_directories:
+  - src/
+  - tests/
+
+# Expanded (for mature system)
+max_files_per_change: 10
+allowed_directories:
+  - src/
+  - tests/
+  - docs/          # Can update documentation
+  - skills/        # Can create new skills
+```
+
+### Impact Summary
+
+| Method | Effort | Impact |
+|--------|--------|--------|
+| Better logging | Low | High |
+| Design docs | Low | Medium |
+| User feedback | Medium | High |
+| Semantic annotations | Low | Medium |
+| External docs | Medium | Medium |
+| Expand scope | Config change | Variable |
+
+**Biggest win**: Structured logging of user intent + outcome, so the system observes what users actually need.
+
+---
+
 ## Decision Matrix
 
 | Confidence | Tests | Invariants | Action |
