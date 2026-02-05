@@ -458,8 +458,8 @@ async function loadConfig(configPath: string): Promise<AutonomousConfig> {
   // Convert from YAML structure to config object
   return {
     enabled: raw.autonomous?.enabled ?? false,
-    provider: raw.autonomous?.provider ?? 'claude',
-    model: raw.autonomous?.model ?? 'claude-sonnet-4',
+    provider: 'ollama',
+    model: raw.autonomous?.model ?? 'hermes3:70b',
     cycleIntervalMinutes: raw.autonomous?.cycle_interval_minutes ?? 60,
     maxCyclesPerDay: raw.autonomous?.max_cycles_per_day ?? 12,
     quietHours: raw.autonomous?.quiet_hours
@@ -509,8 +509,8 @@ async function loadConfig(configPath: string): Promise<AutonomousConfig> {
     escalation: raw.escalation
       ? {
           enabled: raw.escalation.enabled ?? false,
-          defaultModel: raw.escalation.default_model ?? 'claude-sonnet-4',
-          escalationModel: raw.escalation.escalation_model ?? 'claude-opus-4.5',
+          defaultModel: raw.escalation.default_model ?? 'hermes3:70b',
+          escalationModel: raw.escalation.escalation_model ?? 'qwen3-coder-next:latest',
           escalateWhen: raw.escalation.escalate_when ?? {},
         }
       : undefined,

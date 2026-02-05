@@ -1,4 +1,5 @@
 # Autonomous Self-Improvement Configuration
+# Mac Studio Edition - Local Ollama Only
 # See docs/autonomous-improvement.md for full documentation
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -9,9 +10,9 @@ autonomous:
   # Master switch - set to true to enable autonomous improvement
   enabled: false
 
-  # Provider: "claude" for API phase, "ollama" for local phase
-  provider: claude
-  model: claude-sonnet-4  # Cost-effective for iteration
+  # Provider: Always ollama (local inference)
+  provider: ollama
+  model: hermes3:70b  # Primary model with native tool use
 
   # ─────────────────────────────────────────────────────────────────────────────
   # TIMING
@@ -81,13 +82,10 @@ autonomous:
   sandbox_memory_mb: 2048
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # BUDGET (API Phase Only)
+  # BUDGET (Not applicable for local inference)
   # ─────────────────────────────────────────────────────────────────────────────
-
-  budget:
-    daily_limit_usd: 10
-    monthly_limit_usd: 200
-    alert_threshold: 0.8  # Alert at 80% of budget
+  # Local inference has no per-token cost
+  # budget: null
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GIT CONFIGURATION
@@ -148,15 +146,15 @@ invariants:
     description: "Protected paths must remain unchanged"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ESCALATION (Optional)
+# ESCALATION (Optional - Model Switching for Complex Tasks)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 escalation:
   enabled: false
-  default_model: claude-sonnet-4
-  escalation_model: claude-opus-4.5
+  default_model: hermes3:70b
+  escalation_model: qwen3-coder-next:latest  # Use coding model for complex implementations
 
-  # When to escalate to the more powerful model
+  # When to escalate to the coding model
   escalate_when:
     complexity: complex
     previous_failures: 2

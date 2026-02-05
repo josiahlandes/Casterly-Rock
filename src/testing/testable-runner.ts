@@ -1,13 +1,14 @@
 /**
  * Testable Runner
  *
+ * Mac Studio Edition - Local Ollama Only
+ *
  * A wrapper around the core Casterly processing pipeline that
  * captures trace events for testing and debugging purposes.
  */
 
 import { loadConfig } from '../config/index.js';
-import { buildProviders, BillingError, type LlmProvider } from '../providers/index.js';
-import { routeRequest } from '../router/index.js';
+import { buildProviders, type LlmProvider } from '../providers/index.js';
 import { createSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import {
   createToolRegistry,
@@ -80,35 +81,14 @@ export function createTestableRunner(
       });
 
       // ─────────────────────────────────────────────────────────────────
-      // ROUTING PHASE
+      // PROVIDER SELECTION (Local Only)
       // ─────────────────────────────────────────────────────────────────
-      const routingEventId = trace.startTimedEvent('routing_start', {
-        inputLength: input.length,
+      trace.addEvent('provider_selected', {
+        provider: 'local',
+        model: config.local.model,
       });
 
-      const decision = await routeRequest(input, { config, providers });
-
-      trace.endTimedEvent(routingEventId, {
-        route: decision.route,
-        reason: decision.reason,
-        confidence: decision.confidence,
-      });
-
-      trace.addEvent('routing_decision', {
-        route: decision.route,
-        reason: decision.reason,
-        confidence: decision.confidence,
-        sensitiveCategories: decision.sensitiveCategories,
-      });
-
-      // Get the appropriate provider
-      const provider = decision.route === 'cloud' ? providers.cloud : providers.local;
-
-      if (!provider) {
-        const errorMsg = `No provider available for route: ${decision.route}`;
-        trace.setError(errorMsg);
-        throw new Error(errorMsg);
-      }
+      const provider = providers.local;
 
       // ─────────────────────────────────────────────────────────────────
       // CONTEXT ASSEMBLY PHASE
@@ -140,7 +120,7 @@ export function createTestableRunner(
 
       let iteration = 0;
       let finalResponse = '';
-      let currentProvider: LlmProvider = provider;
+      const currentProvider: LlmProvider = provider;
       let previousResults: ToolResultMessage[] = [];
 
       // Native tool execution loop
@@ -153,46 +133,16 @@ export function createTestableRunner(
           iteration,
         });
 
-        let response;
-        try {
-          response = await currentProvider.generateWithTools(
-            {
-              prompt: assembled.context,
-              systemPrompt: assembled.systemPrompt,
-              maxTokens: 2048,
-              temperature: 0.7,
-            },
-            enableTools ? toolRegistry.getTools() : [],
-            previousResults.length > 0 ? previousResults : undefined
-          );
-        } catch (providerError) {
-          // If cloud provider has billing issues, fall back to local
-          if (
-            providerError instanceof BillingError &&
-            currentProvider.kind === 'cloud' &&
-            providers.local
-          ) {
-            trace.addEvent('error', {
-              type: 'billing_error',
-              message: providerError.message,
-              fallback: 'local',
-            });
-            currentProvider = providers.local;
-            response = await currentProvider.generateWithTools(
-              {
-                prompt: assembled.context,
-                systemPrompt: assembled.systemPrompt,
-                maxTokens: 2048,
-                temperature: 0.7,
-              },
-              enableTools ? toolRegistry.getTools() : [],
-              previousResults.length > 0 ? previousResults : undefined
-            );
-          } else {
-            trace.setError(providerError instanceof Error ? providerError.message : String(providerError));
-            throw providerError;
-          }
-        }
+        const response = await currentProvider.generateWithTools(
+          {
+            prompt: assembled.context,
+            systemPrompt: assembled.systemPrompt,
+            maxTokens: 2048,
+            temperature: 0.7,
+          },
+          enableTools ? toolRegistry.getTools() : [],
+          previousResults.length > 0 ? previousResults : undefined
+        );
 
         trace.endTimedEvent(llmEventId);
         trace.addEvent('llm_response', {
@@ -302,8 +252,7 @@ export function createTestableRunner(
      */
     getProviderInfo() {
       return {
-        local: providers.local?.id ?? null,
-        cloud: providers.cloud?.id ?? null,
+        local: providers.local.id,
       };
     },
   };

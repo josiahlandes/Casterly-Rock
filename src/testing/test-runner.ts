@@ -44,8 +44,8 @@ export function evaluateResult(
 
   // Build actual outcome
   const actualOutcome = {
-    route: summary?.routingDecision?.route ?? null,
-    sensitiveCategories: summary?.routingDecision?.sensitiveCategories ?? [],
+    provider: summary?.providerSelected?.provider ?? 'local',
+    model: summary?.providerSelected?.model ?? null,
     toolsCalled: trace.events
       .filter((e) => e.type === 'tool_call_received')
       .map((e) => e.data.toolName as string),
@@ -62,24 +62,6 @@ export function evaluateResult(
     }
     if (!expected.shouldSucceed && !error) {
       failures.push('Expected error but request succeeded');
-    }
-  }
-
-  // Check: route
-  if (expected.route !== undefined) {
-    if (actualOutcome.route !== expected.route) {
-      failures.push(`Route mismatch: expected "${expected.route}", got "${actualOutcome.route}"`);
-    }
-  }
-
-  // Check: sensitiveCategories
-  if (expected.sensitiveCategories !== undefined) {
-    for (const category of expected.sensitiveCategories) {
-      if (!actualOutcome.sensitiveCategories.includes(category)) {
-        failures.push(
-          `Expected sensitive category "${category}" not detected. Got: [${actualOutcome.sensitiveCategories.join(', ')}]`
-        );
-      }
     }
   }
 
@@ -176,7 +158,8 @@ export function formatTestResult(result: TestResult, verbose = false): string {
     lines.push(`  Description: ${result.testCase.description}`);
     lines.push(`  Input: "${result.testCase.input.substring(0, 60)}${result.testCase.input.length > 60 ? '...' : ''}"`);
     lines.push(`  Duration: ${result.actualOutcome.durationMs}ms`);
-    lines.push(`  Route: ${result.actualOutcome.route ?? 'N/A'}`);
+    lines.push(`  Provider: ${result.actualOutcome.provider}`);
+    lines.push(`  Model: ${result.actualOutcome.model ?? 'N/A'}`);
     lines.push(`  Tools Called: ${result.actualOutcome.toolsCalled.join(', ') || 'none'}`);
   }
 

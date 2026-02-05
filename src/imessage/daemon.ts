@@ -1,8 +1,13 @@
+/**
+ * iMessage Daemon
+ *
+ * Mac Studio Edition - Local Ollama Only
+ */
+
 import { join } from 'node:path';
 import { loadConfig } from '../config/index.js';
 import { safeLogger } from '../logging/safe-logger.js';
-import { buildProviders, BillingError, type LlmProvider } from '../providers/index.js';
-import { routeRequest } from '../router/index.js';
+import { buildProviders, type LlmProvider } from '../providers/index.js';
 import { createSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import {
   createToolRegistry,
@@ -46,8 +51,7 @@ export interface DaemonConfig {
  */
 async function processMessage(
   message: Message,
-  config: ReturnType<typeof loadConfig>,
-  providers: ReturnType<typeof buildProviders>,
+  provider: LlmProvider,
   skillRegistry: SkillRegistry,
   sessionManager: SessionManager,
   options: {
@@ -101,28 +105,6 @@ async function processMessage(
     return;
   }
 
-  // Route the request through Casterly
-  const decision = await routeRequest(message.text, { config, providers });
-
-  safeLogger.info('Routing decision', {
-    route: decision.route,
-    reason: decision.reason,
-    confidence: decision.confidence,
-    sensitiveCategories: decision.sensitiveCategories,
-  });
-
-  // Get the appropriate provider
-  const provider = decision.route === 'cloud' ? providers.cloud : providers.local;
-
-  if (!provider) {
-    safeLogger.warn('No provider available for route', { route: decision.route });
-    const result = sendMessage(sender, "Sorry, I'm having trouble connecting right now. Please try again later.");
-    if (!result.success) {
-      safeLogger.error('Failed to send error message', { error: result.error });
-    }
-    return;
-  }
-
   // Get available skills for context
   const skills = skillRegistry.getAvailable();
 
@@ -148,8 +130,6 @@ async function processMessage(
 
   let iteration = 0;
   let finalResponse = '';
-  let currentProvider: LlmProvider = provider;
-  let wasReroutedToLocal = false;
   let previousResults: ToolResultMessage[] = [];
 
   try {
@@ -157,40 +137,16 @@ async function processMessage(
     while (iteration < maxToolIterations) {
       iteration++;
 
-      let response;
-      try {
-        response = await currentProvider.generateWithTools(
-          {
-            prompt: assembled.context,
-            systemPrompt: assembled.systemPrompt,
-            maxTokens: 2048,
-            temperature: 0.7,
-          },
-          enableTools ? toolRegistry.getTools() : [],
-          previousResults.length > 0 ? previousResults : undefined
-        );
-      } catch (providerError) {
-        // If cloud provider has billing issues, fall back to local
-        if (providerError instanceof BillingError && currentProvider.kind === 'cloud' && providers.local) {
-          safeLogger.warn('Cloud provider billing error, falling back to local', {
-            error: providerError.message,
-          });
-          currentProvider = providers.local;
-          wasReroutedToLocal = true;
-          response = await currentProvider.generateWithTools(
-            {
-              prompt: assembled.context,
-              systemPrompt: assembled.systemPrompt,
-              maxTokens: 2048,
-              temperature: 0.7,
-            },
-            enableTools ? toolRegistry.getTools() : [],
-            previousResults.length > 0 ? previousResults : undefined
-          );
-        } else {
-          throw providerError;
-        }
-      }
+      const response = await provider.generateWithTools(
+        {
+          prompt: assembled.context,
+          systemPrompt: assembled.systemPrompt,
+          maxTokens: 2048,
+          temperature: 0.7,
+        },
+        enableTools ? toolRegistry.getTools() : [],
+        previousResults.length > 0 ? previousResults : undefined
+      );
 
       safeLogger.info('LLM response', {
         provider: response.providerId,
@@ -239,7 +195,8 @@ async function processMessage(
         results.push({
           toolCallId: blockedCall.id,
           success: false,
-          error: 'Tool call blocked (message sending is handled by Casterly; reply with the final message text only).',
+          error:
+            'Tool call blocked (message sending is handled by Casterly; reply with the final message text only).',
         });
       }
 
@@ -279,24 +236,18 @@ async function processMessage(
     }
 
     // Clean up the response
-    let cleanedResponse = finalResponse
+    const cleanedResponse = finalResponse
       .replace(/```bash[\s\S]*?```/g, '')
       .replace(/```sh[\s\S]*?```/g, '')
       .replace(/\[(?:REMEMBER|NOTE|MEMORY)\](?:\[[^\]]*\])?\s*[^\[]*/gi, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    // Add notice if request was rerouted due to billing issues
-    if (wasReroutedToLocal) {
-      cleanedResponse += '\n\n(Note: This response was processed locally due to cloud API credit limits.)';
-    }
-
     safeLogger.info('Final response', {
       user: user?.id ?? 'unknown',
       response: cleanedResponse.substring(0, 200) + (cleanedResponse.length > 200 ? '...' : ''),
       length: cleanedResponse.length,
       iterations: iteration,
-      wasReroutedToLocal,
     });
 
     // Add assistant response to session
@@ -403,6 +354,10 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   const config = loadConfig();
   const providers = buildProviders(config);
 
+  safeLogger.info('Using local provider (Ollama)', {
+    model: config.local.model,
+  });
+
   // Load skills (for context, not for text-parsing)
   const skillRegistry = createSkillRegistry();
   const availableSkills = skillRegistry.getAvailable();
@@ -467,7 +422,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           }
         }
 
-        await processMessage(message, config, providers, skillRegistry, sessionManager, {
+        await processMessage(message, providers.local, skillRegistry, sessionManager, {
           enableTools,
           maxToolIterations,
           workspacePath: userWorkspacePath,

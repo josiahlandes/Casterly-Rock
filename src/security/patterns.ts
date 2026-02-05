@@ -1,3 +1,10 @@
+/**
+ * Sensitive Content Patterns
+ *
+ * Patterns for detecting sensitive content that should be redacted
+ * or handled with extra care.
+ */
+
 export type SensitiveCategory =
   | 'calendar'
   | 'finances'
@@ -14,13 +21,13 @@ export const SENSITIVE_PATTERNS: Record<SensitiveCategory, RegExp[]> = {
     /credit card/i,
     /bank account/i,
     /routing number/i,
-    /transaction/i
+    /transaction/i,
   ],
   voice_memos: [/voice memo/i, /journal/i, /private note/i, /personal note/i],
   health: [/diagnosis/i, /prescription/i, /medical/i, /health record/i],
   credentials: [/password/i, /api[_-]?key/i, /bearer\s+[a-z0-9\-\._~\+\/]+=*/i],
   documents: [/contract/i, /confidential/i, /private document/i, /nda/i],
-  contacts: [/my contact/i, /phone number/i, /address book/i, /my friend/i]
+  contacts: [/my contact/i, /phone number/i, /address book/i, /my friend/i],
 };
 
 export function matchSensitiveCategories(text: string): SensitiveCategory[] {

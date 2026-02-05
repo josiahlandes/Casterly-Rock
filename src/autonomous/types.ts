@@ -158,7 +158,7 @@ export interface CycleMetrics {
 
 export interface AutonomousConfig {
   enabled: boolean;
-  provider: 'claude' | 'ollama';
+  provider: 'ollama';
   model: string;
 
   // Timing

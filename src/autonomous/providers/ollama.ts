@@ -1,8 +1,10 @@
 /**
  * Ollama Provider for Autonomous Self-Improvement
  *
+ * Mac Studio Edition - Local Ollama Only
+ *
  * This provider uses local Ollama for the autonomous improvement loop.
- * Designed for Phase 1+ (local hardware) after validating with API.
+ * Optimized for Mac Studio M4 Max with 128GB unified memory.
  */
 
 import {

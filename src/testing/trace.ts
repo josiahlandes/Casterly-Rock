@@ -8,9 +8,7 @@
 export type TraceEventType =
   | 'request_start'
   | 'sensitivity_check'
-  | 'routing_start'
-  | 'routing_tool_call'
-  | 'routing_decision'
+  | 'provider_selected'
   | 'context_assembly'
   | 'llm_request'
   | 'llm_response'
@@ -43,11 +41,9 @@ export interface RequestTrace {
 
 export interface TraceSummary {
   totalDurationMs: number;
-  routingDecision: {
-    route: 'local' | 'cloud';
-    reason: string;
-    confidence: number;
-    sensitiveCategories: string[];
+  providerSelected: {
+    provider: 'local';
+    model: string;
   } | null;
   llmCalls: number;
   toolCallsRequested: number;
@@ -129,7 +125,7 @@ export function createTraceCollector(input: string): TraceCollector {
     },
 
     generateSummary(): TraceSummary {
-      const routingEvent = trace.events.find((e) => e.type === 'routing_decision');
+      const providerEvent = trace.events.find((e) => e.type === 'provider_selected');
       const llmResponses = trace.events.filter((e) => e.type === 'llm_response');
       const toolCallsReceived = trace.events.filter((e) => e.type === 'tool_call_received');
       const toolExecutions = trace.events.filter((e) => e.type === 'tool_execution_result');
@@ -142,12 +138,10 @@ export function createTraceCollector(input: string): TraceCollector {
 
       return {
         totalDurationMs: (trace.endTime ?? Date.now()) - trace.startTime,
-        routingDecision: routingEvent
+        providerSelected: providerEvent
           ? {
-              route: routingEvent.data.route as 'local' | 'cloud',
-              reason: routingEvent.data.reason as string,
-              confidence: routingEvent.data.confidence as number,
-              sensitiveCategories: routingEvent.data.sensitiveCategories as string[],
+              provider: 'local' as const,
+              model: providerEvent.data.model as string,
             }
           : null,
         llmCalls: llmResponses.length,
@@ -220,13 +214,9 @@ export function formatTrace(trace: RequestTrace): string {
     lines.push(`  Provider: ${trace.summary.provider ?? 'N/A'}`);
     lines.push(`  Model: ${trace.summary.model ?? 'N/A'}`);
 
-    if (trace.summary.routingDecision) {
-      lines.push(`  Route: ${trace.summary.routingDecision.route}`);
-      lines.push(`  Routing Reason: ${trace.summary.routingDecision.reason}`);
-      lines.push(`  Confidence: ${trace.summary.routingDecision.confidence}`);
-      lines.push(
-        `  Sensitive Categories: ${trace.summary.routingDecision.sensitiveCategories.join(', ') || 'none'}`
-      );
+    if (trace.summary.providerSelected) {
+      lines.push(`  Provider Mode: ${trace.summary.providerSelected.provider}`);
+      lines.push(`  Model: ${trace.summary.providerSelected.model}`);
     }
 
     lines.push(`  LLM Calls: ${trace.summary.llmCalls}`);

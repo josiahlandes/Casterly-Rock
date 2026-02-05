@@ -1,7 +1,12 @@
+/**
+ * CLI Interface
+ *
+ * Mac Studio Edition - Local Ollama Only
+ */
+
 import { loadConfig } from '../config/index.js';
 import { safeLogger } from '../logging/safe-logger.js';
 import { buildProviders } from '../providers/index.js';
-import { routeRequest } from '../router/index.js';
 import { createToolRegistry } from '../tools/index.js';
 
 function parseArgs(argv: string[]): { input: string; execute: boolean } {
@@ -23,31 +28,23 @@ export async function runCli(): Promise<void> {
 
   const config = loadConfig();
   const providers = buildProviders(config);
-  const decision = await routeRequest(input, { config, providers });
 
-  safeLogger.info(`Route: ${decision.route}`, {
-    reason: decision.reason,
-    confidence: decision.confidence,
-    sensitiveCategories: decision.sensitiveCategories
+  safeLogger.info('Using local provider (Ollama)', {
+    model: config.local.model,
   });
 
   if (!execute) {
-    safeLogger.info('Route-only mode. Pass --execute to run the selected provider.');
+    safeLogger.info('Pass --execute to run the provider.');
     return;
   }
 
-  const provider = decision.route === 'cloud' ? providers.cloud : providers.local;
-
-  if (!provider) {
-    safeLogger.warn('No provider available for the selected route.');
-    return;
-  }
-
+  const provider = providers.local;
   const toolRegistry = createToolRegistry();
   const response = await provider.generateWithTools({ prompt: input }, toolRegistry.getTools());
+
   safeLogger.info('Provider response received.', {
     provider: response.providerId,
-    model: response.model
+    model: response.model,
   });
   console.log(response.text);
 }

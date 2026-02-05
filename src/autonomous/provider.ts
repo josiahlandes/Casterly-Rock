@@ -1,8 +1,10 @@
 /**
  * Provider Abstraction for Autonomous Self-Improvement
  *
- * This module defines the interface for AI providers (Claude API, Ollama, etc.)
- * and provides a factory function to create the appropriate provider based on config.
+ * Mac Studio Edition - Local Ollama Only
+ *
+ * This module defines the interface for AI providers and provides
+ * a factory function to create the local Ollama provider.
  */
 
 import type {
@@ -181,21 +183,11 @@ export abstract class BaseAutonomousProvider implements AutonomousProvider {
 
 /**
  * Create an autonomous provider based on configuration.
- * This allows swapping between Claude API and local Ollama with just a config change.
+ * Uses local Ollama for all inference.
  */
 export async function createProvider(config: AutonomousConfig): Promise<AutonomousProvider> {
-  switch (config.provider) {
-    case 'claude': {
-      const { ClaudeAutonomousProvider } = await import('./providers/claude.js');
-      return new ClaudeAutonomousProvider(config);
-    }
-    case 'ollama': {
-      const { OllamaAutonomousProvider } = await import('./providers/ollama.js');
-      return new OllamaAutonomousProvider(config);
-    }
-    default:
-      throw new Error(`Unknown autonomous provider: ${config.provider}`);
-  }
+  const { OllamaAutonomousProvider } = await import('./providers/ollama.js');
+  return new OllamaAutonomousProvider(config);
 }
 
 // ============================================================================

@@ -1,5 +1,5 @@
-import { matchSensitiveCategories } from '../router/patterns.js';
-import type { SensitiveCategory } from '../router/patterns.js';
+import { matchSensitiveCategories } from './patterns.js';
+import type { SensitiveCategory } from './patterns.js';
 
 export interface SensitiveDetectionResult {
   isSensitive: boolean;

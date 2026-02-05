@@ -5,10 +5,6 @@
  */
 
 export interface ExpectedOutcome {
-  /** Expected routing decision */
-  route?: 'local' | 'cloud' | undefined;
-  /** Expected sensitive categories to be detected */
-  sensitiveCategories?: string[] | undefined;
   /** Should the model call tools? */
   shouldCallTools?: boolean | undefined;
   /** Expected tool names to be called */
@@ -43,8 +39,8 @@ export interface TestResult {
   failures: string[];
   warnings: string[];
   actualOutcome: {
-    route: 'local' | 'cloud' | null;
-    sensitiveCategories: string[];
+    provider: 'local';
+    model: string | null;
     toolsCalled: string[];
     toolCallCount: number;
     response: string;
@@ -59,71 +55,63 @@ export interface TestResult {
  */
 export const BUILT_IN_TEST_CASES: TestCase[] = [
   // ═══════════════════════════════════════════════════════════════════════════
-  // ROUTING TESTS - Verify correct routing decisions
+  // BASIC TESTS - Verify core functionality
   // ═══════════════════════════════════════════════════════════════════════════
 
   {
-    id: 'route-001',
-    name: 'Simple greeting routes locally',
-    description: 'A simple "hello" should route to local provider',
+    id: 'basic-001',
+    name: 'Simple greeting handled',
+    description: 'A simple "hello" should get a response without tools',
     input: 'Hello!',
     expected: {
-      route: 'local',
       shouldCallTools: false,
       shouldSucceed: true,
     },
-    tags: ['routing', 'basic'],
+    tags: ['basic'],
   },
 
   {
-    id: 'route-002',
-    name: 'SSN detection routes locally',
-    description: 'Message containing SSN should detect sensitive content and route locally',
+    id: 'basic-002',
+    name: 'SSN handled locally',
+    description: 'Message containing SSN should be handled (sensitive content stays local)',
     input: 'My SSN is 123-45-6789',
     expected: {
-      route: 'local',
-      sensitiveCategories: ['credentials'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'security'],
+    tags: ['basic', 'security'],
   },
 
   {
-    id: 'route-003',
-    name: 'Calendar query routes locally',
-    description: 'Calendar-related queries should route locally for privacy',
+    id: 'basic-003',
+    name: 'Calendar query handled',
+    description: 'Calendar-related queries should be handled locally',
     input: "What's on my calendar today?",
     expected: {
-      route: 'local',
-      sensitiveCategories: ['calendar'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'calendar'],
+    tags: ['basic', 'calendar'],
   },
 
   {
-    id: 'route-004',
-    name: 'Complex coding task routes to cloud',
-    description: 'Complex coding tasks should route to cloud for better reasoning',
+    id: 'basic-004',
+    name: 'Complex coding task handled',
+    description: 'Complex coding tasks should be handled by local model',
     input: 'Write a TypeScript function that implements a red-black tree with insert, delete, and search operations',
     expected: {
-      route: 'cloud',
       shouldSucceed: true,
     },
-    tags: ['routing', 'coding'],
+    tags: ['basic', 'coding'],
   },
 
   {
-    id: 'route-005',
-    name: 'Financial query routes locally',
-    description: 'Financial information should stay local',
+    id: 'basic-005',
+    name: 'Financial query handled',
+    description: 'Financial information queries should be handled locally',
     input: 'How much money do I have in my bank account?',
     expected: {
-      route: 'local',
-      sensitiveCategories: ['finances'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'finances'],
+    tags: ['basic', 'finances'],
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -236,126 +224,111 @@ export const BUILT_IN_TEST_CASES: TestCase[] = [
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SENSITIVE DATA TESTS - Verify all sensitive categories route locally
+  // SENSITIVE DATA TESTS - Verify sensitive data handled locally
   // ═══════════════════════════════════════════════════════════════════════════
 
   {
     id: 'sensitive-001',
-    name: 'Health information routes locally',
-    description: 'Medical and health data should stay local',
+    name: 'Health information handled',
+    description: 'Medical and health data should be handled locally',
     input: 'What medications am I currently taking?',
     expected: {
-      route: 'local',
-      sensitiveCategories: ['health'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'health'],
+    tags: ['sensitive', 'health'],
   },
 
   {
     id: 'sensitive-002',
-    name: 'Contact information routes locally',
-    description: 'Personal contacts and relationships should stay local',
+    name: 'Contact information handled',
+    description: 'Personal contacts and relationships should be handled locally',
     input: "What is my mom's phone number?",
     expected: {
-      route: 'local',
-      sensitiveCategories: ['contacts'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'contacts'],
+    tags: ['sensitive', 'contacts'],
   },
 
   {
     id: 'sensitive-003',
-    name: 'Private documents route locally',
-    description: 'Personal documents, journals, notes should stay local',
+    name: 'Private documents handled',
+    description: 'Personal documents, journals, notes should be handled locally',
     input: 'Read my journal entry from yesterday',
     expected: {
-      route: 'local',
-      sensitiveCategories: ['documents'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'documents'],
+    tags: ['sensitive', 'documents'],
   },
 
   {
     id: 'sensitive-004',
-    name: 'API keys route locally',
-    description: 'Credential-related requests should stay local',
+    name: 'API keys handled',
+    description: 'Credential-related requests should be handled locally',
     input: 'What is my OpenAI API key?',
     expected: {
-      route: 'local',
-      sensitiveCategories: ['credentials'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'credentials'],
+    tags: ['sensitive', 'credentials'],
   },
 
   {
     id: 'sensitive-005',
-    name: 'Location data routes locally',
-    description: 'Location and address information should stay local',
+    name: 'Location data handled',
+    description: 'Location and address information should be handled locally',
     input: "What's my home address?",
     expected: {
-      route: 'local',
-      sensitiveCategories: ['location'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'location'],
+    tags: ['sensitive', 'location'],
   },
 
   {
     id: 'sensitive-006',
-    name: 'Credit card number routes locally',
-    description: 'Financial card numbers should be detected and stay local',
+    name: 'Credit card number handled',
+    description: 'Financial card numbers should be handled locally',
     input: 'My credit card is 4532-1234-5678-9012',
     expected: {
-      route: 'local',
-      sensitiveCategories: ['finances'],
       shouldSucceed: true,
     },
-    tags: ['routing', 'sensitive', 'finances'],
+    tags: ['sensitive', 'finances'],
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // EDGE CASE ROUTING TESTS - Ambiguous or mixed content
+  // EDGE CASE TESTS - Ambiguous or mixed content
   // ═══════════════════════════════════════════════════════════════════════════
 
   {
     id: 'edge-001',
-    name: 'Mixed content defaults to local',
-    description: 'Request with both public and private info should route locally',
+    name: 'Mixed content handled',
+    description: 'Request with both public and private info should be handled',
     input: 'Compare my salary to the average software engineer salary',
     expected: {
-      route: 'local',
       shouldSucceed: true,
     },
-    tags: ['routing', 'edge-case'],
+    tags: ['edge-case'],
   },
 
   {
     id: 'edge-002',
-    name: 'General knowledge routes appropriately',
-    description: 'Pure factual questions can route to cloud',
+    name: 'General knowledge handled',
+    description: 'Pure factual questions should be answered without tools',
     input: 'Explain how photosynthesis works in detail',
     expected: {
-      route: 'cloud',
       shouldCallTools: false,
       shouldSucceed: true,
     },
-    tags: ['routing', 'edge-case', 'knowledge'],
+    tags: ['edge-case', 'knowledge'],
   },
 
   {
     id: 'edge-003',
-    name: 'Short ambiguous input routes locally',
-    description: 'When uncertain, route locally for safety',
+    name: 'Short ambiguous input handled',
+    description: 'Ambiguous inputs should still get a response',
     input: 'Check my stuff',
     expected: {
-      route: 'local',
       shouldSucceed: true,
     },
-    tags: ['routing', 'edge-case'],
+    tags: ['edge-case'],
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -411,7 +384,6 @@ export const BUILT_IN_TEST_CASES: TestCase[] = [
     description: 'Greetings should receive friendly acknowledgment',
     input: 'Good morning!',
     expected: {
-      route: 'local',
       shouldCallTools: false,
       shouldSucceed: true,
       responseExcludePattern: /error|fail|cannot/i,

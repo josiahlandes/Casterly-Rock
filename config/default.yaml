@@ -1,32 +1,17 @@
 # Casterly Configuration
-# Local-first privacy-aware LLM router
+# Mac Studio Edition - Local-Only via Ollama
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PROVIDER CONFIGURATION
+# PROVIDER CONFIGURATION (Local Only)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 local:
   provider: ollama
-  model: qwen3:14b              # Tool-capable model required for native tool use
+  model: hermes3:70b            # Primary model: native tool use + strong reasoning
+  codingModel: qwen3-coder-next:latest  # Coding-specific model
   baseUrl: http://localhost:11434
-  timeoutMs: 60000              # 14B models need longer timeout
-  # Alternative models: llama3.1:8b, mistral:7b (less tool capability)
-
-cloud:
-  provider: claude
-  model: claude-sonnet-4-20250514
-  apiKeyEnv: ANTHROPIC_API_KEY  # Set this env var with your API key
-  timeoutMs: 45000
-  # Fallback: If billing error occurs, routes to local automatically
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ROUTER CONFIGURATION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-router:
-  defaultRoute: local           # Safe default - privacy first
-  confidenceThreshold: 0.7      # Below this, force local routing
-  # Router uses native tool calling (route_decision tool) for classification
+  timeoutMs: 120000             # 70B models need longer timeout
+  # Hardware: Mac Studio M4 Max with 128GB unified memory
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SENSITIVITY DETECTION
