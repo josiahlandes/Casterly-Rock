@@ -12,7 +12,7 @@ autonomous:
 
   # Provider: Always ollama (local inference)
   provider: ollama
-  model: hermes3:70b  # Primary model with native tool use
+  model: qwen3-coder-next:latest  # Coding model for code analysis and implementation
 
   # ─────────────────────────────────────────────────────────────────────────────
   # TIMING
@@ -151,8 +151,8 @@ invariants:
 
 escalation:
   enabled: false
-  default_model: hermes3:70b
-  escalation_model: qwen3-coder-next:latest  # Use coding model for complex implementations
+  default_model: qwen3-coder-next:latest
+  escalation_model: hermes3:70b  # Use reasoning model for complex analysis
 
   # When to escalate to the coding model
   escalate_when:
