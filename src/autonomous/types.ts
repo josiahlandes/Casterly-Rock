@@ -272,3 +272,96 @@ export interface InvariantCheckResult {
   error?: string | undefined;
   durationMs: number;
 }
+
+// ============================================================================
+// SECURITY AGENT
+// ============================================================================
+
+export type ThreatType =
+  | 'prompt_injection'
+  | 'command_injection'
+  | 'script_injection'
+  | 'data_exfiltration'
+  | 'size_limit'
+  | 'encoding_suspicious'
+  | 'semantic_threat';
+
+export interface ThreatReport {
+  type: ThreatType;
+  severity: Severity;
+  pattern?: string | undefined;
+  location?: number | undefined;
+  confidence: number;
+  description?: string | undefined;
+}
+
+export interface SecurityScanResult {
+  safe: boolean;
+  content?: string | undefined;
+  threats: ThreatReport[];
+  analysisMs: number;
+  source: string;
+  timestamp: string;
+}
+
+export interface SecurityAgentConfig {
+  enabled: boolean;
+
+  // Static pattern checking
+  patterns: {
+    promptInjection: boolean;
+    commandInjection: boolean;
+    scriptInjection: boolean;
+    dataExfiltration: boolean;
+  };
+
+  // Content limits
+  limits: {
+    maxContentLength: number;
+    maxNestingDepth: number;
+    maxEncodedRatio: number;
+    minReadableRatio: number;
+  };
+
+  // LLM-based semantic analysis
+  semanticAnalysis: {
+    enabled: boolean;
+    model: string;
+    confidenceThreshold: number;
+  };
+
+  // Response behavior
+  onThreat: {
+    action: 'block' | 'sanitize' | 'warn';
+    log: boolean;
+    alert: boolean;
+  };
+
+  // Trusted sources that bypass checks
+  trustedDomains: string[];
+}
+
+// ============================================================================
+// RESEARCH AGENT
+// ============================================================================
+
+export interface ResearchRequest {
+  query: string;
+  context?: string | undefined;
+  maxResults?: number | undefined;
+}
+
+export interface ResearchResult {
+  query: string;
+  findings: ResearchFinding[];
+  securityScan: SecurityScanResult;
+  timestamp: string;
+  durationMs: number;
+}
+
+export interface ResearchFinding {
+  source: string;
+  title?: string | undefined;
+  content: string;
+  relevance: number;
+}
