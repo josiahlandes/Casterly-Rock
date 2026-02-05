@@ -506,14 +506,6 @@ async function loadConfig(configPath: string): Promise<AutonomousConfig> {
         maxStaleBranchAgeHours: raw.git?.cleanup?.max_stale_branch_age_hours ?? 48,
       },
     },
-    escalation: raw.escalation
-      ? {
-          enabled: raw.escalation.enabled ?? false,
-          defaultModel: raw.escalation.default_model ?? 'qwen3-coder-next:latest',
-          escalationModel: raw.escalation.escalation_model ?? 'hermes3:70b',
-          escalateWhen: raw.escalation.escalate_when ?? {},
-        }
-      : undefined,
   };
 }
 

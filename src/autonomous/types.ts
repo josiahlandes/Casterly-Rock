@@ -213,17 +213,6 @@ export interface AutonomousConfig {
     };
   };
 
-  // Escalation (optional)
-  escalation?: {
-    enabled: boolean;
-    defaultModel: string;
-    escalationModel: string;
-    escalateWhen: {
-      complexity?: Complexity | undefined;
-      previousFailures?: number | undefined;
-      affectsCoreModules?: boolean | undefined;
-    };
-  } | undefined;
 }
 
 // ============================================================================

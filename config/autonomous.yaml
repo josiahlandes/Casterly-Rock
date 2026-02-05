@@ -146,21 +146,6 @@ invariants:
     description: "Protected paths must remain unchanged"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ESCALATION (Optional - Model Switching for Complex Tasks)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-escalation:
-  enabled: false
-  default_model: qwen3-coder-next:latest
-  escalation_model: hermes3:70b  # Use reasoning model for complex analysis
-
-  # When to escalate to the coding model
-  escalate_when:
-    complexity: complex
-    previous_failures: 2
-    affects_core_modules: true
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # REFLECTION STORAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
