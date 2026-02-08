@@ -13,3 +13,6 @@ export * from './token-counter.js';
 
 // Repo map
 export * from './repo-map/index.js';
+
+// Context manager
+export * from './context-manager/index.js';
