@@ -365,3 +365,156 @@ export interface ResearchFinding {
   content: string;
   relevance: number;
 }
+
+// ============================================================================
+// CODING INTERFACE
+// ============================================================================
+
+export type CodingMode = 'code' | 'architect' | 'ask' | 'review';
+
+export type SymbolKind =
+  | 'function'
+  | 'class'
+  | 'interface'
+  | 'type'
+  | 'const'
+  | 'export'
+  | 'method'
+  | 'property';
+
+export interface RepoSymbol {
+  name: string;
+  kind: SymbolKind;
+  signature: string;
+  line: number;
+  exported: boolean;
+}
+
+export interface FileMap {
+  path: string;
+  symbols: RepoSymbol[];
+  references: string[];
+  importance: number;
+}
+
+export interface RepoMap {
+  files: FileMap[];
+  totalTokens: number;
+  generatedAt: string;
+}
+
+export interface RepoMapConfig {
+  enabled: boolean;
+  tokenBudget: number;
+  tokenBudgetMax: number;
+  languages: string[];
+  includePatterns: string[];
+  excludePatterns: string[];
+  refreshOnChange: boolean;
+}
+
+export interface TokenBudget {
+  total: number;
+  system: number;
+  repoMap: number;
+  files: number;
+  conversation: number;
+  tools: number;
+  response: number;
+}
+
+export interface CodingContext {
+  systemPrompt: string;
+  repoMap: string;
+  fileContents: Record<string, string>;
+  conversation: Array<{ role: string; content: string }>;
+  tokenUsage: TokenBudget;
+}
+
+export interface SessionMemory {
+  sessionId: string;
+  startedAt: string;
+  currentTask?: string | undefined;
+  todos: Array<{ content: string; status: string }>;
+  filesRead: string[];
+  filesModified: string[];
+  filesCreated: string[];
+  decisions: SessionDecision[];
+  learnings: string[];
+}
+
+export interface SessionDecision {
+  timestamp: string;
+  context: string;
+  decision: string;
+  reasoning: string;
+}
+
+export interface EditRequest {
+  path: string;
+  search: string;
+  replace: string;
+  replaceAll?: boolean | undefined;
+}
+
+export interface EditResult {
+  success: boolean;
+  matchCount: number;
+  preview?: string | undefined;
+  error?: string | undefined;
+}
+
+export interface EditValidationResult {
+  passed: boolean;
+  parseOk: boolean;
+  lintOk: boolean;
+  typecheckOk: boolean;
+  testOk?: boolean | undefined;
+  errors: EditValidationError[];
+}
+
+export interface EditValidationError {
+  phase: 'parse' | 'lint' | 'typecheck' | 'test';
+  file: string;
+  line?: number | undefined;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+export interface CodingConfig {
+  repoMap: RepoMapConfig;
+
+  context: {
+    maxFiles: number;
+    maxFileTokens: number;
+    autoAddImports: boolean;
+    autoAddTests: boolean;
+  };
+
+  edit: {
+    format: 'search_replace' | 'whole_file' | 'diff';
+    requireExactMatch: boolean;
+    showDiffPreview: boolean;
+  };
+
+  validation: {
+    parseCheck: boolean;
+    lintOnEdit: boolean;
+    typecheckOnEdit: boolean;
+    testOnEdit: boolean;
+    autoCommit: boolean;
+  };
+
+  models: {
+    architect: string;
+    code: string;
+    ask: string;
+    review: string;
+  };
+
+  session: {
+    persist: boolean;
+    persistPath: string;
+    maxHistoryTokens: number;
+  };
+}
