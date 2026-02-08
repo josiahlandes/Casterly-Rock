@@ -16,3 +16,6 @@ export * from './repo-map/index.js';
 
 // Context manager
 export * from './context-manager/index.js';
+
+// Session memory
+export * from './session-memory/index.js';
