@@ -58,7 +58,7 @@ export interface AutonomousProvider {
   reflect(outcome: ReflectContext): Promise<ReflectResult>;
 
   /**
-   * Get token usage for cost tracking (API phase).
+   * Get token usage for context window tracking.
    */
   getTokenUsage(): TokenUsage;
 
@@ -160,11 +160,10 @@ export abstract class BaseAutonomousProvider implements AutonomousProvider {
   }
 
   /**
-   * Estimate cost based on token usage (for API providers).
-   * Override in specific providers with actual pricing.
+   * Cost estimation - returns 0 for local Ollama inference.
    */
   estimateCostUsd(): number {
-    return 0;
+    return 0; // Local inference has no per-token cost
   }
 
   /**

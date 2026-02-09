@@ -149,11 +149,6 @@ export class AutonomousLoop {
       }
     }
 
-    // Check budget (API phase)
-    if (this.config.budget) {
-      // TODO: Implement budget checking
-    }
-
     return true;
   }
 
@@ -478,14 +473,7 @@ async function loadConfig(configPath: string): Promise<AutonomousConfig> {
     maxBranchAgeHours: raw.autonomous?.max_branch_age_hours ?? 24,
     maxConcurrentBranches: raw.autonomous?.max_concurrent_branches ?? 3,
     sandboxTimeoutSeconds: raw.autonomous?.sandbox_timeout_seconds ?? 300,
-    sandboxMemoryMb: raw.autonomous?.sandbox_memory_mb ?? 2048,
-    budget: raw.autonomous?.budget
-      ? {
-          dailyLimitUsd: raw.autonomous.budget.daily_limit_usd ?? 10,
-          monthlyLimitUsd: raw.autonomous.budget.monthly_limit_usd ?? 200,
-          alertThreshold: raw.autonomous.budget.alert_threshold ?? 0.8,
-        }
-      : undefined,
+    sandboxMemoryMb: raw.autonomous?.sandbox_memory_mb ?? 8192, // Mac Studio has plenty
     git: {
       remote: raw.git?.remote ?? 'origin',
       baseBranch: raw.git?.base_branch ?? 'main',

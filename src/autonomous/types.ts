@@ -180,18 +180,11 @@ export interface AutonomousConfig {
   autoIntegrateThreshold: number;
   attemptThreshold: number;
 
-  // Resource limits
+  // Resource limits (Mac Studio - generous defaults)
   maxBranchAgeHours: number;
   maxConcurrentBranches: number;
   sandboxTimeoutSeconds: number;
   sandboxMemoryMb: number;
-
-  // Budget (API phase)
-  budget?: {
-    dailyLimitUsd: number;
-    monthlyLimitUsd: number;
-    alertThreshold: number;
-  } | undefined;
 
   // Git
   git: {
