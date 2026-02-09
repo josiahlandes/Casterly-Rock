@@ -19,3 +19,6 @@ export * from './context-manager/index.js';
 
 // Session memory
 export * from './session-memory/index.js';
+
+// Validation
+export * from './validation/index.js';
