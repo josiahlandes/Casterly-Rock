@@ -10,6 +10,36 @@ import { homedir } from 'node:os';
 
 export type SessionScope = 'main' | 'per-peer' | 'per-channel';
 
+/**
+ * Content block types for rich message content
+ * Supports text, tool use, and tool results
+ */
+export type TextBlock = {
+  type: 'text';
+  text: string;
+};
+
+export type ToolUseBlock = {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+};
+
+export type ToolResultBlock = {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean | undefined;
+};
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+
+/**
+ * Message content can be either a simple string or an array of content blocks
+ */
+export type MessageContent = string | ContentBlock[];
+
 export interface SessionConfig {
   /** How to isolate sessions */
   scope: SessionScope;
@@ -23,10 +53,63 @@ export interface SessionConfig {
 
 export interface ConversationMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  /** Message content - string for simple text, array of blocks for rich content */
+  content: MessageContent;
   timestamp: string;
   /** For user messages, the sender identifier */
   sender?: string | undefined;
+}
+
+/**
+ * Extract text content from a message
+ * Handles both string content and content block arrays
+ */
+export function getMessageText(message: ConversationMessage): string {
+  if (typeof message.content === 'string') {
+    return message.content;
+  }
+
+  return message.content
+    .filter((block): block is TextBlock => block.type === 'text')
+    .map((block) => block.text)
+    .join('');
+}
+
+/**
+ * Check if message content is simple string
+ */
+export function isSimpleContent(content: MessageContent): content is string {
+  return typeof content === 'string';
+}
+
+/**
+ * Create a simple text message
+ */
+export function createTextMessage(
+  role: 'user' | 'assistant' | 'system',
+  text: string,
+  sender?: string
+): Omit<ConversationMessage, 'timestamp'> {
+  return {
+    role,
+    content: text,
+    sender,
+  };
+}
+
+/**
+ * Create a message with content blocks (for tool interactions)
+ */
+export function createBlockMessage(
+  role: 'user' | 'assistant',
+  blocks: ContentBlock[],
+  sender?: string
+): Omit<ConversationMessage, 'timestamp'> {
+  return {
+    role,
+    content: blocks,
+    sender,
+  };
 }
 
 export interface SessionState {

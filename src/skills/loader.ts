@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { safeLogger } from '../logging/safe-logger.js';
 import type { Skill, SkillFrontmatter, SkillRegistry } from './types.js';
+import type { ToolSchema } from '../tools/schemas/types.js';
 
 const NOTES_SKILL_IDS = new Set(['apple-notes', 'bear-notes']);
 const PREFERRED_NOTES_SKILL_ID = 'apple-notes';
@@ -49,6 +50,20 @@ function parseFrontmatter(content: string): { frontmatter: SkillFrontmatter; bod
             frontmatter['metadata'] = JSON.parse(jsonMatch[1].replace(/,\s*}/g, '}').replace(/,\s*]/g, ']'));
           } catch {
             // JSON parse failed, skip metadata
+          }
+        }
+        continue;
+      }
+
+      // Handle JSON-style tools block
+      if (trimmed.startsWith('tools:')) {
+        // Look for JSON array on same line or following lines
+        const toolsMatch = frontmatterRaw.match(/tools:\s*(\[[\s\S]*?\])\s*(?:\n[a-z]|$)/);
+        if (toolsMatch?.[1]) {
+          try {
+            frontmatter['tools'] = JSON.parse(toolsMatch[1].replace(/,\s*]/g, ']'));
+          } catch {
+            // JSON parse failed, skip tools
           }
         }
         continue;
@@ -168,6 +183,7 @@ function loadSkill(skillDir: string, skillId: string): Skill | null {
       path: skillDir,
       available,
       unavailableReason: reason,
+      tools: parsed.frontmatter.tools ?? [],
     };
   } catch (error) {
     safeLogger.warn('Failed to load skill', {
@@ -277,6 +293,19 @@ You have these skills available. Only use them when the user explicitly asks for
 ${skillList.join('\n')}
 
 IMPORTANT: Do NOT run commands unless the user asks for something specific. Ask clarifying questions if unsure.`;
+    },
+
+    getTools(): ToolSchema[] {
+      const available = this.getAvailable();
+      const tools: ToolSchema[] = [];
+
+      for (const skill of available) {
+        if (skill.tools.length > 0) {
+          tools.push(...skill.tools);
+        }
+      }
+
+      return tools;
     },
 
     getRelevantSkillInstructions(message: string): string {

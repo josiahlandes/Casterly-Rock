@@ -1,10 +1,13 @@
-import type { ToolCall } from '../skills/types.js';
+import type { NativeToolCall } from '../tools/index.js';
 
 export interface ToolFilterResult {
-  allowed: ToolCall[];
-  blocked: ToolCall[];
+  allowed: NativeToolCall[];
+  blocked: NativeToolCall[];
 }
 
+/**
+ * Check if a command would send an iMessage
+ */
 function isMessageSendCommand(command: string): boolean {
   const lower = command.toLowerCase();
 
@@ -27,19 +30,29 @@ function isMessageSendCommand(command: string): boolean {
   return false;
 }
 
+/**
+ * Check if a command uses the notes CLI
+ */
 function isNotesCliCommand(command: string): boolean {
   const lower = command.trim().toLowerCase();
   return lower.startsWith('memo ') || lower.startsWith('grizzly ');
 }
 
-export function filterMessageSendToolCalls(calls: ToolCall[]): ToolFilterResult {
-  const allowed: ToolCall[] = [];
-  const blocked: ToolCall[] = [];
+/**
+ * Filter tool calls to block message-sending commands in iMessage context
+ */
+export function filterToolCalls(calls: NativeToolCall[]): ToolFilterResult {
+  const allowed: NativeToolCall[] = [];
+  const blocked: NativeToolCall[] = [];
 
   for (const call of calls) {
-    if (call.tool === 'exec' && (isMessageSendCommand(call.args) || isNotesCliCommand(call.args))) {
-      blocked.push(call);
-      continue;
+    // Only filter bash tool calls
+    if (call.name === 'bash') {
+      const command = call.input.command;
+      if (typeof command === 'string' && (isMessageSendCommand(command) || isNotesCliCommand(command))) {
+        blocked.push(call);
+        continue;
+      }
     }
 
     allowed.push(call);

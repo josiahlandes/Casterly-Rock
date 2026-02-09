@@ -6,7 +6,9 @@ const SRC_ROOT = join(process.cwd(), 'src');
 const ALLOWED_CONSOLE_LOG_FILES = new Set([
   'src/logging/safe-logger.ts',
   'src/interfaces/cli.ts',
-  'src/index.ts'
+  'src/index.ts',
+  'src/test-cli.ts',
+  'src/autonomous/loop.ts'  // Daemon needs to log output
 ]);
 
 function walk(dir) {

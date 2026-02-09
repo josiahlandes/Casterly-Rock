@@ -1,16 +1,21 @@
+/**
+ * iMessage Daemon
+ *
+ * Mac Studio Edition - Local Ollama Only
+ */
+
 import { join } from 'node:path';
 import { loadConfig } from '../config/index.js';
 import { safeLogger } from '../logging/safe-logger.js';
-import { buildProviders, BillingError, type LlmProvider } from '../providers/index.js';
-import { routeRequest } from '../router/index.js';
+import { buildProviders, type LlmProvider } from '../providers/index.js';
+import { createSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import {
-  createSkillRegistry,
-  parseToolCalls,
-  executeToolCalls,
-  type SkillRegistry,
-  type ToolCall,
-  type ToolResult,
-} from '../skills/index.js';
+  createToolRegistry,
+  createToolOrchestrator,
+  createBashExecutor,
+  type ToolResultMessage,
+  type NativeToolResult,
+} from '../tools/index.js';
 import {
   createSessionManager,
   assembleContext,
@@ -22,23 +27,23 @@ import {
   findUserByPhone,
   getAllowedPhoneNumbers,
   type SessionManager,
-  type MemoryManager,
   type UserProfile,
   type UsersConfig,
 } from '../interface/index.js';
+import { wrapError, formatErrorForUser } from '../errors/index.js';
 import { getMessagesSince, getLatestMessageRowId, type Message } from './reader.js';
 import { sendMessage, checkMessagesAvailable } from './sender.js';
-import { filterMessageSendToolCalls } from './tool-filter.js';
+import { filterToolCalls } from './tool-filter.js';
 import { isAcknowledgementMessage } from './message-utils.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
-  allowedSenders?: string[] | undefined; // If set, only respond to these phone numbers/emails (overrides users.json)
-  enableTools?: boolean | undefined;     // Whether to execute tool calls (default: true)
-  maxToolIterations?: number | undefined; // Max tool call iterations per message (default: 5)
-  workspacePath?: string | undefined;    // Default workspace path (overridden by per-user workspaces)
-  sessionScope?: 'main' | 'per-peer' | undefined; // Session isolation mode
-  useMultiUser?: boolean | undefined;    // Whether to use multi-user mode from users.json (default: true)
+  allowedSenders?: string[] | undefined;
+  enableTools?: boolean | undefined;
+  maxToolIterations?: number | undefined;
+  workspacePath?: string | undefined;
+  sessionScope?: 'main' | 'per-peer' | undefined;
+  useMultiUser?: boolean | undefined;
 }
 
 /**
@@ -46,8 +51,7 @@ export interface DaemonConfig {
  */
 async function processMessage(
   message: Message,
-  config: ReturnType<typeof loadConfig>,
-  providers: ReturnType<typeof buildProviders>,
+  provider: LlmProvider,
   skillRegistry: SkillRegistry,
   sessionManager: SessionManager,
   options: {
@@ -69,7 +73,6 @@ async function processMessage(
     user: user?.id ?? 'unknown',
   });
 
-  // Log the user's message for debugging (truncated for privacy)
   safeLogger.info('User message', {
     user: user?.id ?? 'unknown',
     message: message.text.substring(0, 100) + (message.text.length > 100 ? '...' : ''),
@@ -102,32 +105,10 @@ async function processMessage(
     return;
   }
 
-  // Route the request through Casterly
-  const decision = await routeRequest(message.text, { config, providers });
-
-  safeLogger.info('Routing decision', {
-    route: decision.route,
-    reason: decision.reason,
-    confidence: decision.confidence,
-    sensitiveCategories: decision.sensitiveCategories,
-  });
-
-  // Get the appropriate provider
-  const provider = decision.route === 'cloud' ? providers.cloud : providers.local;
-
-  if (!provider) {
-    safeLogger.warn('No provider available for route', { route: decision.route });
-    const result = sendMessage(sender, "Sorry, I'm having trouble connecting right now. Please try again later.");
-    if (!result.success) {
-      safeLogger.error('Failed to send error message', { error: result.error });
-    }
-    return;
-  }
-
-  // Get available skills
+  // Get available skills for context
   const skills = skillRegistry.getAvailable();
 
-  // Assemble initial context using the interface layer
+  // Assemble context using the interface layer
   const assembled = assembleContext({
     session,
     userMessage: message.text,
@@ -142,160 +123,109 @@ async function processMessage(
     historyMessages: assembled.historyMessagesIncluded,
   });
 
-  // Only include skills section if the message likely needs tools
-  // Simple greetings and conversational messages don't need skill documentation
-  const lowerMessage = message.text.toLowerCase().trim();
-  const isSimpleGreeting = /^(hi|hey|hello|yo|sup|what'?s up|howdy|hiya|good (morning|afternoon|evening)|gm|thanks|thank you|ok|okay|cool|got it|nice|lol|haha)\b/.test(lowerMessage);
-  const isShortQuestion = lowerMessage.length < 30 && !lowerMessage.includes('how do') && !lowerMessage.includes('can you');
-  const skipSkillsSection = isSimpleGreeting || (isShortQuestion && !lowerMessage.includes('?'));
-
-  // Get relevant skill instructions based on message content
-  // This gives full instructions only for skills that match the user's intent
-  const relevantInstructions = skipSkillsSection ? '' : skillRegistry.getRelevantSkillInstructions(message.text);
-  const skillsOverview = skipSkillsSection ? '' : skillRegistry.getPromptSection();
-
-  // Include relevant instructions if any, otherwise just the overview
-  let conversationContext = assembled.context;
-  if (relevantInstructions) {
-    conversationContext = `${assembled.context}\n\n${relevantInstructions}`;
-  } else if (skillsOverview) {
-    conversationContext = `${assembled.context}\n\n${skillsOverview}`;
-  }
-
-  safeLogger.info('Skills context', {
-    includeSkills: !skipSkillsSection,
-    relevantSkills: relevantInstructions ? true : false,
-    messageLength: message.text.length,
-  });
+  // Set up native tool use
+  const toolRegistry = createToolRegistry();
+  const orchestrator = createToolOrchestrator();
+  orchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
 
   let iteration = 0;
   let finalResponse = '';
-  let currentProvider: LlmProvider = provider;
-  let wasReroutedToLocal = false;
+  let previousResults: ToolResultMessage[] = [];
 
   try {
-    // Tool execution loop
+    // Native tool execution loop
     while (iteration < maxToolIterations) {
       iteration++;
 
-      let response;
-      try {
-        response = await currentProvider.generate({ prompt: conversationContext });
-      } catch (providerError) {
-        // If cloud provider has billing issues, fall back to local
-        if (providerError instanceof BillingError && currentProvider.kind === 'cloud' && providers.local) {
-          safeLogger.warn('Cloud provider billing error, falling back to local', {
-            error: providerError.message,
-          });
-          currentProvider = providers.local;
-          wasReroutedToLocal = true;
-          response = await currentProvider.generate({ prompt: conversationContext });
-        } else {
-          throw providerError;
-        }
-      }
+      const response = await provider.generateWithTools(
+        {
+          prompt: assembled.context,
+          systemPrompt: assembled.systemPrompt,
+          maxTokens: 2048,
+          temperature: 0.7,
+        },
+        enableTools ? toolRegistry.getTools() : [],
+        previousResults.length > 0 ? previousResults : undefined
+      );
 
-      safeLogger.info('Generated response', {
+      safeLogger.info('LLM response', {
         provider: response.providerId,
         model: response.model,
-        length: response.text.length,
+        textLength: response.text.length,
+        toolCalls: response.toolCalls.length,
+        stopReason: response.stopReason,
         iteration,
       });
 
-      // Check for tool calls in the response
-      const toolCalls = enableTools ? parseToolCalls(response.text) : [];
-
-      if (toolCalls.length === 0) {
-        // No tool calls - this is the final response
+      // If no tool calls, we're done
+      if (response.toolCalls.length === 0) {
         finalResponse = response.text;
         break;
       }
 
-      const { allowed: filteredToolCalls, blocked: blockedToolCalls } =
-        filterMessageSendToolCalls(toolCalls);
+      // Filter tool calls (block message-sending commands)
+      const { allowed: filteredCalls, blocked: blockedCalls } = filterToolCalls(response.toolCalls);
 
-      if (blockedToolCalls.length > 0) {
-        safeLogger.warn('Blocked message-sending tool calls for iMessage channel', {
-          blocked: blockedToolCalls.length,
+      if (blockedCalls.length > 0) {
+        safeLogger.warn('Blocked tool calls for iMessage channel', {
+          blocked: blockedCalls.length,
         });
       }
 
-      // Log each tool call with full command for debugging
-      for (const toolCall of filteredToolCalls) {
+      // Log tool calls
+      for (const call of filteredCalls) {
         safeLogger.info('Tool call', {
-          tool: toolCall.tool,
-          command: toolCall.args.substring(0, 200),
+          name: call.name,
+          id: call.id,
+          input: JSON.stringify(call.input).substring(0, 200),
           iteration,
         });
       }
 
-      safeLogger.info('Executing tool calls', {
-        count: filteredToolCalls.length,
-        blocked: blockedToolCalls.length,
-      });
+      // Execute allowed tool calls
+      const results: NativeToolResult[] = [];
 
-      // Execute the tool calls (auto-approve safe commands)
-      const results =
-        filteredToolCalls.length > 0
-          ? await executeToolCalls(filteredToolCalls, { autoApprove: true })
-          : [];
+      if (filteredCalls.length > 0) {
+        const executedResults = await orchestrator.executeAll(filteredCalls);
+        results.push(...executedResults);
+      }
 
-      // Log tool results
-      for (let i = 0; i < filteredToolCalls.length; i++) {
-        const call = filteredToolCalls[i];
-        const result = results[i];
-        safeLogger.info('Tool result', {
-          command: call?.args.substring(0, 100),
-          success: result?.success ?? false,
-          outputLength: result?.output?.length ?? 0,
-          error: result?.error?.substring(0, 100),
+      // Add blocked calls with error results
+      for (const blockedCall of blockedCalls) {
+        results.push({
+          toolCallId: blockedCall.id,
+          success: false,
+          error:
+            'Tool call blocked (message sending is handled by Casterly; reply with the final message text only).',
         });
       }
 
-      // Format results for context
-      const toolResults: Array<{ call: ToolCall; result: ToolResult }> = [
-        ...filteredToolCalls.map((call, index) => ({
-          call,
-          result: results[index] ?? {
-            success: false,
-            error: 'Tool call did not return a result',
-            exitCode: -1,
-          },
-        })),
-        ...blockedToolCalls.map((call) => ({
-          call,
-          result: {
-            success: false,
-            error:
-              'Tool call blocked (message sending is handled by Casterly; reply with the final message text only).',
-            exitCode: -1,
-          },
-        })),
-      ];
+      // Log results
+      for (const result of results) {
+        safeLogger.info('Tool result', {
+          toolCallId: result.toolCallId,
+          success: result.success,
+          outputLength: result.output?.length ?? 0,
+          error: result.error?.substring(0, 100),
+        });
+      }
 
-      const resultsText = toolResults
-        .map(({ call, result }) => {
-          if (result?.success) {
-            return `Command: ${call?.args}\nOutput:\n${result.output ?? '(no output)'}`;
-          }
-          return `Command: ${call?.args}\nError: ${result?.error ?? 'Unknown error'}`;
-        })
-        .join('\n\n');
+      // Set up for next iteration
+      previousResults = results.map((r) => ({
+        callId: r.toolCallId,
+        result: r.success ? (r.output ?? 'Success') : `Error: ${r.error}`,
+        isError: !r.success,
+      }));
 
-      // Add tool results to context and continue
-      conversationContext += `\n\nAssistant: ${response.text}\n\nTool Results:\n${resultsText}\n\nBased on the tool results above, provide your response to the user:`;
-
-      // Extract any text before the tool call as partial response
-      const textBeforeTools = response.text.split('```')[0]?.trim();
-      if (textBeforeTools && textBeforeTools.length > 20) {
-        // If there's substantial text before the tool call, include it
-        finalResponse = textBeforeTools + '\n\n';
+      // Include any text from response
+      if (response.text) {
+        finalResponse += response.text + '\n';
       }
     }
 
     if (iteration >= maxToolIterations) {
       safeLogger.warn('Max tool iterations reached', { maxToolIterations });
-      finalResponse += "\n\n(Reached maximum tool execution limit)";
+      finalResponse += '\n\n(Reached maximum tool execution limit)';
     }
 
     // Process memory commands from the response
@@ -305,26 +235,19 @@ async function processMessage(
       executeMemoryCommands(memoryCommands, memoryManager);
     }
 
-    // Clean up the response - remove any remaining code blocks and memory tags
-    let cleanedResponse = finalResponse
-      .replace(/```bash[\s\S]*?```/g, '')  // Remove bash blocks
-      .replace(/```sh[\s\S]*?```/g, '')    // Remove sh blocks
-      .replace(/\[(?:REMEMBER|NOTE|MEMORY)\](?:\[[^\]]*\])?\s*[^\[]*/gi, '')  // Remove memory tags
-      .replace(/\n{3,}/g, '\n\n')          // Collapse multiple newlines
+    // Clean up the response
+    const cleanedResponse = finalResponse
+      .replace(/```bash[\s\S]*?```/g, '')
+      .replace(/```sh[\s\S]*?```/g, '')
+      .replace(/\[(?:REMEMBER|NOTE|MEMORY)\](?:\[[^\]]*\])?\s*[^\[]*/gi, '')
+      .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    // Add notice if request was rerouted due to billing issues
-    if (wasReroutedToLocal) {
-      cleanedResponse += '\n\n(Note: This response was processed locally due to cloud API credit limits.)';
-    }
-
-    // Log Tyrion's response for debugging
-    safeLogger.info('Tyrion response', {
+    safeLogger.info('Final response', {
       user: user?.id ?? 'unknown',
       response: cleanedResponse.substring(0, 200) + (cleanedResponse.length > 200 ? '...' : ''),
       length: cleanedResponse.length,
       iterations: iteration,
-      wasReroutedToLocal,
     });
 
     // Add assistant response to session
@@ -334,7 +257,7 @@ async function processMessage(
     });
 
     // Send the response
-    const result = sendMessage(sender, cleanedResponse || "Done!");
+    const result = sendMessage(sender, cleanedResponse || 'Done!');
 
     if (result.success) {
       safeLogger.info('Response sent successfully');
@@ -342,11 +265,17 @@ async function processMessage(
       safeLogger.error('Failed to send response', { error: result.error });
     }
   } catch (error) {
+    const casterlyError = wrapError(error);
+
     safeLogger.error('Failed to generate response', {
-      error: error instanceof Error ? error.message : String(error),
+      code: casterlyError.code,
+      category: casterlyError.category,
+      message: casterlyError.message,
+      details: casterlyError.details,
     });
 
-    const result = sendMessage(sender, "Sorry, I encountered an error processing your message.");
+    const errorMessage = formatErrorForUser(casterlyError, 'imessage');
+    const result = sendMessage(sender, errorMessage);
     if (!result.success) {
       safeLogger.error('Failed to send error message', { error: result.error });
     }
@@ -361,7 +290,6 @@ function isSenderAllowed(sender: string, allowedSenders?: string[]): boolean {
     return true;
   }
 
-  // Normalize phone numbers (remove spaces, dashes, etc.)
   const normalize = (s: string) => s.replace(/[\s\-\(\)\.]/g, '').toLowerCase();
   const normalizedSender = normalize(sender);
 
@@ -399,10 +327,9 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     usersConfig = loadUsersConfig();
 
     if (usersConfig.users.length > 0) {
-      // Use phone numbers from users.json as allowlist
       allowedSenders = getAllowedPhoneNumbers(usersConfig);
       safeLogger.info('Multi-user mode enabled', {
-        users: usersConfig.users.filter(u => u.enabled).map(u => u.id),
+        users: usersConfig.users.filter((u) => u.enabled).map((u) => u.id),
         allowedPhones: allowedSenders.length,
       });
     } else {
@@ -410,7 +337,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     }
   }
 
-  // Find default workspace path (used as fallback)
+  // Find default workspace path
   const defaultWorkspacePath = workspacePath || findWorkspacePath() || join(process.cwd(), 'workspace');
 
   safeLogger.info('iMessage daemon starting', {
@@ -427,7 +354,11 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   const config = loadConfig();
   const providers = buildProviders(config);
 
-  // Load skills
+  safeLogger.info('Using local provider (Ollama)', {
+    model: config.local.model,
+  });
+
+  // Load skills (for context, not for text-parsing)
   const skillRegistry = createSkillRegistry();
   const availableSkills = skillRegistry.getAvailable();
   safeLogger.info('Loaded skills', {
@@ -445,13 +376,12 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
   // Get the current latest message ID (don't process old messages)
   let lastRowId = getLatestMessageRowId();
-  let isPolling = false; // Prevent concurrent poll execution
+  let isPolling = false;
 
   safeLogger.info('Starting from message rowid', { lastRowId });
 
   // Poll for new messages
   const poll = async () => {
-    // Skip if already processing (prevents duplicate message handling)
     if (isPolling) {
       return;
     }
@@ -461,17 +391,14 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       const newMessages = getMessagesSince(lastRowId);
 
       for (const message of newMessages) {
-        // Update lastRowId regardless of whether we process
         if (message.rowid > lastRowId) {
           lastRowId = message.rowid;
         }
 
-        // Skip messages from ourselves
         if (message.isFromMe) {
           continue;
         }
 
-        // Check allowlist
         const sender = message.senderHandle || message.chatId;
         if (!isSenderAllowed(sender, allowedSenders)) {
           safeLogger.info('Ignoring message from non-allowed sender', {
@@ -480,7 +407,6 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           continue;
         }
 
-        // Look up user for multi-user mode
         let user: UserProfile | undefined;
         let userWorkspacePath = defaultWorkspacePath;
 
@@ -496,8 +422,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           }
         }
 
-        // Process the message with user-specific workspace
-        await processMessage(message, config, providers, skillRegistry, sessionManager, {
+        await processMessage(message, providers.local, skillRegistry, sessionManager, {
           enableTools,
           maxToolIterations,
           workspacePath: userWorkspacePath,

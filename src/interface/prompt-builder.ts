@@ -57,15 +57,13 @@ You can have conversations and answer questions based on your knowledge.`;
 
   return `## Capabilities
 
-You can execute shell commands to help the user. When you need to run a command, output it in a bash code block:
+You have access to the bash tool for executing shell commands on the local system.
 
-\`\`\`bash
-command here
-\`\`\`
+When you need to perform an action (check files, run commands, query the calendar, etc.), use the bash tool. You will receive the command output and can respond accordingly.
 
-After the command runs, you'll see its output and can respond accordingly.
+**CRITICAL**: You MUST use the bash tool to perform ANY action on the system. You CANNOT claim to have done something (deleted files, created files, sent messages, etc.) without actually calling the bash tool. If you say "I've deleted the files" without using the bash tool, you are lying - the files will still be there. Always execute first using the tool, then report the result.
 
-**CRITICAL**: You MUST use bash code blocks to perform ANY action on the system. You CANNOT claim to have done something (deleted files, created files, sent messages, etc.) without actually executing the command. If you say "I've deleted the files" without a bash code block, you are lying - the files will still be there. Always execute first, then report the result.`;
+**IMPORTANT**: Do NOT output bash code blocks in your text response. Use the bash tool directly. The system will handle execution.`;
 }
 
 /**
@@ -86,11 +84,11 @@ function buildSkillsSection(skills: Skill[]): string {
 
   return `## Available Skills
 
-The following skills are available. Each skill's SKILL.md file contains detailed instructions.
+The following skills are available:
 
 ${skillList}
 
-To use a skill, follow the instructions in its SKILL.md file. Skills are located in the workspace skills directory.`;
+To use a skill, use the bash tool to run the appropriate commands. Each skill provides CLI tools or system commands you can execute.`;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { SENSITIVE_PATTERNS } from '../router/patterns.js';
+import { SENSITIVE_PATTERNS } from './patterns.js';
 
 const SECRET_LIKE_PATTERNS: RegExp[] = [
   /\b\d{3}-\d{2}-\d{4}\b/g,

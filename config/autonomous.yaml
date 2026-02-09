@@ -1,0 +1,171 @@
+# Autonomous Self-Improvement Configuration
+# Mac Studio Edition - Local Ollama Only
+# See docs/autonomous-improvement.md for full documentation
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CORE SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+autonomous:
+  # Master switch - set to true to enable autonomous improvement
+  enabled: false
+
+  # Provider: Always ollama (local inference)
+  provider: ollama
+  model: qwen3-coder-next:latest  # Coding model for code analysis and implementation
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # TIMING
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # How often to run improvement cycles (in minutes)
+  cycle_interval_minutes: 60
+
+  # Maximum cycles per day (to manage costs and avoid runaway)
+  max_cycles_per_day: 12
+
+  # Quiet hours - don't run cycles during these times
+  quiet_hours:
+    start: "06:00"   # 6 AM
+    end: "22:00"     # 10 PM
+    enabled: true    # Only run overnight
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SCOPE
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # How many hypotheses to attempt per cycle
+  max_attempts_per_cycle: 3
+
+  # Maximum files a single change can modify
+  max_files_per_change: 5
+
+  # Directories allowed for modification
+  allowed_directories:
+    - src/
+    - skills/
+    - scripts/
+    - tests/
+    - config/
+
+  # Patterns that should never be modified
+  forbidden_patterns:
+    - "**/*.env*"
+    - "**/credentials*"
+    - "**/secrets*"
+    - "**/.git/**"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CONFIDENCE THRESHOLDS
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # Minimum confidence to auto-integrate without review
+  auto_integrate_threshold: 0.9
+
+  # Minimum confidence to even attempt a hypothesis
+  attempt_threshold: 0.5
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # RESOURCE LIMITS
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # Maximum age of a feature branch before cleanup
+  max_branch_age_hours: 24
+
+  # Maximum concurrent auto/ branches
+  max_concurrent_branches: 3
+
+  # Timeout for sandbox operations
+  sandbox_timeout_seconds: 300
+
+  # Memory limit for sandbox
+  sandbox_memory_mb: 2048
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # BUDGET (Not applicable for local inference)
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Local inference has no per-token cost
+  # budget: null
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GIT CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+git:
+  # Remote to push to
+  remote: origin
+
+  # Base branch for all improvements
+  base_branch: main
+
+  # Prefix for auto-generated branches
+  branch_prefix: "auto/"
+
+  # Integration strategy: "direct" or "pull_request"
+  integration_mode: direct
+
+  # Pull request settings (if integration_mode: pull_request)
+  pull_request:
+    auto_merge: true
+    require_ci: true
+    labels:
+      - autonomous
+      - auto-generated
+    reviewers: []  # Add GitHub usernames if you want review
+    draft: false
+
+  # Sync behavior
+  fetch_before_cycle: true
+  push_after_integrate: true
+
+  # Cleanup settings
+  cleanup:
+    delete_merged_branches: true
+    delete_failed_branches: true
+    max_stale_branch_age_hours: 48
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SAFETY INVARIANTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+invariants:
+  - name: quality_gates
+    check: "npm run check"
+    description: "All quality gates must pass"
+
+  - name: no_type_errors
+    check: "npm run typecheck"
+    description: "TypeScript compilation must succeed"
+
+  - name: tests_pass
+    check: "npm run test"
+    description: "All tests must pass"
+
+  - name: protected_paths
+    check: "node scripts/guardrails.mjs"
+    description: "Protected paths must remain unchanged"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# REFLECTION STORAGE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+reflection:
+  # Where to store reflection logs
+  path: ~/.casterly/autonomous/reflections/
+  format: jsonl
+  retain_days: 90
+
+  # Also write significant learnings to MEMORY.md
+  summary_to_memory: true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NOTIFICATIONS (Optional)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+notifications:
+  enabled: false
+  on_success: false
+  on_failure: true
+  on_revert: true
+  method: imessage
+  recipient: null  # Set to your phone number or Apple ID

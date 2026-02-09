@@ -9,7 +9,8 @@ function makeSkill(id: string, available = true): Skill {
     available,
     frontmatter: { name: id, description: `${id} skill` },
     instructions: '',
-    path: `/tmp/${id}`
+    path: `/tmp/${id}`,
+    tools: [],
   };
 }
 

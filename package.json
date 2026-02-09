@@ -21,7 +21,10 @@
     "security:scan": "node scripts/security-scan.mjs",
     "check": "npm run guardrails && npm run lint && npm run typecheck && npm run test && npm run security:scan",
     "imessage": "tsx src/imessage-daemon.ts",
-    "imessage:start": "npm run build && node dist/src/imessage-daemon.js"
+    "imessage:start": "npm run build && node dist/src/imessage-daemon.js",
+    "test:e2e": "tsx src/test-cli.ts",
+    "test:trace": "tsx src/test-cli.ts --trace",
+    "test:interactive": "tsx src/test-cli.ts --interactive"
   },
   "keywords": [],
   "author": "",

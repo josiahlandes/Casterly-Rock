@@ -1,56 +1,67 @@
 import { describe, expect, it } from 'vitest';
 
-import { filterMessageSendToolCalls } from '../src/imessage/tool-filter.js';
-import type { ToolCall } from '../src/skills/types.js';
+import { filterToolCalls } from '../src/imessage/tool-filter.js';
+import type { NativeToolCall } from '../src/tools/index.js';
 
-describe('filterMessageSendToolCalls', () => {
+describe('filterToolCalls', () => {
   it('blocks osascript Messages send commands', () => {
-    const calls: ToolCall[] = [
-      { tool: 'exec', args: `osascript -e 'tell application "Messages" to send "hi" to buddy "+1555"'` },
-      { tool: 'exec', args: 'echo "safe"' },
+    const calls: NativeToolCall[] = [
+      { id: 'call-1', name: 'bash', input: { command: `osascript -e 'tell application "Messages" to send "hi" to buddy "+1555"'` } },
+      { id: 'call-2', name: 'bash', input: { command: 'echo "safe"' } },
     ];
 
-    const result = filterMessageSendToolCalls(calls);
+    const result = filterToolCalls(calls);
 
     expect(result.blocked).toHaveLength(1);
     expect(result.allowed).toHaveLength(1);
-    expect(result.allowed[0]?.args).toContain('echo');
+    expect(result.allowed[0]?.input.command).toContain('echo');
   });
 
   it('blocks imsg send commands', () => {
-    const calls: ToolCall[] = [
-      { tool: 'exec', args: 'imsg send +15551234567 "hello"' },
+    const calls: NativeToolCall[] = [
+      { id: 'call-1', name: 'bash', input: { command: 'imsg send +15551234567 "hello"' } },
     ];
 
-    const result = filterMessageSendToolCalls(calls);
+    const result = filterToolCalls(calls);
 
     expect(result.blocked).toHaveLength(1);
     expect(result.allowed).toHaveLength(0);
   });
 
   it('blocks memo and grizzly note commands', () => {
-    const calls: ToolCall[] = [
-      { tool: 'exec', args: 'memo notes -a "Title"' },
-      { tool: 'exec', args: 'grizzly create --title "Note"' },
-      { tool: 'exec', args: 'date' },
+    const calls: NativeToolCall[] = [
+      { id: 'call-1', name: 'bash', input: { command: 'memo notes -a "Title"' } },
+      { id: 'call-2', name: 'bash', input: { command: 'grizzly create --title "Note"' } },
+      { id: 'call-3', name: 'bash', input: { command: 'date' } },
     ];
 
-    const result = filterMessageSendToolCalls(calls);
+    const result = filterToolCalls(calls);
 
     expect(result.blocked).toHaveLength(2);
     expect(result.allowed).toHaveLength(1);
-    expect(result.allowed[0]?.args).toBe('date');
+    expect(result.allowed[0]?.input.command).toBe('date');
   });
 
   it('allows non-messaging tool calls', () => {
-    const calls: ToolCall[] = [
-      { tool: 'exec', args: 'osascript -e \'tell application "Calendar" to get calendars\'' },
-      { tool: 'exec', args: 'date' },
+    const calls: NativeToolCall[] = [
+      { id: 'call-1', name: 'bash', input: { command: 'osascript -e \'tell application "Calendar" to get calendars\'' } },
+      { id: 'call-2', name: 'bash', input: { command: 'date' } },
     ];
 
-    const result = filterMessageSendToolCalls(calls);
+    const result = filterToolCalls(calls);
 
     expect(result.blocked).toHaveLength(0);
     expect(result.allowed).toHaveLength(2);
+  });
+
+  it('allows non-bash tool calls through', () => {
+    const calls: NativeToolCall[] = [
+      { id: 'call-1', name: 'other_tool', input: { command: 'memo notes -a "Title"' } },
+    ];
+
+    const result = filterToolCalls(calls);
+
+    expect(result.blocked).toHaveLength(0);
+    expect(result.allowed).toHaveLength(1);
   });
 });
