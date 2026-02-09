@@ -108,28 +108,32 @@ models:
     temperature: 0.1       # low for code accuracy
 ```
 
-### Primary/General Tasks: TBD
+### Primary/General Tasks: Hermes 3 70B
 
-Need to evaluate models for:
+Selected `hermes3:70b` for all non-coding tasks:
 - Natural language understanding
 - Reasoning and analysis
 - General assistance
+- Architecture planning (Architect mode)
+- Question answering (Ask mode)
 
-**Candidates to evaluate:**
+**Ollama setup:**
+```bash
+ollama pull hermes3:70b
+```
 
-| Model | Size | Memory (Q4) | Strengths |
-|-------|------|-------------|-----------|
-| Llama 3.1 70B | 70B | ~40GB | General reasoning, instruction following |
-| Llama 3.1 405B | 405B | ~200GB | Best reasoning (won't fit) |
-| Qwen 2.5 72B | 72B | ~42GB | Strong multilingual, reasoning |
-| DeepSeek V2.5 | 236B MoE | ~60GB | Coding + general (MoE efficient) |
-| Mixtral 8x22B | 141B MoE | ~80GB | Fast MoE, good general |
-| Command R+ | 104B | ~60GB | RAG optimized |
+**Config:**
+```yaml
+models:
+  primary:
+    name: hermes3:70b
+    context_length: 32768
+    temperature: 0.7  # higher for creative reasoning
+```
 
-**With 128GB unified memory, can run:**
-- Single 70B model at full precision (FP16)
-- Single 70B + 30B models simultaneously (Q4/Q5)
-- Multiple smaller models for different tasks
+**Memory footprint:**
+- ~40GB at Q4 quantization
+- Fits alongside qwen3-coder-next with room to spare
 
 ---
 
@@ -203,10 +207,10 @@ git checkout -b mac-studio-local-only
 2. Set up Qwen3-coder for coding
 3. Placeholder for primary model (pending evaluation)
 
-### Phase 6: Build Evaluation Framework
-1. Create evaluation scripts
-2. Run benchmarks on candidate models
-3. Select primary model based on results
+### Phase 6: Validate Model Setup
+1. Verify hermes3:70b and qwen3-coder-next work correctly
+2. Run integration tests with both models
+3. Tune context lengths and temperatures as needed
 
 ---
 
@@ -224,7 +228,7 @@ models:
 
   primary:
     provider: ollama
-    model: TBD  # After evaluation
+    model: hermes3:70b
     context_length: 32768
     temperature: 0.7
 
@@ -248,13 +252,11 @@ hardware:
 
 1. **Qwen3-coder-next availability** - Is this in Ollama yet? Need to check latest models.
 
-2. **Multi-model orchestration** - Should different tasks use different models, or one model for everything?
+2. **Fallback strategy** - If Ollama is down, what happens? (No cloud fallback now)
 
-3. **Fallback strategy** - If Ollama is down, what happens? (No cloud fallback now)
+3. **Context window** - What context length do we need for autonomous improvement?
 
-4. **Context window** - What context length do we need for autonomous improvement?
-
-5. **Quantization** - Run at FP16 for quality, or Q5/Q4 for fitting more models?
+4. **Quantization** - Run at FP16 for quality, or Q5/Q4 for fitting more models?
 
 ---
 
@@ -274,6 +276,6 @@ hardware:
 
 ## Next Steps
 
-1. Confirm model choices (especially primary model candidates)
-2. Check Ollama for `qwen3-coder-next` availability
-3. Begin Phase 1-2 (branch creation, routing removal)
+1. Check Ollama for `qwen3-coder-next` and `hermes3:70b` availability
+2. Begin Phase 2 (routing removal) - branch already created
+3. Test model performance on Mac Studio hardware
