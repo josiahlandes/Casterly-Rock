@@ -27,8 +27,7 @@ Each error has:
 ## Error Code Categories
 
 ```
-E1xx - Provider errors (Ollama, Claude)
-E2xx - Router errors
+E1xx - Provider errors (Ollama local only)
 E3xx - Tool execution errors
 E4xx - Configuration errors
 E5xx - Network errors
@@ -38,26 +37,28 @@ E8xx - Memory errors
 E9xx - Skill errors
 ```
 
+> **Mac Studio Edition**: All inference is local. Cloud-related errors (E110-E115) and router errors (E2xx) are not used.
+
 ---
 
 ## Complete Error Code Reference
 
 ### E1xx - Provider Errors
 
-Errors related to LLM providers (Ollama and Claude).
+Errors related to the Ollama provider (local only).
 
 #### E100 - No providers available
 ```
 Message:    No providers available
-Suggestion: Check that Ollama is running (ollama serve) or ANTHROPIC_API_KEY is set
+Suggestion: Check that Ollama is running: ollama serve
 Severity:   critical
 ```
 
-**Cause:** Neither local (Ollama) nor cloud (Claude) provider could be initialized.
+**Cause:** Ollama provider could not be initialized.
 
 **Resolution:**
 1. Start Ollama: `ollama serve`
-2. Or set Claude API key: `export ANTHROPIC_API_KEY=sk-ant-...`
+2. Verify it's running: `curl http://localhost:11434/api/tags`
 
 ---
 
@@ -144,106 +145,6 @@ Severity:   error
 
 ---
 
-#### E110 - Claude API key not configured
-```
-Message:    Claude API key not configured
-Suggestion: Set ANTHROPIC_API_KEY environment variable
-Severity:   error
-```
-
-**Cause:** Cloud provider selected but no API key found.
-
-**Resolution:**
-```bash
-# Add to your shell profile (~/.zshrc or ~/.bashrc)
-export ANTHROPIC_API_KEY="sk-ant-api03-..."
-
-# Then reload
-source ~/.zshrc
-```
-
----
-
-#### E111 - Claude API key invalid
-```
-Message:    Claude API key invalid
-Suggestion: Check your API key at console.anthropic.com
-Severity:   error
-```
-
-**Cause:** API key is malformed or revoked.
-
-**Resolution:**
-1. Go to [console.anthropic.com](https://console.anthropic.com)
-2. Navigate to API Keys
-3. Create a new key or verify existing one
-4. Update your environment variable
-
----
-
-#### E112 - Claude billing issue
-```
-Message:    Claude billing issue
-Suggestion: Check billing at console.anthropic.com. Falling back to local model.
-Severity:   warning
-```
-
-**Cause:** Account has no credits or billing issue.
-
-**Resolution:**
-1. Check billing at [console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing)
-2. Add credits or update payment method
-3. System will automatically fall back to local model
-
----
-
-#### E113 - Claude rate limited
-```
-Message:    Claude rate limited
-Suggestion: Too many requests. Wait a moment and try again.
-Severity:   warning
-```
-
-**Cause:** Exceeded API rate limits.
-
-**Resolution:**
-- Wait 30-60 seconds before retrying
-- Consider upgrading API tier for higher limits
-
----
-
-#### E114 - Claude service unavailable
-```
-Message:    Claude service unavailable
-Suggestion: Anthropic API may be down. Check status.anthropic.com
-Severity:   error
-```
-
-**Cause:** Anthropic API is experiencing issues.
-
-**Resolution:**
-1. Check [status.anthropic.com](https://status.anthropic.com)
-2. Wait for service to recover
-3. System will fall back to local model if available
-
----
-
-#### E115 - Claude request timeout
-```
-Message:    Claude request timeout
-Suggestion: Request took too long. Try a simpler query or try again.
-Severity:   warning
-```
-
-**Cause:** Request exceeded timeout (default 45s).
-
-**Resolution:**
-- Try a simpler/shorter request
-- Increase `timeoutMs` in config
-- Check network connection
-
----
-
 #### E120 - Provider returned empty response
 ```
 Message:    Provider returned empty response
@@ -272,68 +173,6 @@ Severity:   error
 **Resolution:**
 - Try again
 - If persistent, check logs and report issue
-
----
-
-### E2xx - Router Errors
-
-Errors related to request routing decisions.
-
-#### E200 - Routing decision failed
-```
-Message:    Routing decision failed
-Suggestion: Could not determine route. Defaulting to local for safety.
-Severity:   warning
-```
-
-**Cause:** Router couldn't classify the request.
-
-**Resolution:**
-- Request will be handled locally (safe default)
-- No action needed unless persistent
-
----
-
-#### E201 - Router model not responding
-```
-Message:    Router model not responding
-Suggestion: Local model needed for routing. Check Ollama is running.
-Severity:   error
-```
-
-**Cause:** Router uses local model for classification, but it's unavailable.
-
-**Resolution:**
-- Same as E101 - start Ollama
-
----
-
-#### E202 - Invalid route decision from model
-```
-Message:    Invalid route decision from model
-Suggestion: Model returned unexpected routing decision. Using default route.
-Severity:   warning
-```
-
-**Cause:** Model returned something other than "local" or "cloud".
-
-**Resolution:**
-- Safe fallback to default route
-- May indicate model compatibility issue
-
----
-
-#### E203 - Selected provider unavailable
-```
-Message:    Selected provider unavailable
-Suggestion: Routed to cloud but Claude unavailable, and local fallback failed.
-Severity:   error
-```
-
-**Cause:** Both primary route and fallback failed.
-
-**Resolution:**
-- Check both Ollama and Claude API configuration
 
 ---
 

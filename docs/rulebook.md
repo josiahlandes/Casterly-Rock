@@ -4,31 +4,28 @@ This file defines the architecture and security invariants that must remain true
 
 ## Mission
 
-Casterly is a local-first LLM router. It protects user privacy by default and only sends requests to cloud providers when it is safe and necessary.
+Casterly is a local-only AI assistant running on Mac Studio M4 Max. All inference happens locally via Ollama. No data ever leaves the machine.
 
 ## Architecture Invariants
 
-1. Local-first routing bias.
-2. Sensitive detection runs before any cloud decision.
-3. Routing decisions are explicit, structured, and testable.
-4. Provider integrations sit behind a stable, minimal interface.
-5. Security and redaction logic are centralized in `src/security/*`.
-6. Logging goes through a privacy-safe logger, never direct `console.log` for user data.
-7. Configuration is validated at startup and fails fast on invalid or unsafe settings.
-8. All external network calls are isolated to provider modules.
+1. All inference is local via Ollama - no cloud APIs.
+2. Provider integrations sit behind a stable, minimal interface.
+3. Security and redaction logic are centralized in `src/security/*`.
+4. Logging goes through a privacy-safe logger, never direct `console.log` for user data.
+5. Configuration is validated at startup and fails fast on invalid or unsafe settings.
+6. Model selection is task-based (coding vs primary) via `config/models.yaml`.
 
 ## Security Invariants
 
-1. Sensitive user content must never be sent to cloud providers.
-2. If routing confidence is low, route locally.
-3. Redaction is the default for any user-provided text in logs.
-4. Secrets (API keys, tokens, credentials) are never logged or echoed.
-5. Privacy-critical behavior is covered by unit tests.
-6. Guardrails must flag changes to critical privacy modules and sensitive paths.
+1. All user data stays on the local machine.
+2. Redaction is the default for any user-provided text in logs.
+3. Secrets (API keys, tokens, credentials) are never logged or echoed.
+4. Privacy-critical behavior is covered by unit tests.
+5. Guardrails must flag changes to critical privacy modules and sensitive paths.
 
 ## Sensitive Data Categories
 
-These categories are always considered sensitive and must stay local:
+These categories are handled with care (all stay local by design):
 
 1. Calendar and schedules.
 2. Financial information and transactions.
@@ -44,11 +41,10 @@ Changes to the following areas are high risk and should trigger extra caution:
 1. `docs/rulebook.md`
 2. `docs/subagents.md`
 3. `src/security/*`
-4. `src/router/classifier.ts`
-5. `src/providers/*`
-6. `config/*`
-7. `.env` and `.env.*`
-8. `scripts/guardrails.mjs`
+4. `src/providers/*`
+5. `config/*`
+6. `.env` and `.env.*`
+7. `scripts/guardrails.mjs`
 
 The guardrails script treats these paths as protected by default.
 

@@ -174,14 +174,14 @@ try {
 
 The system includes built-in tests covering:
 
-#### Routing Tests
+#### Model Selection Tests
 | ID | Name | Verifies |
 |----|------|----------|
-| `route-001` | Simple greeting routes locally | Basic local routing |
-| `route-002` | SSN detection routes locally | Sensitive data detection |
-| `route-003` | Calendar query routes locally | Calendar privacy |
-| `route-004` | Complex coding routes to cloud | Cloud routing for complex tasks |
-| `route-005` | Financial query routes locally | Financial privacy |
+| `model-001` | Coding task uses qwen3-coder | Correct model for code |
+| `model-002` | General task uses hermes3 | Correct model for general |
+| `model-003` | Architect mode uses hermes3 | Mode-based model selection |
+
+> **Note**: Mac Studio Edition runs all tests locally via Ollama.
 
 #### Tool Tests
 | ID | Name | Verifies |
@@ -217,9 +217,8 @@ Each test case defines expected outcomes:
 
 ```typescript
 interface ExpectedOutcome {
-  // Routing
-  route?: 'local' | 'cloud';
-  sensitiveCategories?: string[];
+  // Model selection
+  expectedModel?: 'coding' | 'primary';  // Which model should be used
 
   // Tool usage
   shouldCallTools?: boolean;
@@ -289,14 +288,11 @@ npx tsx src/test-cli.ts --json
 ```
 Running 12 tests...
 
-✓ route-001: Simple greeting routes locally (1234ms)
+✓ model-001: Coding task uses qwen3-coder (1234ms)
 
-✓ route-002: SSN detection routes locally (856ms)
+✓ model-002: General task uses hermes3 (856ms)
 
-✗ route-003: Calendar query routes locally (2341ms)
-  FAILURES:
-  - Expected route 'local' but got 'cloud'
-  - Expected sensitive category 'calendar' not detected
+✓ tool-001: List files triggers bash tool (2341ms)
 
 ...
 
