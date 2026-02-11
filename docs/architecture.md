@@ -1,10 +1,10 @@
 # Casterly Architecture
 
-This document describes the architecture of Casterly, a local-first privacy-aware hybrid LLM router.
+This document describes the architecture of Casterly, a local-only AI assistant running on Mac Studio M4 Max.
 
 ## Overview
 
-Casterly routes requests between local and cloud LLM providers based on content sensitivity. The core principle: **sensitive data stays local**.
+Casterly runs entirely locally via Ollama. All inference happens on-device with 128GB unified memory. No data ever leaves the machine.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -32,32 +32,25 @@ Casterly routes requests between local and cloud LLM providers based on content 
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Router Layer                                │
-│  ┌─────────────────────────────┐  ┌───────────────────────────┐ │
-│  │   Pattern Matcher           │  │   LLM Classifier          │ │
-│  │   (fast, regex-based)       │  │   (local model)           │ │
-│  └─────────────────────────────┘  └───────────────────────────┘ │
-│                          │                                      │
-│                          ▼                                      │
-│              ┌───────────────────────┐                          │
-│              │   Route Decision      │                          │
-│              │   {route, reason,     │                          │
-│              │    confidence}        │                          │
-│              └───────────────────────┘                          │
+│                    Model Selection                              │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │   Task → Model Router (config/models.yaml)                  ││
+│  │   • coding tasks → qwen3-coder-next                         ││
+│  │   • general tasks → hermes3:70b                             ││
+│  └─────────────────────────────────────────────────────────────┘│
 └─────────────────────────┬───────────────────────────────────────┘
                           │
-            ┌─────────────┴─────────────┐
-            ▼                           ▼
-┌───────────────────────┐   ┌───────────────────────┐
-│    Local Provider     │   │    Cloud Provider     │
-│       (Ollama)        │   │       (Claude)        │
-│                       │   │                       │
-│  • Privacy-safe       │   │  • Advanced tasks     │
-│  • No data leaves     │   │  • Better reasoning   │
-│  • Always available   │   │  • Requires API key   │
-└───────────────────────┘   └───────────────────────┘
-            │                           │
-            └─────────────┬─────────────┘
+                          ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Ollama Provider                               │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                   Local Inference                           ││
+│  │   • 128GB unified memory                                    ││
+│  │   • Multiple 70B models simultaneously                      ││
+│  │   • All data stays on device                                ││
+│  └─────────────────────────────────────────────────────────────┘│
+└─────────────────────────┬───────────────────────────────────────┘
+                          │
                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Tools Layer                                 │
@@ -88,16 +81,10 @@ src/
 │   ├── index.ts             # YAML loader with validation
 │   └── schema.ts            # Zod schemas
 │
-├── providers/               # LLM provider abstractions
+├── providers/               # LLM provider (Ollama only)
 │   ├── base.ts              # LlmProvider interface
 │   ├── ollama.ts            # Local Ollama client
-│   ├── claude.ts            # Anthropic Claude client
 │   └── index.ts             # Provider registry
-│
-├── router/                  # Request routing
-│   ├── index.ts             # Main router logic
-│   ├── classifier.ts        # LLM-based classification
-│   └── patterns.ts          # Regex pattern matching
 │
 ├── security/                # Privacy & safety
 │   ├── detector.ts          # Sensitive content detection
@@ -123,7 +110,7 @@ src/
 ├── tools/                   # Native tool use system
 │   ├── schemas/
 │   │   ├── types.ts         # ToolSchema, NativeToolCall, etc.
-│   │   ├── core.ts          # BASH_TOOL, ROUTE_DECISION_TOOL
+│   │   ├── core.ts          # BASH_TOOL
 │   │   └── registry.ts      # Tool registry
 │   ├── executor.ts          # Bash tool executor with safety gates
 │   ├── orchestrator.ts      # Multi-tool orchestration
@@ -133,18 +120,31 @@ src/
 │   ├── types.ts             # Skill definitions (with optional tools)
 │   └── loader.ts            # Skill discovery and tool registration
 │
-├── testing/                 # Testing & verification (see docs/testing.md)
-│   ├── trace.ts             # Trace collector, event types
-│   ├── test-cases.ts        # Built-in test definitions
-│   ├── test-runner.ts       # Test execution & evaluation
-│   └── testable-runner.ts   # Pipeline wrapper with instrumentation
+├── coding/                  # Aider-style coding interface
+│   ├── tools/               # Read, edit, write, glob, grep
+│   ├── repo-map/            # PageRank-based file importance
+│   ├── context-manager/     # Token budgeting
+│   ├── session-memory/      # Conversation persistence
+│   ├── validation/          # Parse, lint, typecheck, test
+│   └── modes/               # Code, Architect, Ask, Review
+│
+├── autonomous/              # Self-improvement system
+│   ├── loop.ts              # Improvement cycle
+│   ├── analyzer.ts          # Codebase analysis
+│   ├── provider.ts          # LLM interface
+│   └── providers/ollama.ts  # Ollama implementation
+│
+├── testing/                 # Testing & verification
+│   ├── trace.ts             # Trace collector
+│   ├── test-cases.ts        # Test definitions
+│   └── test-runner.ts       # Test execution
 │
 └── test-cli.ts              # Test CLI entry point
 ```
 
 ## Data Flow
 
-### 1. Request Processing Pipeline
+### Request Processing Pipeline
 
 ```
 User Message
@@ -159,23 +159,15 @@ User Message
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ 2. SENSITIVITY DETECTION                                       │
-│    • Run regex patterns (fast, first pass)                     │
-│    • Detect: SSN, credit cards, passwords, calendar, etc.      │
-│    • If "always local" category → route LOCAL immediately      │
-└────────────────────────────────────────────────────────────────┘
-     │
-     ▼ (if not obviously sensitive)
-┌────────────────────────────────────────────────────────────────┐
-│ 3. LLM CLASSIFICATION (via Native Tool Use)                    │
-│    • Call local Ollama with route_decision tool                │
-│    • Model calls tool with: {route, reason, confidence}        │
-│    • Low confidence → fallback to local                        │
+│ 2. MODEL SELECTION                                             │
+│    • Detect task type (coding, general, autonomous)            │
+│    • Select model from config/models.yaml                      │
+│    • qwen3-coder-next for code, hermes3:70b for general        │
 └────────────────────────────────────────────────────────────────┘
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ 4. CONTEXT ASSEMBLY                                            │
+│ 3. CONTEXT ASSEMBLY                                            │
 │    • Build system prompt (identity, skills, safety)            │
 │    • Include conversation history (trimmed to token budget)    │
 │    • Add current message                                       │
@@ -183,15 +175,15 @@ User Message
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ 5. LLM INFERENCE WITH TOOLS                                    │
-│    • Call generateWithTools() on selected provider             │
+│ 4. LOCAL INFERENCE                                             │
+│    • Call generateWithTools() on Ollama provider               │
 │    • Pass tool schemas (bash, skill tools)                     │
-│    • Handle billing errors (fallback to local)                 │
+│    • All inference on Mac Studio M4 Max                        │
 └────────────────────────────────────────────────────────────────┘
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ 6. NATIVE TOOL LOOP (if tool calls in response)                │
+│ 5. NATIVE TOOL LOOP (if tool calls in response)                │
 │    • Model returns structured NativeToolCall objects           │
 │    • Check safety gates (blocked, approval, safe)              │
 │    • Execute via tool orchestrator                             │
@@ -203,64 +195,34 @@ User Message
 Response to User
 ```
 
-### 2. Routing Decision Flow
-
-```
-Input Text
-     │
-     ▼
-┌─────────────────────┐     YES     ┌─────────────────────┐
-│ Pattern Match?      │────────────▶│ Route: LOCAL        │
-│ (calendar, SSN,     │             │ Confidence: 1.0     │
-│  passwords, etc.)   │             └─────────────────────┘
-└─────────────────────┘
-     │ NO
-     ▼
-┌─────────────────────┐
-│ LLM Classification  │
-│ (local model)       │
-└─────────────────────┘
-     │
-     ▼
-┌─────────────────────┐
-│ Confidence Check    │
-└─────────────────────┘
-     │
-     ├── confidence >= threshold ──▶ Route as classified
-     │
-     └── confidence < threshold ───▶ Route: LOCAL (safe default)
-```
-
 ## Key Components
 
-### Providers
+### Provider
 
-The provider system abstracts LLM interactions with native tool use support:
+Single provider system - Ollama only:
 
-| Provider | Type | Use Case |
-|----------|------|----------|
-| Ollama | Local | Privacy-sensitive requests, always available |
-| Claude | Cloud | Advanced reasoning, complex tasks |
+| Provider | Models | Use Case |
+|----------|--------|----------|
+| Ollama | qwen3-coder-next | Coding tasks |
+| Ollama | hermes3:70b | General reasoning |
 
-Both providers implement `LlmProvider` interface with `generateWithTools()` method.
-This enables structured tool calling where the model returns `NativeToolCall` objects
-instead of text-based command blocks.
+Provider implements `LlmProvider` interface with `generateWithTools()` method.
 
-### Router
+### Model Selection
 
-Two-stage routing ensures privacy:
+Task-based model routing via `config/models.yaml`:
 
-1. **Pattern Matching** (fast): Regex patterns catch obvious sensitive content
-2. **LLM Classification via Tool Use** (smart): Local model calls `route_decision` tool with structured decision
-
-The router uses native tool calling to get structured routing decisions, eliminating
-JSON parsing errors that occurred with text-based classification.
+- **coding**: Code generation, refactoring, bug fixes → `qwen3-coder-next`
+- **primary**: Reasoning, planning, conversation → `hermes3:70b`
+- **autonomous**: Self-improvement cycles → `qwen3-coder-next`
 
 ### Security
 
 - **Detector**: Identifies sensitive content categories
 - **Redactor**: Sanitizes logs to prevent data leaks
 - **Safe Logger**: Wraps all logging with automatic redaction
+
+All data stays local by design - no cloud APIs to leak to.
 
 ### Interface Layer
 
@@ -277,6 +239,17 @@ Native tool use system for LLM interactions:
 - **Executor**: Runs bash commands with safety gates
 - **Orchestrator**: Handles multi-tool execution in loops
 
+### Coding Interface
+
+Aider-style coding scaffolding:
+
+- **Tools**: Read, edit, write, glob, grep
+- **Repo Map**: PageRank-based file importance scoring
+- **Context Manager**: Token budgeting and prioritization
+- **Session Memory**: Conversation persistence
+- **Validation**: Parse → lint → typecheck → test pipeline
+- **Modes**: Code, Architect, Ask, Review
+
 ### Skills
 
 OpenClaw-compatible skill system with native tool support:
@@ -286,66 +259,50 @@ OpenClaw-compatible skill system with native tool support:
 - Automatic discovery and tool registration
 - Safety gates for command execution
 
-## Sensitive Data Categories
-
-These categories always route locally:
-
-| Category | Examples |
-|----------|----------|
-| Calendar | Schedules, appointments, meetings |
-| Finances | Bank accounts, SSN, credit cards |
-| Health | Medical info, prescriptions |
-| Credentials | Passwords, API keys, tokens |
-| Documents | Private notes, journals, voice memos |
-| Contacts | Personal relationships, contact info |
-
 ## Configuration
 
-Configuration is loaded from `config/default.yaml` and validated at startup:
+Configuration loaded from `config/default.yaml` and `config/models.yaml`:
 
 ```yaml
+# config/default.yaml
 local:
   provider: ollama
-  model: qwen3:14b          # Tool-capable model required
+  model: hermes3:70b
   baseUrl: http://localhost:11434
-  timeoutMs: 60000          # 14B models need longer timeout
+  timeoutMs: 300000  # 5 minutes for large models
 
-cloud:
-  provider: claude
-  model: claude-sonnet-4-20250514
-  apiKeyEnv: ANTHROPIC_API_KEY
+# config/models.yaml
+models:
+  coding:
+    provider: ollama
+    model: qwen3-coder-next:latest
+    temperature: 0.1
 
-router:
-  defaultRoute: local
-  confidenceThreshold: 0.7
+  primary:
+    provider: ollama
+    model: hermes3:70b
+    temperature: 0.7
 
-sensitivity:
-  alwaysLocal:
-    - calendar
-    - finances
-    - health
-    - credentials
+hardware:
+  platform: mac-studio-m4-max
+  memory_gb: 128
+  max_concurrent_models: 2
 ```
-
-**Important**: Native tool use requires a tool-capable local model.
-Recommended: `qwen3:14b` (~9GB RAM, 0.971 F1 on tool calling benchmarks)
 
 ## Protected Paths
 
 Changes to these paths require extra caution:
 
 - `src/security/*` - Privacy-critical detection and redaction
-- `src/router/classifier.ts` - Routing decisions
 - `src/providers/*` - Provider implementations
 - `config/*` - Configuration files
-- `.env*` - Environment secrets
+- `.env*` - Environment variables
 - `docs/rulebook.md` - Architecture invariants
 
 ## Error Handling
 
-- **BillingError**: Cloud provider billing issues trigger fallback to local
-- **ProviderError**: Generic provider failures with retry logic
-- **Timeout**: Configurable per-provider timeouts
+- **ProviderError**: Provider failures with retry logic
+- **Timeout**: Configurable timeouts (generous for 70B models)
 - **Safety Gate**: Blocked commands return error without execution
 
 ## Session Storage
@@ -363,3 +320,12 @@ Changes to these paths require extra caution:
 ├── memory/              # Long-term memory
 └── users.json           # Multi-user config
 ```
+
+## Hardware
+
+Mac Studio M4 Max with 128GB unified memory:
+
+- Run multiple 70B parameter models simultaneously
+- No cloud APIs required
+- All inference on-device
+- Privacy by architecture

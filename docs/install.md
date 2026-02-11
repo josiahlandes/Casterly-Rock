@@ -1,6 +1,6 @@
 # Casterly Installation Guide
 
-This guide covers installation, configuration, and running Casterly.
+This guide covers installation, configuration, and running Casterly on Mac Studio M4 Max.
 
 ## Prerequisites
 
@@ -11,13 +11,15 @@ This guide covers installation, configuration, and running Casterly.
 | Node.js | 18.x or later | Runtime environment |
 | npm | 9.x or later | Package management |
 | macOS | 12.x or later | Primary platform (for iMessage) |
+| Ollama | Latest | Local LLM provider |
 
-### Optional (for full functionality)
+### Hardware
 
-| Requirement | Purpose |
-|-------------|---------|
-| Ollama | Local LLM provider |
-| Anthropic API key | Cloud LLM provider (Claude) |
+| Spec | Requirement |
+|------|-------------|
+| Platform | Mac Studio M4 Max |
+| Memory | 128GB unified |
+| Storage | NVMe SSD |
 
 ## Quick Start
 
@@ -29,14 +31,18 @@ cd casterly
 # 2. Install dependencies
 npm install
 
-# 3. Build and install
+# 3. Set up Ollama models
+ollama pull hermes3:70b
+ollama pull qwen3-coder-next:latest
+
+# 4. Build and install
 npm run install:host
 
-# 4. Add to PATH (if not already)
+# 5. Add to PATH (if not already)
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 
-# 5. Run
+# 6. Run
 casterly "Hello, what can you do?"
 ```
 
@@ -53,15 +59,17 @@ This installs:
 - `zod` - Runtime schema validation
 - Development tools (TypeScript, ESLint, Vitest)
 
-### Step 2: Configure Providers
-
-#### Local Provider (Ollama)
+### Step 2: Set Up Ollama
 
 1. Install Ollama from [ollama.ai](https://ollama.ai)
 
-2. Pull a model:
+2. Pull the required models:
    ```bash
-   ollama pull qwen3:14b
+   # Primary model for general tasks
+   ollama pull hermes3:70b
+
+   # Coding model
+   ollama pull qwen3-coder-next:latest
    ```
 
 3. Verify Ollama is running:
@@ -69,18 +77,9 @@ This installs:
    curl http://localhost:11434/api/tags
    ```
 
-#### Cloud Provider (Claude)
-
-1. Get an API key from [console.anthropic.com](https://console.anthropic.com)
-
-2. Set the environment variable:
+4. Check models are available:
    ```bash
-   export ANTHROPIC_API_KEY="sk-ant-..."
-   ```
-
-   Or add to your shell profile:
-   ```bash
-   echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
+   ollama list
    ```
 
 ### Step 3: Configure Casterly
@@ -90,29 +89,29 @@ Edit `config/default.yaml`:
 ```yaml
 local:
   provider: ollama
-  model: qwen3:14b                      # Tool-capable model (~9GB RAM)
+  model: hermes3:70b
   baseUrl: http://localhost:11434
-  timeoutMs: 60000
+  timeoutMs: 300000  # 5 minutes for 70B models
+```
 
-cloud:
-  provider: claude
-  model: claude-sonnet-4-20250514
-  apiKeyEnv: ANTHROPIC_API_KEY           # Environment variable name
-  timeoutMs: 45000
+Model routing is configured in `config/models.yaml`:
 
-router:
-  defaultRoute: local                    # Fallback when uncertain
-  confidenceThreshold: 0.7               # Min confidence for cloud
+```yaml
+models:
+  coding:
+    provider: ollama
+    model: qwen3-coder-next:latest
+    temperature: 0.1
 
-sensitivity:
-  alwaysLocal:                           # Categories that never go to cloud
-    - calendar
-    - finances
-    - voice_memos
-    - health
-    - credentials
-    - documents
-    - contacts
+  primary:
+    provider: ollama
+    model: hermes3:70b
+    temperature: 0.7
+
+hardware:
+  platform: mac-studio-m4-max
+  memory_gb: 128
+  max_concurrent_models: 2
 ```
 
 ### Step 4: Build and Install
@@ -143,8 +142,8 @@ casterly "List files in current directory" --execute
 ### CLI Mode
 
 ```bash
-# Basic query (routing only, no execution)
-casterly "What's the weather like?"
+# Basic query
+casterly "What's on my schedule today?"
 
 # With command execution enabled
 casterly "Create a file called test.txt" --execute
@@ -269,21 +268,28 @@ source ~/.zshrc
    curl http://localhost:11434/api/tags
    ```
 
-### "ANTHROPIC_API_KEY not set"
-
-Set the environment variable:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
-
 ### "Model not found"
 
-Pull the model specified in config:
+Pull the required models:
 
 ```bash
-ollama pull qwen3:14b
+ollama pull hermes3:70b
+ollama pull qwen3-coder-next:latest
 ```
+
+### "Out of memory"
+
+With 128GB unified memory, you should be able to run two 70B models simultaneously. If you encounter memory issues:
+
+1. Check what models are loaded:
+   ```bash
+   ollama ps
+   ```
+
+2. Unload unused models:
+   ```bash
+   ollama stop <model-name>
+   ```
 
 ### iMessage permissions (macOS)
 
@@ -317,12 +323,15 @@ npm install
 
 # Rebuild
 npm run install:host
+
+# Check for new models
+ollama list
 ```
 
 ## Security Notes
 
-- API keys are read from environment variables, not stored in config
-- Sensitive data categories route locally by default
+- All inference runs locally on Mac Studio
+- No data ever leaves the machine
 - Logs are automatically redacted
 - iMessage database access requires Full Disk Access permission
 

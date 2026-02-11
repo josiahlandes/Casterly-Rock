@@ -6,11 +6,12 @@ This document provides detailed API reference for Casterly's core modules.
 
 - [Providers](#providers)
 - [Tools](#tools)
-- [Router](#router)
 - [Security](#security)
 - [Interface Layer](#interface-layer)
 - [Skills](#skills)
 - [Configuration](#configuration)
+
+> **Note**: This is the Mac Studio M4 Max Edition. All inference runs locally via Ollama.
 
 ---
 
@@ -35,8 +36,8 @@ interface LlmProvider {
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `id` | `string` | Provider identifier (e.g., "ollama", "claude") |
-| `kind` | `ProviderKind` | Either "local" or "cloud" |
+| `id` | `string` | Provider identifier ("ollama") |
+| `kind` | `ProviderKind` | Always "local" for Mac Studio |
 | `model` | `string` | Model identifier |
 
 #### `GenerateRequest`
@@ -93,8 +94,7 @@ class ProviderError extends Error {
 
 ```typescript
 class BillingError extends ProviderError {
-  // Thrown when cloud provider has billing issues
-  // Triggers fallback to local provider
+  // Legacy: Not used in local-only mode
 }
 ```
 
@@ -166,11 +166,10 @@ interface ClaudeConfig {
 ```typescript
 function buildProviders(config: AppConfig): {
   local: LlmProvider;
-  cloud: LlmProvider;
 }
 ```
 
-Creates provider instances from application configuration.
+Creates the Ollama provider instance from configuration. Mac Studio Edition only uses local providers.
 
 ---
 
@@ -273,24 +272,6 @@ const BASH_TOOL: ToolSchema = {
 };
 ```
 
-#### `ROUTE_DECISION_TOOL`
-
-```typescript
-const ROUTE_DECISION_TOOL: ToolSchema = {
-  name: 'route_decision',
-  description: 'Declare your routing decision for the user request.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      route: { type: 'string', enum: ['local', 'cloud'] },
-      reason: { type: 'string' },
-      confidence: { type: 'number' }
-    },
-    required: ['route', 'reason', 'confidence']
-  }
-};
-```
-
 ---
 
 ### `src/tools/executor.ts`
@@ -372,115 +353,6 @@ function createToolRegistry(): ToolRegistry
 ```
 
 Creates a tool registry with core tools pre-registered.
-
----
-
-## Router
-
-### `src/router/index.ts`
-
-#### `routeRequest()`
-
-```typescript
-async function routeRequest(
-  input: string,
-  deps: RouterDependencies
-): Promise<RouteDecision>
-```
-
-Main routing function that determines whether a request should go to local or cloud provider.
-
-#### `RouteDecision`
-
-```typescript
-interface RouteDecision {
-  route: 'local' | 'cloud';
-  reason: string;
-  confidence: number;           // 0.0 to 1.0
-  sensitiveCategories: SensitiveCategory[];
-}
-```
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `route` | `'local' \| 'cloud'` | Routing decision |
-| `reason` | `string` | Human-readable explanation |
-| `confidence` | `number` | Confidence score (0.0-1.0) |
-| `sensitiveCategories` | `SensitiveCategory[]` | Detected sensitive categories |
-
-#### `RouterDependencies`
-
-```typescript
-interface RouterDependencies {
-  localProvider: LlmProvider;
-  config: RouterConfig;
-}
-```
-
----
-
-### `src/router/classifier.ts`
-
-#### `classifyRoute()`
-
-```typescript
-async function classifyRoute(
-  text: string,
-  deps: RouteClassifierDependencies,
-  context: RouteClassifierContext,
-  sensitiveCategories: SensitiveCategory[]
-): Promise<RouteDecision>
-```
-
-Uses local LLM with native tool use (`route_decision` tool) to classify requests.
-The model calls the tool with structured input rather than returning JSON text.
-
-#### `RouteClassifierContext`
-
-```typescript
-interface RouteClassifierContext {
-  defaultRoute: RouteTarget;
-  confidenceThreshold: number;
-  alwaysLocalCategories: SensitiveCategory[];
-}
-```
-
----
-
-### `src/router/patterns.ts`
-
-#### `matchSensitivePatterns()`
-
-```typescript
-function matchSensitivePatterns(
-  input: string
-): PatternMatchResult
-```
-
-Fast regex-based pattern matching for obvious sensitive content.
-
-#### `PatternMatchResult`
-
-```typescript
-interface PatternMatchResult {
-  matched: boolean;
-  categories: SensitiveCategory[];
-  patterns: string[];           // Which patterns matched
-}
-```
-
-#### `SensitiveCategory`
-
-```typescript
-type SensitiveCategory =
-  | 'calendar'
-  | 'finances'
-  | 'health'
-  | 'credentials'
-  | 'documents'
-  | 'contacts'
-  | 'voice_memos';
-```
 
 ---
 
@@ -868,9 +740,6 @@ interface SkillRegistry {
 ```typescript
 interface AppConfig {
   local: LocalProviderConfig;
-  cloud: CloudProviderConfig;
-  router: RouterConfig;
-  sensitivity: SensitivityConfig;
 }
 ```
 
@@ -885,35 +754,7 @@ interface LocalProviderConfig {
 }
 ```
 
-#### `CloudProviderConfig`
-
-```typescript
-interface CloudProviderConfig {
-  provider: 'claude';
-  model: string;
-  apiKey?: string;
-  apiKeyEnv: string;
-  baseUrl?: string;
-  timeoutMs?: number;
-}
-```
-
-#### `RouterConfig`
-
-```typescript
-interface RouterConfig {
-  defaultRoute: 'local' | 'cloud';
-  confidenceThreshold: number;  // 0.0 to 1.0
-}
-```
-
-#### `SensitivityConfig`
-
-```typescript
-interface SensitivityConfig {
-  alwaysLocal: SensitiveCategory[];
-}
-```
+Mac Studio Edition - all configuration is for local Ollama provider only.
 
 ---
 
@@ -954,7 +795,6 @@ interface DaemonConfig {
   pollInterval?: number;    // Default: 2000ms
   providers: {
     local: LlmProvider;
-    cloud: LlmProvider;
   };
   workspacePath?: string;
 }
@@ -1037,24 +877,6 @@ if (response.toolCalls.length > 0) {
   console.log('Tool requested:', response.toolCalls[0].name);
 } else {
   console.log(response.text);
-}
-```
-
-### Routing a Request
-
-```typescript
-import { routeRequest } from './router';
-
-const decision = await routeRequest(
-  "What's on my calendar today?",
-  {
-    config,
-    providers: { local: providers.local, cloud: providers.cloud }
-  }
-);
-
-if (decision.route === 'local') {
-  // Use local provider for privacy
 }
 ```
 

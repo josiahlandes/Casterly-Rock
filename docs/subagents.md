@@ -17,7 +17,7 @@ Purpose: Own the big picture and invariants.
 
 Responsibilities:
 - Maintain the architecture and security invariants in `docs/rulebook.md`.
-- Decide where new behavior belongs (router vs security vs provider vs interface).
+- Decide where new behavior belongs (security vs provider vs coding interface).
 - Enforce clear module boundaries and explicit data flows.
 
 When to trigger:
@@ -30,23 +30,24 @@ Checklist:
 - Confirm routing decisions remain explainable and testable.
 - Confirm the plan includes tests and security checks.
 
-### 2) Router Specialist (Implementer)
+### 2) Model Selection Specialist (Implementer)
 
-Purpose: Implement safe, testable routing behavior.
+Purpose: Implement task-based model routing.
 
 Responsibilities:
-- Own `src/router/*`.
-- Keep routing logic deterministic where possible and LLM-guided where necessary.
-- Ensure routing decisions emit structured reasoning and confidence.
+- Own `config/models.yaml` and model selection logic.
+- Ensure correct model is selected for each task type.
+- Manage model fallbacks and mode-based selection.
 
 When to trigger:
-- Changes to classification prompts, thresholds, or fallback patterns.
-- New routing features (e.g., provider selection, confidence calibration).
+- Changes to model configuration.
+- Adding new task types or modes.
+- Model performance tuning.
 
 Checklist:
-- Routing decisions include: route, reason, confidence.
-- Local bias is preserved when confidence is low.
-- Sensitive detection runs before cloud routing.
+- Coding tasks use qwen3-coder-next.
+- General tasks use hermes3:70b.
+- Mode-based selection is consistent with `src/coding/modes/`.
 
 ### 3) Provider Specialist (Implementer)
 
@@ -64,7 +65,7 @@ When to trigger:
 Checklist:
 - Provider interface remains stable and documented.
 - Timeouts, retries, and error handling are explicit.
-- No sensitive payloads are sent to cloud providers.
+- All inference remains local via Ollama.
 
 ### 4) Security Reviewer
 

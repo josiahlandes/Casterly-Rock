@@ -16,7 +16,6 @@ export type {
 
 export {
   BASH_TOOL,
-  ROUTE_DECISION_TOOL,
   CORE_TOOLS,
   createToolRegistry,
 } from './schemas/index.js';

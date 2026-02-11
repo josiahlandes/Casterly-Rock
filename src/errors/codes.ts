@@ -4,8 +4,7 @@
  * Comprehensive error codes with user-friendly messages and actionable suggestions.
  * Error codes are organized by category:
  *
- *   E1xx - Provider errors (Ollama, Claude)
- *   E2xx - Router errors
+ *   E1xx - Provider errors (Ollama local only)
  *   E3xx - Tool execution errors
  *   E4xx - Configuration errors
  *   E5xx - Network errors
@@ -13,6 +12,8 @@
  *   E7xx - Session errors
  *   E8xx - Memory errors
  *   E9xx - Skill errors
+ *
+ * Mac Studio Edition - Local only, no cloud routing.
  */
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -36,7 +37,7 @@ export const ERROR_CODES: Record<string, ErrorDefinition> = {
     code: 'E100',
     category: 'Provider',
     message: 'No providers available',
-    suggestion: 'Check that Ollama is running (ollama serve) or ANTHROPIC_API_KEY is set',
+    suggestion: 'Check that Ollama is running: ollama serve',
     severity: 'critical',
   },
 
@@ -72,54 +73,6 @@ export const ERROR_CODES: Record<string, ErrorDefinition> = {
     severity: 'error',
   },
 
-  E110: {
-    code: 'E110',
-    category: 'Provider',
-    message: 'Claude API key not configured',
-    suggestion: 'Set ANTHROPIC_API_KEY environment variable',
-    severity: 'error',
-  },
-
-  E111: {
-    code: 'E111',
-    category: 'Provider',
-    message: 'Claude API key invalid',
-    suggestion: 'Check your API key at console.anthropic.com',
-    severity: 'error',
-  },
-
-  E112: {
-    code: 'E112',
-    category: 'Provider',
-    message: 'Claude billing issue',
-    suggestion: 'Check billing at console.anthropic.com. Falling back to local model.',
-    severity: 'warning',
-  },
-
-  E113: {
-    code: 'E113',
-    category: 'Provider',
-    message: 'Claude rate limited',
-    suggestion: 'Too many requests. Wait a moment and try again.',
-    severity: 'warning',
-  },
-
-  E114: {
-    code: 'E114',
-    category: 'Provider',
-    message: 'Claude service unavailable',
-    suggestion: 'Anthropic API may be down. Check status.anthropic.com',
-    severity: 'error',
-  },
-
-  E115: {
-    code: 'E115',
-    category: 'Provider',
-    message: 'Claude request timeout',
-    suggestion: 'Request took too long. Try a simpler query or try again.',
-    severity: 'warning',
-  },
-
   E120: {
     code: 'E120',
     category: 'Provider',
@@ -133,42 +86,6 @@ export const ERROR_CODES: Record<string, ErrorDefinition> = {
     category: 'Provider',
     message: 'Provider returned invalid response',
     suggestion: 'Unexpected response format. This may be a bug.',
-    severity: 'error',
-  },
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // E2xx - Router Errors
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  E200: {
-    code: 'E200',
-    category: 'Router',
-    message: 'Routing decision failed',
-    suggestion: 'Could not determine route. Defaulting to local for safety.',
-    severity: 'warning',
-  },
-
-  E201: {
-    code: 'E201',
-    category: 'Router',
-    message: 'Router model not responding',
-    suggestion: 'Local model needed for routing. Check Ollama is running.',
-    severity: 'error',
-  },
-
-  E202: {
-    code: 'E202',
-    category: 'Router',
-    message: 'Invalid route decision from model',
-    suggestion: 'Model returned unexpected routing decision. Using default route.',
-    severity: 'warning',
-  },
-
-  E203: {
-    code: 'E203',
-    category: 'Router',
-    message: 'Selected provider unavailable',
-    suggestion: 'Routed to cloud but Claude unavailable, and local fallback failed.',
     severity: 'error',
   },
 
