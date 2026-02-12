@@ -7,7 +7,8 @@ export const sensitiveCategorySchema = z.enum([
   'health',
   'credentials',
   'documents',
-  'contacts'
+  'contacts',
+  'location'
 ]);
 
 const localConfigSchema = z.object({
