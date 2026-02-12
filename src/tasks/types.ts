@@ -75,11 +75,11 @@ export interface StepOutcome {
   /** Number of retry attempts */
   retries: number;
   /** Why it failed, if applicable */
-  failureReason?: string;
+  failureReason?: string | undefined;
   /** How long the step took in milliseconds */
   durationMs: number;
   /** Raw tool output (redacted for logging) */
-  output?: string;
+  output?: string | undefined;
 }
 
 /** Result of running an entire task plan */
@@ -117,5 +117,5 @@ export interface ExecutionRecord {
   /** Number of times the task was retried */
   retries: number;
   /** Planner observations for next time */
-  notes?: string;
+  notes?: string | undefined;
 }

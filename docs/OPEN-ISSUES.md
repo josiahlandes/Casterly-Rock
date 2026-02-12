@@ -69,7 +69,7 @@ Add document handler modules under `src/coding/tools/` (or a new `src/handlers/`
 
 ## ISSUE-002: Task Management & Orchestration Layer
 
-**Status:** Open
+**Status:** Implemented (all 5 phases: classifier, planner, runner, verifier, manager)
 **Priority:** Critical
 **Opened:** 2026-02-12
 **Category:** Architecture — Core Intelligence
@@ -352,7 +352,7 @@ Task step hits approval gate
 
 ## ISSUE-005: Operational Memory — Learning From Task Execution
 
-**Status:** Open
+**Status:** Implemented (execution log + shared task types)
 **Priority:** Medium
 **Opened:** 2026-02-12
 **Category:** Feature — Intelligence & Adaptation
@@ -516,7 +516,7 @@ The existing `assembleContext` becomes the `conversation` profile. New profiles 
 
 ## ISSUE-007: Native Tool Executors — Reduce Bash Passthrough
 
-**Status:** Open
+**Status:** Implemented (read_file, write_file, list_files, search_files)
 **Priority:** Medium
 **Opened:** 2026-02-12
 **Category:** Architecture — Reliability & Safety
