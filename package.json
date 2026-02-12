@@ -2,9 +2,9 @@
   "name": "casterly",
   "version": "1.0.0",
   "description": "Local-first privacy-aware LLM router",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "bin": {
-    "casterly": "dist/index.js"
+    "casterly": "dist/src/index.js"
   },
   "directories": {
     "doc": "docs",

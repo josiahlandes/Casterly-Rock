@@ -3,12 +3,12 @@ import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 
 const repoRoot = process.cwd();
-const binSource = resolve(repoRoot, 'dist', 'index.js');
+const binSource = resolve(repoRoot, 'dist', 'src', 'index.js');
 const binDir = join(homedir(), '.local', 'bin');
 const binTarget = join(binDir, 'casterly');
 
 if (!existsSync(binSource)) {
-  console.error('[install] dist/index.js not found. Run `npm run build` first.');
+  console.error('[install] dist/src/index.js not found. Run `npm run build` first.');
   process.exit(1);
 }
 
