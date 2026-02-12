@@ -17,6 +17,9 @@ export type {
   ExecutionRecord,
 } from './types.js';
 
+// Classifier
+export { classifyMessage } from './classifier.js';
+
 // Operational memory
 export type { ExecutionLog, ToolReliability } from './execution-log.js';
 export { createExecutionLog } from './execution-log.js';

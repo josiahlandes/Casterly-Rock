@@ -22,7 +22,7 @@ export interface ClassificationResult {
   /** Brief explanation of the classification */
   reason: string;
   /** Task category if applicable (e.g. 'calendar', 'file_operation', 'coding') */
-  taskType?: string;
+  taskType?: string | undefined;
 }
 
 // ─── Planning ────────────────────────────────────────────────────────────────
