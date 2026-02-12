@@ -612,4 +612,214 @@ src/tools/executors/
 
 ---
 
-*Add new issues below using the next sequential ID (ISSUE-008, etc.).*
+## ISSUE-008: Model Benchmarking & Evaluation Framework
+
+**Status:** Open
+**Priority:** High
+**Opened:** 2026-02-12
+**Category:** Infrastructure — Testing & Model Selection
+
+### Summary
+
+Model selection is currently based on intuition. Hermes3:70b is assigned to general tasks and qwen3-coder-next to coding with no quantitative basis for either choice. There is no way to systematically evaluate a model against Tyrion's actual workload, compare alternatives, or assess newly released models. As the local model ecosystem evolves rapidly, this makes Casterly unable to keep up — every new model requires manual vibes-based testing instead of a standardized eval run.
+
+### Current State
+
+The existing test infrastructure (`src/testing/`) provides a foundation but is not a benchmarking system:
+
+| Capability | Existing (`src/testing/`) | Needed for Benchmarking |
+|-----------|--------------------------|------------------------|
+| Test cases with expected outcomes | Yes — 25+ built-in cases | Extend with difficulty tiers and category coverage |
+| Test runner | Yes — sequential execution | Multi-model: run same suite against N models |
+| Trace collection | Yes — event-level tracing | Extend with token counts, memory, TTFT |
+| Pass/fail evaluation | Yes — binary checks | Graduated quality scoring (0-10) |
+| Result persistence | No — in-memory only | Store to disk, compare across runs |
+| Model comparison | No | Side-by-side ranking on same suite |
+| Hardware metrics | No | Memory consumption, GPU utilization |
+| Reporting | Basic console output | Structured reports, comparison tables |
+
+### What the Benchmark Should Measure
+
+For each model × test case combination:
+
+| Metric | Why It Matters | How to Capture |
+|--------|---------------|----------------|
+| **Response quality** | Does the model actually solve the task correctly? | Graduated scoring: structural checks + LLM-as-judge for subjective quality |
+| **Tool calling accuracy** | Does the model call the right tools with correct args? | Compare actual tool calls against expected tool sequence |
+| **Tool call efficiency** | Does it solve the task in minimal steps? | Count tool calls vs. optimal expected count |
+| **Tokens used (input)** | Context consumption affects cost and speed | Ollama API reports prompt token count |
+| **Tokens used (output)** | Verbosity vs. conciseness | Ollama API reports completion token count |
+| **Time to first token (TTFT)** | Perceived responsiveness for the user | Timer from request to first streamed token |
+| **Total completion time** | End-to-end latency | Timer from request to final response |
+| **Memory consumption** | Can this model coexist with others on M4 Max? | Query Ollama `/api/ps` for model memory footprint |
+| **Instruction following** | Does the model respect format, constraints, persona? | Check for format compliance, persona drift, hallucination |
+| **Safety compliance** | Does the model respect safety gates? | Run safety test cases, check for bypass attempts |
+
+### Proposed Architecture
+
+```
+src/benchmark/
+├── suite.ts           # Benchmark suite definition (extends TestCase with difficulty + scoring)
+├── runner.ts          # Multi-model runner: iterate models × test cases
+├── scorer.ts          # Graduated scoring (structural + LLM-as-judge)
+├── metrics.ts         # Capture hardware metrics from Ollama API
+├── store.ts           # Persist results to ~/.casterly/benchmarks/
+├── compare.ts         # Side-by-side model comparison and ranking
+├── report.ts          # Formatted reports (console, JSON, markdown)
+└── types.ts           # BenchmarkSuite, ModelScore, ComparisonResult, etc.
+```
+
+### Key Types
+
+```typescript
+interface BenchmarkCase extends TestCase {
+  difficulty: 'trivial' | 'simple' | 'moderate' | 'complex' | 'expert';
+  category: 'conversation' | 'tool_use' | 'planning' | 'coding' | 'safety' | 'knowledge' | 'multi_step';
+  optimalToolCalls?: number;       // ideal number of tool calls for scoring efficiency
+  qualityRubric?: string;          // instructions for LLM-as-judge scoring
+  weight?: number;                 // relative importance (default 1.0)
+}
+
+interface ModelBenchmarkResult {
+  modelId: string;                 // e.g. "hermes3:70b"
+  modelSize: string;               // e.g. "70B"
+  quantization: string;            // e.g. "Q4_K_M"
+  timestamp: number;
+  suiteId: string;
+  caseResults: CaseBenchmarkResult[];
+  aggregate: AggregateScore;
+}
+
+interface CaseBenchmarkResult {
+  caseId: string;
+  passed: boolean;
+  qualityScore: number;            // 0-10
+  toolAccuracy: number;            // 0-1 (correct tools / expected tools)
+  toolEfficiency: number;          // 0-1 (optimal calls / actual calls)
+  tokensInput: number;
+  tokensOutput: number;
+  ttftMs: number;                  // time to first token
+  totalMs: number;                 // total completion time
+  memoryMb: number;                // model memory footprint
+  instructionFollowing: number;    // 0-1
+  safetyCompliance: boolean;
+}
+
+interface AggregateScore {
+  overallScore: number;            // weighted composite 0-100
+  qualityAvg: number;
+  toolAccuracyAvg: number;
+  toolEfficiencyAvg: number;
+  avgTtftMs: number;
+  avgTotalMs: number;
+  memoryMb: number;
+  passByDifficulty: Record<string, { passed: number; total: number }>;
+  passByCategory: Record<string, { passed: number; total: number }>;
+}
+
+interface ModelComparison {
+  models: ModelBenchmarkResult[];
+  ranking: { modelId: string; overallScore: number; rank: number }[];
+  winner: string;
+  tradeoffs: string[];             // e.g. "Model A is faster but less accurate on tool use"
+}
+```
+
+### Benchmark Suite Design
+
+The suite should cover Tyrion's actual workload across difficulty tiers:
+
+**Trivial** (should be instant, near-perfect):
+- Simple greetings, factual Q&A, basic math
+- Classification: "is this a task?" yes/no
+
+**Simple** (single tool, straightforward):
+- Check calendar, list files, get current time
+- Single-step tasks with clear tool mapping
+
+**Moderate** (multi-step, some reasoning):
+- "What's on my calendar tomorrow and do I have any conflicts?"
+- File operations with verification
+- Tasks requiring 2-3 sequential tool calls
+
+**Complex** (planning required, multiple tools):
+- "Summarize the last 3 days of calendar events and draft a weekly update"
+- Tasks requiring dependency ordering and verification
+- Error recovery when a step fails
+
+**Expert** (deep reasoning, long chains):
+- Multi-file code refactoring with tests
+- Tasks requiring plan revision mid-execution
+- Ambiguous instructions requiring clarification
+
+### Comparison Workflow
+
+```
+$ casterly benchmark run --models hermes3:70b,llama3.3:70b,qwen3:72b --suite full
+
+Running benchmark suite "full" (45 cases)
+
+Model 1/3: hermes3:70b
+  [████████████████████████████████████████████████] 45/45
+
+Model 2/3: llama3.3:70b
+  [████████████████████████████████████████████████] 45/45
+
+Model 3/3: qwen3:72b
+  [████████████████████████████████████████████████] 45/45
+
+═══════════════════════════════════════════════════════════
+MODEL COMPARISON — Suite: full (45 cases)
+═══════════════════════════════════════════════════════════
+
+Rank │ Model           │ Score │ Quality │ Tools │ Speed  │ Memory
+─────┼─────────────────┼───────┼─────────┼───────┼────────┼────────
+  1  │ qwen3:72b       │ 82/100│  8.4/10 │ 91%   │ 2.1s   │ 42GB
+  2  │ hermes3:70b     │ 76/100│  7.8/10 │ 84%   │ 2.4s   │ 41GB
+  3  │ llama3.3:70b    │ 71/100│  7.2/10 │ 78%   │ 1.9s   │ 40GB
+
+By Category:
+  conversation:  qwen3 > hermes3 > llama3
+  tool_use:      qwen3 > hermes3 > llama3
+  coding:        qwen3 > llama3 > hermes3
+  safety:        hermes3 > qwen3 > llama3
+
+Tradeoffs:
+  - llama3.3 is fastest (TTFT) but least accurate on tool use
+  - hermes3 strongest on safety compliance
+  - qwen3 wins overall but uses slightly more memory
+
+Results saved: ~/.casterly/benchmarks/2026-02-12_full.json
+```
+
+### Integration With Model Selection
+
+Once benchmark data exists, `config/models.yaml` choices can be data-driven:
+
+1. **Run benchmarks** on candidate models
+2. **Compare results** across Tyrion's workload categories
+3. **Update config** with the best model per task type
+4. **Re-run when new models release** — same suite, instant comparison
+
+Future enhancement: the model selection router could use benchmark scores dynamically — routing coding tasks to the model that scored highest on the `coding` category, general tasks to the `conversation` winner, etc.
+
+### Design Considerations
+
+1. **Extend, don't replace** — build on top of existing `TestCase`, `TestResult`, and `TraceCollector` types. The benchmark suite is a superset of the test suite.
+2. **LLM-as-judge for quality scoring** — use a capable model (possibly the best-performing one from a prior run) to score response quality 0-10 against a rubric. This is subjective but better than binary pass/fail.
+3. **Cold vs. warm runs** — first inference after loading a model is slower (cold start). Benchmark should include a warmup pass and report both cold and warm metrics.
+4. **Reproducibility** — seed prompts, fixed temperature (0 for determinism), record Ollama version and quant level. Same suite should produce comparable results across runs.
+5. **Incremental runs** — don't require running the full suite every time. Support `--category tool_use` or `--difficulty complex` to benchmark specific areas.
+6. **Hardware-aware** — M4 Max can run ~2 large models simultaneously. The benchmark should report whether a model can coexist with Tyrion's other models (memory budget check).
+
+### Constraints
+
+- All benchmarking runs locally on Ollama — no cloud model APIs
+- Test inputs must not contain real sensitive data (use synthetic test data)
+- Benchmark results stored locally under `~/.casterly/benchmarks/`
+- Must not interfere with normal daemon operation — run as a separate CLI command
+- LLM-as-judge calls should use a consistent judge model across comparisons
+
+---
+
+*Add new issues below using the next sequential ID (ISSUE-009, etc.).*
