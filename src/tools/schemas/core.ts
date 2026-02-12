@@ -2,6 +2,7 @@
  * Core Tool Schemas
  *
  * These are the built-in tools available to the LLM.
+ * Native tools (read_file, write_file, etc.) are preferred over bash equivalents.
  */
 
 import type { ToolSchema } from './types.js';
@@ -9,23 +10,27 @@ import type { ToolSchema } from './types.js';
 /**
  * Bash command execution tool
  *
- * Allows the LLM to execute shell commands on the local system.
+ * General-purpose fallback for commands without a native executor.
  */
 export const BASH_TOOL: ToolSchema = {
   name: 'bash',
   description: `Execute a shell command on the local system.
 
-Use this tool to:
-- Read files and directories (ls, cat, head, tail)
-- Search for content (grep, find)
-- Get system information (date, whoami, pwd)
-- Run installed CLI tools (git, npm, brew, etc.)
-- Create, modify, or delete files
+Use this tool ONLY for operations that don't have a dedicated tool:
+- Get system information (date, whoami, pwd, uname)
+- Run installed CLI tools (git, npm, brew, icalbuddy, etc.)
+- Process management (ps, kill)
+- Network operations (ping, curl for APIs)
+
+IMPORTANT: Prefer native tools when available:
+- Use read_file instead of cat/head/tail
+- Use write_file instead of echo/cat heredoc
+- Use list_files instead of ls/find
+- Use search_files instead of grep/rg
 
 Safety notes:
 - Destructive commands (rm, mv with overwrite) will be blocked or require approval
-- Never execute commands you don't understand
-- Prefer read-only commands when possible`,
+- Never execute commands you don't understand`,
 
   inputSchema: {
     type: 'object',
@@ -40,6 +45,121 @@ Safety notes:
 };
 
 /**
+ * Native file read tool
+ */
+export const READ_FILE_TOOL: ToolSchema = {
+  name: 'read_file',
+  description: 'Read the contents of a file. Returns structured output with content, size, and line count.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Absolute or relative path to the file to read.',
+      },
+      encoding: {
+        type: 'string',
+        description: 'File encoding. Defaults to utf-8.',
+        enum: ['utf-8', 'ascii', 'base64'],
+      },
+      maxLines: {
+        type: 'integer',
+        description: 'Maximum number of lines to read. Omit to read all.',
+      },
+    },
+    required: ['path'],
+  },
+};
+
+/**
+ * Native file write tool
+ */
+export const WRITE_FILE_TOOL: ToolSchema = {
+  name: 'write_file',
+  description: 'Write content to a file. Creates parent directories if needed. Supports append mode.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Absolute or relative path to the file to write.',
+      },
+      content: {
+        type: 'string',
+        description: 'Content to write to the file.',
+      },
+      append: {
+        type: 'boolean',
+        description: 'Append to file instead of overwriting. Defaults to false.',
+      },
+    },
+    required: ['path', 'content'],
+  },
+};
+
+/**
+ * Native file listing tool
+ */
+export const LIST_FILES_TOOL: ToolSchema = {
+  name: 'list_files',
+  description: 'List files and directories at a path. Returns structured entries with type and size.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Directory path to list.',
+      },
+      recursive: {
+        type: 'boolean',
+        description: 'List recursively into subdirectories. Defaults to false.',
+      },
+      pattern: {
+        type: 'string',
+        description: 'Glob pattern to filter results (e.g. "*.ts", "*.md").',
+      },
+    },
+    required: ['path'],
+  },
+};
+
+/**
+ * Native file search tool
+ */
+export const SEARCH_FILES_TOOL: ToolSchema = {
+  name: 'search_files',
+  description: 'Search for a text pattern in files. Returns matching lines with file paths and line numbers.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      pattern: {
+        type: 'string',
+        description: 'Regex pattern to search for.',
+      },
+      path: {
+        type: 'string',
+        description: 'Directory to search in. Defaults to current directory.',
+      },
+      filePattern: {
+        type: 'string',
+        description: 'Glob pattern to filter which files to search (e.g. "*.ts").',
+      },
+      maxResults: {
+        type: 'integer',
+        description: 'Maximum results to return. Defaults to 100.',
+      },
+    },
+    required: ['pattern'],
+  },
+};
+
+/**
  * All core tools available by default
  */
-export const CORE_TOOLS: ToolSchema[] = [BASH_TOOL];
+export const CORE_TOOLS: ToolSchema[] = [
+  BASH_TOOL,
+  READ_FILE_TOOL,
+  WRITE_FILE_TOOL,
+  LIST_FILES_TOOL,
+  SEARCH_FILES_TOOL,
+];

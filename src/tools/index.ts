@@ -16,6 +16,10 @@ export type {
 
 export {
   BASH_TOOL,
+  READ_FILE_TOOL,
+  WRITE_FILE_TOOL,
+  LIST_FILES_TOOL,
+  SEARCH_FILES_TOOL,
   CORE_TOOLS,
   createToolRegistry,
 } from './schemas/index.js';
@@ -35,3 +39,12 @@ export type { BashExecutorOptions } from './executor.js';
 export { createToolOrchestrator } from './orchestrator.js';
 
 export type { ToolOrchestrator } from './orchestrator.js';
+
+// Native executors
+export {
+  registerNativeExecutors,
+  createReadFileExecutor,
+  createWriteFileExecutor,
+  createListFilesExecutor,
+  createSearchFilesExecutor,
+} from './executors/index.js';

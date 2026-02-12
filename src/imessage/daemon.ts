@@ -13,6 +13,7 @@ import {
   createToolRegistry,
   createToolOrchestrator,
   createBashExecutor,
+  registerNativeExecutors,
   type ToolResultMessage,
   type NativeToolResult,
 } from '../tools/index.js';
@@ -127,6 +128,7 @@ async function processMessage(
   const toolRegistry = createToolRegistry();
   const orchestrator = createToolOrchestrator();
   orchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
+  registerNativeExecutors(orchestrator);
 
   let iteration = 0;
   let finalResponse = '';
