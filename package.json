@@ -24,13 +24,19 @@
     "imessage:start": "npm run build && node dist/src/imessage-daemon.js",
     "test:e2e": "tsx src/test-cli.ts",
     "test:trace": "tsx src/test-cli.ts --trace",
-    "test:interactive": "tsx src/test-cli.ts --interactive"
+    "test:interactive": "tsx src/test-cli.ts --interactive",
+    "benchmark": "tsx src/benchmark-cli.ts run",
+    "benchmark:compare": "tsx src/benchmark-cli.ts compare"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "csv-parse": "^6.1.0",
+    "exceljs": "^4.4.0",
+    "mammoth": "^1.11.0",
+    "pdf-parse": "^2.4.5",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },

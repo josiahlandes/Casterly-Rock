@@ -6,7 +6,7 @@ Tracked gaps, bugs, and feature needs for Casterly-Rock.
 
 ## ISSUE-001: File Type Support Gaps
 
-**Status:** Open
+**Status:** Implemented (read_document executor: PDF, DOCX, XLSX, CSV with parsers, schemas, tests)
 **Priority:** High
 **Opened:** 2026-02-12
 **Category:** Feature — Document Handling
@@ -204,7 +204,7 @@ type Verification =
 
 ## ISSUE-003: Proactive Scheduler — Tyrion Should Initiate, Not Just React
 
-**Status:** Open
+**Status:** Implemented (one-shot timers, cron jobs, job store, daemon integration)
 **Priority:** High
 **Opened:** 2026-02-12
 **Category:** Feature — Core Intelligence
@@ -268,7 +268,7 @@ All triggers produce a synthetic message that enters the same classify → plan 
 
 ## ISSUE-004: Asynchronous Approval Flow for Destructive Operations
 
-**Status:** Open
+**Status:** Implemented (approval bridge, response matcher, persistent store, daemon integration)
 **Priority:** High
 **Opened:** 2026-02-12
 **Category:** Architecture — Safety & UX
@@ -430,7 +430,7 @@ The task planner (ISSUE-002) queries recent execution records before generating 
 
 ## ISSUE-006: Scoped Subagent Context — Prevent Context Explosion
 
-**Status:** Open
+**Status:** Implemented (5 context profiles, token budgets, assembly functions)
 **Priority:** High
 **Opened:** 2026-02-12
 **Category:** Architecture — Performance & Quality
@@ -614,7 +614,7 @@ src/tools/executors/
 
 ## ISSUE-008: Model Benchmarking & Evaluation Framework
 
-**Status:** Open
+**Status:** Implemented (benchmark suite, scorer, store, compare, report, CLI)
 **Priority:** High
 **Opened:** 2026-02-12
 **Category:** Infrastructure — Testing & Model Selection

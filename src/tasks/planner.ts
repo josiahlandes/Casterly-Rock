@@ -13,6 +13,7 @@
  */
 
 import { safeLogger } from '../logging/safe-logger.js';
+import { PROFILES } from '../interface/context-profiles.js';
 import type { LlmProvider } from '../providers/base.js';
 import type { ToolSchema, GenerateWithToolsResponse } from '../tools/schemas/types.js';
 import type { TaskPlan, TaskStep, Verification, ExecutionRecord } from './types.js';
@@ -238,8 +239,8 @@ export async function createTaskPlan(
       {
         prompt: `Create a plan for this task:\n\n${instruction}`,
         systemPrompt,
-        maxTokens: 2048,    // plans can be longer than classifications
-        temperature: 0.2,   // low temp for consistent planning
+        maxTokens: PROFILES.planner.generation.maxTokens,
+        temperature: PROFILES.planner.generation.temperature,
       },
       [PLAN_TOOL]
     );
