@@ -14,6 +14,7 @@
  */
 
 import { safeLogger } from '../logging/safe-logger.js';
+import { PROFILES } from '../interface/context-profiles.js';
 import type { LlmProvider } from '../providers/base.js';
 import type { ToolSchema, GenerateWithToolsResponse } from '../tools/schemas/types.js';
 import type { ClassificationResult, TaskClass } from './types.js';
@@ -145,8 +146,8 @@ export async function classifyMessage(
       {
         prompt: context,
         systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
-        maxTokens: 256,    // classification should be tiny
-        temperature: 0.1,  // low temp for consistent classification
+        maxTokens: PROFILES.classifier.generation.maxTokens,
+        temperature: PROFILES.classifier.generation.temperature,
       },
       [CLASSIFY_TOOL]
     );

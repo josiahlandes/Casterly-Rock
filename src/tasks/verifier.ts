@@ -18,6 +18,7 @@
 
 import { existsSync } from 'node:fs';
 import { safeLogger } from '../logging/safe-logger.js';
+import { PROFILES } from '../interface/context-profiles.js';
 import type { LlmProvider } from '../providers/base.js';
 import type { ToolSchema, GenerateWithToolsResponse } from '../tools/schemas/types.js';
 import type { NativeToolResult } from '../tools/schemas/types.js';
@@ -219,8 +220,8 @@ Evaluate whether all completion criteria are met.`;
       {
         prompt,
         systemPrompt,
-        maxTokens: 512,
-        temperature: 0.1,
+        maxTokens: PROFILES.verifier.generation.maxTokens,
+        temperature: PROFILES.verifier.generation.temperature,
       },
       [VERIFY_TOOL]
     );

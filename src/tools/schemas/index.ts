@@ -25,6 +25,7 @@ export {
   WRITE_FILE_TOOL,
   LIST_FILES_TOOL,
   SEARCH_FILES_TOOL,
+  READ_DOCUMENT_TOOL,
   CORE_TOOLS,
 } from './core.js';
 

@@ -81,6 +81,21 @@ export {
   executeMemoryCommands,
 } from './memory.js';
 
+// Context profiles (ISSUE-006)
+export {
+  type ContextProfileName,
+  type PromptSections,
+  type GenerationParams,
+  type ContextProfile,
+  type DependencyContext,
+  type ProfileContextOptions,
+  type ProfileAssembledContext,
+  PROFILES,
+  buildProfileSystemPrompt,
+  formatDependencyOutputs,
+  assembleProfileContext,
+} from './context-profiles.js';
+
 // Multi-user management
 export {
   type UserProfile,

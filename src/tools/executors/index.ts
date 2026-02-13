@@ -11,11 +11,13 @@ import { createReadFileExecutor } from './read-file.js';
 import { createWriteFileExecutor } from './write-file.js';
 import { createListFilesExecutor } from './list-files.js';
 import { createSearchFilesExecutor } from './search-files.js';
+import { createReadDocumentExecutor } from './read-document.js';
 
 export { createReadFileExecutor } from './read-file.js';
 export { createWriteFileExecutor } from './write-file.js';
 export { createListFilesExecutor } from './list-files.js';
 export { createSearchFilesExecutor } from './search-files.js';
+export { createReadDocumentExecutor } from './read-document.js';
 
 /**
  * Register all native tool executors with the orchestrator.
@@ -26,4 +28,5 @@ export function registerNativeExecutors(orchestrator: ToolOrchestrator): void {
   orchestrator.registerExecutor(createWriteFileExecutor());
   orchestrator.registerExecutor(createListFilesExecutor());
   orchestrator.registerExecutor(createSearchFilesExecutor());
+  orchestrator.registerExecutor(createReadDocumentExecutor());
 }

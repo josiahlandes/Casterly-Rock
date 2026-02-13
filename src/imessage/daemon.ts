@@ -36,6 +36,18 @@ import { getMessagesSince, getLatestMessageRowId, type Message } from './reader.
 import { sendMessage, checkMessagesAvailable } from './sender.js';
 import { filterToolCalls } from './tool-filter.js';
 import { isAcknowledgementMessage } from './message-utils.js';
+import {
+  createJobStore,
+  getSchedulerToolSchemas,
+  createSchedulerExecutors,
+  checkDueJobs,
+  type JobStore,
+} from '../scheduler/index.js';
+import {
+  createApprovalStore,
+  createApprovalBridge,
+  type ApprovalBridge,
+} from '../approval/index.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
@@ -60,10 +72,12 @@ async function processMessage(
     maxToolIterations: number;
     workspacePath: string;
     user?: UserProfile | undefined;
+    jobStore?: JobStore | undefined;
+    approvalBridge?: ApprovalBridge | undefined;
   }
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
-  const { enableTools, maxToolIterations, workspacePath, user } = options;
+  const { enableTools, maxToolIterations, workspacePath, user, jobStore, approvalBridge } = options;
 
   // Create memory manager for this user's workspace
   const memoryManager = createMemoryManager({ workspacePath });
@@ -127,8 +141,27 @@ async function processMessage(
   // Set up native tool use
   const toolRegistry = createToolRegistry();
   const orchestrator = createToolOrchestrator();
-  orchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
+  orchestrator.registerExecutor(createBashExecutor(
+    approvalBridge
+      ? {
+          approvalCallback: async (command: string) => {
+            const request = approvalBridge.requestApproval(command, sender);
+            return approvalBridge.waitForApproval(request.id);
+          },
+        }
+      : { autoApprove: true }
+  ));
   registerNativeExecutors(orchestrator);
+
+  // Register scheduler tools if job store is available
+  if (jobStore) {
+    for (const tool of getSchedulerToolSchemas()) {
+      toolRegistry.register(tool);
+    }
+    for (const executor of createSchedulerExecutors(jobStore, sender)) {
+      orchestrator.registerExecutor(executor);
+    }
+  }
 
   let iteration = 0;
   let finalResponse = '';
@@ -376,6 +409,17 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
   safeLogger.info('Session manager initialized', { scope: sessionScope });
 
+  // Create scheduler job store
+  const jobStore = createJobStore();
+  safeLogger.info('Scheduler job store initialized', { activeJobs: jobStore.getActive().length });
+
+  // Create approval bridge for async command approval
+  const approvalStore = createApprovalStore();
+  const approvalBridge = createApprovalBridge(
+    approvalStore, sendMessage, getMessagesSince, getLatestMessageRowId,
+  );
+  safeLogger.info('Approval bridge initialized');
+
   // Get the current latest message ID (don't process old messages)
   let lastRowId = getLatestMessageRowId();
   let isPolling = false;
@@ -424,13 +468,29 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           }
         }
 
+        // Check if this message is an approval response
+        if (approvalBridge.tryResolveFromPoll(sender, message.text, message.rowid)) {
+          continue;
+        }
+        if (approvalBridge.wasConsumed(message.rowid)) {
+          continue;
+        }
+
         await processMessage(message, providers.local, skillRegistry, sessionManager, {
           enableTools,
           maxToolIterations,
           workspacePath: userWorkspacePath,
           user,
+          jobStore,
+          approvalBridge,
         });
       }
+
+      // Check for due scheduled jobs after processing messages
+      await checkDueJobs(jobStore, sendMessage);
+
+      // Expire any stale approval requests
+      approvalBridge.expireStale();
     } catch (error) {
       safeLogger.error('Error in poll cycle', {
         error: error instanceof Error ? error.message : String(error),

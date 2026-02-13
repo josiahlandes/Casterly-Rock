@@ -154,6 +154,51 @@ export const SEARCH_FILES_TOOL: ToolSchema = {
 };
 
 /**
+ * Native document read tool
+ */
+export const READ_DOCUMENT_TOOL: ToolSchema = {
+  name: 'read_document',
+  description: `Read and extract content from document files (PDF, DOCX, XLSX, CSV).
+
+Use this tool for binary document formats. For plain text files (.txt, .md, .ts, .json, etc.), use read_file instead.
+
+Supported formats:
+- PDF: Extracts text content with page count and metadata
+- DOCX: Extracts text (or HTML) from Word documents
+- XLSX/XLS: Extracts spreadsheet data as structured rows per sheet
+- CSV: Parses comma-separated values into structured headers + rows
+
+Returns structured JSON with format-specific fields.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Path to the document file to read.',
+      },
+      maxPages: {
+        type: 'integer',
+        description: 'PDF only: Maximum pages to extract. Defaults to 50.',
+      },
+      maxRows: {
+        type: 'integer',
+        description: 'XLSX/CSV only: Maximum rows per sheet/file. Defaults to 1000 (XLSX) or 5000 (CSV).',
+      },
+      format: {
+        type: 'string',
+        description: 'DOCX only: Output format. Defaults to "text".',
+        enum: ['text', 'html'],
+      },
+      sheet: {
+        type: 'string',
+        description: 'XLSX only: Name of specific sheet to read. Omit to read all sheets.',
+      },
+    },
+    required: ['path'],
+  },
+};
+
+/**
  * All core tools available by default
  */
 export const CORE_TOOLS: ToolSchema[] = [
@@ -162,4 +207,5 @@ export const CORE_TOOLS: ToolSchema[] = [
   WRITE_FILE_TOOL,
   LIST_FILES_TOOL,
   SEARCH_FILES_TOOL,
+  READ_DOCUMENT_TOOL,
 ];
