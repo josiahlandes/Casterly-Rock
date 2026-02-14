@@ -11,14 +11,14 @@ models:
     model: qwen3-coder-next:latest
     context_length: 32768
     temperature: 0.1  # Low for code accuracy
-    fallback: hermes3:70b
+    fallback: gpt-oss:120b
 
   # Primary/General: reasoning, planning, conversation
   primary:
     provider: ollama
-    model: hermes3:70b
+    model: gpt-oss:120b
     context_length: 32768
-    temperature: 0.7  # Higher for creative reasoning
+    temperature: 0.6  # Balanced for tool use + reasoning
     fallback: null  # No fallback - this is the fallback
 
   # Autonomous improvement cycles
@@ -27,7 +27,7 @@ models:
     model: qwen3-coder-next:latest
     context_length: 32768
     temperature: 0.2  # Slightly higher for exploration
-    fallback: hermes3:70b
+    fallback: gpt-oss:120b
 
 # Task-to-model routing
 routing:
