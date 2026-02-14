@@ -1,0 +1,20 @@
+# Model Profiles Configuration
+# Custom per-model tuning for tool calling, prompting, and generation.
+#
+# Built-in profiles exist for: gpt-oss:120b, hermes3:70b, qwen3-coder-next:latest
+# Entries here OVERRIDE built-in profiles for the same modelId.
+#
+# Unknown models fall back to family matching, then to the default (no-op) profile.
+
+profiles: []
+  # Example custom profile:
+  # - modelId: "my-custom-model:latest"
+  #   displayName: "My Custom Model"
+  #   family: "custom"
+  #   systemPromptHint: "Always use tools when available."
+  #   generation:
+  #     temperature: 0.5
+  #     numPredict: 4096
+  #   toolOverrides:
+  #     - toolName: bash
+  #       descriptionSuffix: "\nPrefer one-liners."

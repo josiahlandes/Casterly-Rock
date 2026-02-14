@@ -34,6 +34,12 @@ import {
 import { evaluateResult } from './testing/test-runner.js';
 import { createTraceCollector } from './testing/trace.js';
 import type { BenchmarkCategory, BenchmarkDifficulty } from './benchmark/types.js';
+import { BASH_TOOL } from './tools/schemas/core.js';
+import {
+  resolveModelProfile,
+  enrichToolDescriptions,
+  getGenerationOverrides,
+} from './models/index.js';
 
 // ─── CLI Parsing ─────────────────────────────────────────────────────────────
 
@@ -44,6 +50,7 @@ const { values, positionals } = parseArgs({
     model: { type: 'string' },
     category: { type: 'string', short: 'c' },
     difficulty: { type: 'string', short: 'd' },
+    timeout: { type: 'string', short: 't' },
     json: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -74,6 +81,7 @@ Options:
   --model          Single model ID (for history filtering)
   --category, -c   Filter by category (conversation, tool_use, etc.)
   --difficulty, -d Filter by difficulty (trivial, simple, moderate, complex, expert)
+  --timeout, -t    Request timeout in seconds (default: 120)
   --json           Output results as JSON
   --help, -h       Show this help
 `);
@@ -132,6 +140,19 @@ async function runBenchmarks(): Promise<void> {
     modelIndex++;
     console.log(`Model ${modelIndex}/${modelList.length}: ${modelId}`);
 
+    // Resolve model profile for per-model tool enrichment
+    const profile = resolveModelProfile(modelId);
+    const enrichedTools = enrichToolDescriptions([BASH_TOOL], profile);
+    const benchmarkTools = enrichedTools.map((tool) => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema,
+      },
+    }));
+    const genOverrides = getGenerationOverrides(profile);
+
     const caseResults: CaseResult[] = [];
     let caseIndex = 0;
 
@@ -145,12 +166,14 @@ async function runBenchmarks(): Promise<void> {
           { role: 'user', content: benchCase.input },
         ];
 
-        // Call Ollama
-        const response = await ollamaBenchmarkChat(baseUrl, modelId, messages);
+        // Call Ollama with profile-enriched tool definitions
+        const timeoutMs = values.timeout ? Number(values.timeout) * 1000 : undefined;
+        const response = await ollamaBenchmarkChat(baseUrl, modelId, messages, benchmarkTools, timeoutMs);
         const metrics = extractMetrics(response);
 
-        // Get response text
+        // Get response text and tool calls
         const responseText = response.message?.content ?? '';
+        const toolCalls = response.message?.tool_calls ?? [];
 
         // Build a trace for evaluateResult
         const collector = createTraceCollector(benchCase.input);
@@ -159,9 +182,18 @@ async function runBenchmarks(): Promise<void> {
           providerId: 'ollama',
           model: modelId,
           textLength: responseText.length,
-          toolCalls: 0,
-          stopReason: 'end_turn',
+          toolCalls: toolCalls.length,
+          stopReason: toolCalls.length > 0 ? 'tool_use' : 'end_turn',
         });
+
+        // Record each tool call so evaluateResult can find them
+        for (const tc of toolCalls) {
+          collector.addEvent('tool_call_received', {
+            toolName: tc.function?.name ?? 'unknown',
+            arguments: tc.function?.arguments ?? '',
+          });
+        }
+
         const trace = collector.complete();
 
         // Evaluate structural checks
