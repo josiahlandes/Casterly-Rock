@@ -101,6 +101,33 @@ describe('resolveModelProfile', () => {
     expect(profile.generation?.temperature).toBe(0.6);
   });
 
+  it('gpt-oss profile has negative routing for all 6 tools', () => {
+    const profile = resolveModelProfile('gpt-oss:120b');
+    expect(profile.toolOverrides).toHaveLength(6);
+
+    const toolNames = profile.toolOverrides?.map((o) => o.toolName) ?? [];
+    expect(toolNames).toContain('bash');
+    expect(toolNames).toContain('read_file');
+    expect(toolNames).toContain('write_file');
+    expect(toolNames).toContain('list_files');
+    expect(toolNames).toContain('search_files');
+    expect(toolNames).toContain('read_document');
+
+    // Every override has "Use when" and "Do NOT use when"
+    for (const override of profile.toolOverrides ?? []) {
+      const suffix = override.descriptionSuffix ?? override.description ?? '';
+      expect(suffix).toContain('Use when');
+      expect(suffix).toContain('Do NOT use when');
+    }
+  });
+
+  it('gpt-oss system prompt includes tool routing rules', () => {
+    const profile = resolveModelProfile('gpt-oss:120b');
+    expect(profile.systemPromptHint).toContain('Tool routing rules:');
+    expect(profile.systemPromptHint).toContain('use the read_file tool');
+    expect(profile.systemPromptHint).toContain('use the search_files tool');
+  });
+
   it('returns built-in profile for hermes3:70b', () => {
     const profile = resolveModelProfile('hermes3:70b');
     expect(profile.modelId).toBe('hermes3:70b');
