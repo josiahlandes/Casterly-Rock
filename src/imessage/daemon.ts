@@ -41,7 +41,10 @@ import {
   getSchedulerToolSchemas,
   createSchedulerExecutors,
   checkDueJobs,
+  parseCronExpression,
+  getNextFireTime,
   type JobStore,
+  type ActionableHandler,
 } from '../scheduler/index.js';
 import {
   createApprovalStore,
@@ -55,6 +58,23 @@ import {
   applyResponseHints,
   getGenerationOverrides,
 } from '../models/index.js';
+import {
+  createTaskManager,
+  createExecutionLog,
+  type TaskManager,
+  type ExecutionLog,
+} from '../tasks/index.js';
+import {
+  AutonomousLoop,
+  loadConfig as loadAutonomousConfig,
+  createProvider as createAutonomousProvider,
+  createAutonomousController,
+  type AutonomousController,
+} from '../autonomous/index.js';
+import {
+  createModeManager,
+  type ModeManager,
+} from '../coding/modes/index.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
@@ -81,10 +101,26 @@ async function processMessage(
     user?: UserProfile | undefined;
     jobStore?: JobStore | undefined;
     approvalBridge?: ApprovalBridge | undefined;
+    taskManager?: TaskManager | undefined;
+    autonomousController?: AutonomousController | undefined;
+    modeManager?: ModeManager | undefined;
   }
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
-  const { enableTools, maxToolIterations, workspacePath, user, jobStore, approvalBridge } = options;
+  const { enableTools, maxToolIterations, workspacePath, user, jobStore, approvalBridge, taskManager, autonomousController, modeManager } = options;
+
+  // ─── Autonomous commands (bypass LLM entirely) ─────────────────────
+  const autonomousReply = handleAutonomousCommand(message.text, autonomousController);
+  if (autonomousReply !== null) {
+    const sender = message.senderHandle || message.chatId;
+    const result = sendMessage(sender, autonomousReply);
+    if (result.success) {
+      safeLogger.info('Autonomous command handled', { command: message.text.substring(0, 30) });
+    } else {
+      safeLogger.error('Failed to send autonomous command reply', { error: result.error });
+    }
+    return;
+  }
 
   // Create memory manager for this user's workspace
   const memoryManager = createMemoryManager({ workspacePath });
@@ -138,6 +174,7 @@ async function processMessage(
     skills,
     channel: 'imessage',
     workspacePath,
+    currentUserId: user?.id,
   });
 
   safeLogger.info('Context assembled', {
@@ -170,19 +207,107 @@ async function processMessage(
     }
   }
 
+  // ─── Mode Detection ─────────────────────────────────────────────────
+  // Auto-detect mode from user input (code, architect, ask, review).
+  // Mode influences: system prompt, tool availability, preferred model.
+  let modeSystemPrompt = '';
+  if (modeManager) {
+    const detection = modeManager.autoDetectAndSwitch(message.text);
+    if (detection) {
+      const currentMode = modeManager.getCurrentMode();
+      modeSystemPrompt = currentMode.systemPrompt;
+      safeLogger.info('Mode detected', {
+        mode: currentMode.name,
+        confidence: detection.confidence,
+        reason: detection.reason,
+        preferredModel: modeManager.getPreferredModel(),
+      });
+    }
+  }
+
   // Resolve model profile for per-model tuning
   const modelProfile = resolveModelProfile(provider.model);
-  const enrichedSystemPrompt = enrichSystemPrompt(assembled.systemPrompt, modelProfile);
+  const baseSystemPrompt = modeSystemPrompt
+    ? `${assembled.systemPrompt}\n\n## Active Mode\n\n${modeSystemPrompt}`
+    : assembled.systemPrompt;
+  const enrichedSystemPrompt = enrichSystemPrompt(baseSystemPrompt, modelProfile);
   const rawTools = enableTools ? toolRegistry.getTools() : [];
-  const enrichedTools = enrichToolDescriptions(rawTools, modelProfile);
+  // Filter tools by current mode's allowed/forbidden lists
+  const modeFilteredTools = modeManager
+    ? rawTools.filter((t) => modeManager.isToolAllowed(t.name))
+    : rawTools;
+  const enrichedTools = enrichToolDescriptions(modeFilteredTools, modelProfile);
   const genOverrides = getGenerationOverrides(modelProfile);
+
+  // ─── Task Pipeline Gate ───────────────────────────────────────────────
+  // Classify the message first. Tasks get the structured pipeline
+  // (classify → plan → execute → verify → log). Conversation falls
+  // through to the flat tool loop below.
+  if (taskManager && enableTools) {
+    try {
+      const recentHistory = session.getHistory(6).map((m) => {
+        const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        return `${m.role}: ${text.substring(0, 200)}`;
+      });
+
+      const handleResult = await taskManager.handle(message.text, recentHistory, provider);
+
+      if (handleResult.classification.taskClass !== 'conversation') {
+        safeLogger.info('Task pipeline handled message', {
+          taskClass: handleResult.classification.taskClass,
+          confidence: handleResult.classification.confidence,
+          taskType: handleResult.classification.taskType ?? 'none',
+          hasResult: !!handleResult.taskResult,
+        });
+
+        // Apply model-specific response cleanup
+        let taskResponse = applyResponseHints(handleResult.response, modelProfile);
+
+        // Clean up the response (same as conversation path)
+        taskResponse = taskResponse
+          .replace(/```bash[\s\S]*?```/g, '')
+          .replace(/```sh[\s\S]*?```/g, '')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+
+        session.addMessage({
+          role: 'assistant',
+          content: taskResponse || 'Done!',
+        });
+
+        const result = sendMessage(sender, taskResponse || 'Done!');
+        if (result.success) {
+          safeLogger.info('Task response sent successfully');
+        } else {
+          safeLogger.error('Failed to send task response', { error: result.error });
+        }
+        return;
+      }
+
+      // Classification: conversation — fall through to flat tool loop
+      safeLogger.info('Task classifier: conversation, using flat tool loop', {
+        confidence: handleResult.classification.confidence,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      safeLogger.warn('Task pipeline error, falling back to flat tool loop', { error: errorMsg });
+      // Fall through to the existing flat loop on any pipeline error
+    }
+  }
 
   let iteration = 0;
   let finalResponse = '';
   let previousResults: ToolResultMessage[] = [];
 
+  // Deduplication: prevent the LLM from calling the same state-changing tool
+  // with identical parameters multiple times in one conversation turn.
+  const completedToolCalls = new Set<string>();
+  const STATE_CHANGING_TOOLS = new Set([
+    'schedule_reminder', 'cancel_reminder', 'write_file', 'send_message', 'reminder_create',
+  ]);
+
   try {
-    // Native tool execution loop
+    // Native tool execution loop (conversation path + fallback)
     while (iteration < maxToolIterations) {
       iteration++;
 
@@ -221,8 +346,30 @@ async function processMessage(
         });
       }
 
-      // Log tool calls
+      // Dedup: split filtered calls into new vs duplicate
+      const newCalls: typeof filteredCalls = [];
+      const dupCalls: typeof filteredCalls = [];
+
       for (const call of filteredCalls) {
+        if (STATE_CHANGING_TOOLS.has(call.name)) {
+          const key = `${call.name}:${JSON.stringify(call.input)}`;
+          if (completedToolCalls.has(key)) {
+            dupCalls.push(call);
+            continue;
+          }
+        }
+        newCalls.push(call);
+      }
+
+      if (dupCalls.length > 0) {
+        safeLogger.warn('Blocked duplicate tool calls', {
+          duplicates: dupCalls.length,
+          tools: dupCalls.map((c) => c.name),
+        });
+      }
+
+      // Log tool calls
+      for (const call of newCalls) {
         safeLogger.info('Tool call', {
           name: call.name,
           id: call.id,
@@ -231,12 +378,31 @@ async function processMessage(
         });
       }
 
-      // Execute allowed tool calls
+      // Execute allowed, non-duplicate tool calls
       const results: NativeToolResult[] = [];
 
-      if (filteredCalls.length > 0) {
-        const executedResults = await orchestrator.executeAll(filteredCalls);
+      if (newCalls.length > 0) {
+        const executedResults = await orchestrator.executeAll(newCalls);
         results.push(...executedResults);
+
+        // Track successful state-changing calls for dedup
+        for (let i = 0; i < newCalls.length; i++) {
+          const call = newCalls[i]!;
+          const result = executedResults[i];
+          if (result?.success && STATE_CHANGING_TOOLS.has(call.name)) {
+            const key = `${call.name}:${JSON.stringify(call.input)}`;
+            completedToolCalls.add(key);
+          }
+        }
+      }
+
+      // Add duplicate calls with dedup error results
+      for (const dupCall of dupCalls) {
+        results.push({
+          toolCallId: dupCall.id,
+          success: false,
+          error: 'Already completed — this action was already performed successfully. Compose your final text response to the user.',
+        });
       }
 
       // Add blocked calls with error results
@@ -334,6 +500,50 @@ async function processMessage(
   }
 }
 
+// ─── Autonomous Command Patterns ─────────────────────────────────────────────
+
+const AUTONOMOUS_START_RE = /^start\s+autonomous$/i;
+const AUTONOMOUS_STOP_RE = /^stop\s+autonomous$/i;
+const AUTONOMOUS_STATUS_RE = /^autonomous\s+status$/i;
+
+/**
+ * Try to handle the message as a direct autonomous command.
+ * Returns the reply string if handled, or null if not an autonomous command.
+ */
+function handleAutonomousCommand(
+  text: string,
+  controller?: AutonomousController,
+): string | null {
+  const trimmed = text.trim();
+
+  if (AUTONOMOUS_START_RE.test(trimmed)) {
+    if (!controller) return 'Autonomous mode is not configured.';
+    controller.start();
+    return 'Autonomous mode started. I will run self-improvement cycles continuously and only pause for incoming messages.';
+  }
+
+  if (AUTONOMOUS_STOP_RE.test(trimmed)) {
+    if (!controller) return 'Autonomous mode is not configured.';
+    controller.stop();
+    return 'Autonomous mode stopped.';
+  }
+
+  if (AUTONOMOUS_STATUS_RE.test(trimmed)) {
+    if (!controller) return 'Autonomous mode is not configured.';
+    const s = controller.getStatus();
+    const lines = [
+      `Autonomous: ${s.enabled ? 'ENABLED' : 'DISABLED'}`,
+      `Status: ${s.busy ? 'running a cycle' : 'idle'}`,
+      `Cycles completed: ${s.totalCycles} (${s.successfulCycles} successful)`,
+      `Last cycle: ${s.lastCycleAt ?? 'never'}`,
+      `Next cycle: ${s.nextCycleIn}`,
+    ];
+    return lines.join('\n');
+  }
+
+  return null;
+}
+
 /**
  * Check if a sender is allowed (if allowlist is configured)
  */
@@ -349,6 +559,15 @@ function isSenderAllowed(sender: string, allowedSenders?: string[]): boolean {
     const normalizedAllowed = normalize(allowed);
     return normalizedSender.includes(normalizedAllowed) || normalizedAllowed.includes(normalizedSender);
   });
+}
+
+/**
+ * Compute the next fire time for the daily 8am report cron job.
+ */
+function getNextReportTime(): number {
+  const cron = parseCronExpression('0 8 * * *');
+  if (!cron) return Date.now() + 24 * 60 * 60 * 1000; // Fallback: 24h from now
+  return getNextFireTime(cron, new Date()).getTime();
 }
 
 /**
@@ -426,6 +645,9 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
   safeLogger.info('Session manager initialized', { scope: sessionScope });
 
+  // Per-peer mode managers (code/architect/ask/review)
+  const modeManagers = new Map<string, ModeManager>();
+
   // Create scheduler job store
   const jobStore = createJobStore();
   safeLogger.info('Scheduler job store initialized', { activeJobs: jobStore.getActive().length });
@@ -436,6 +658,125 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     approvalStore, sendMessage, getMessagesSince, getLatestMessageRowId,
   );
   safeLogger.info('Approval bridge initialized');
+
+  // Create task pipeline (classifier → planner → runner → verifier → manager)
+  const executionLog = createExecutionLog();
+  // Task manager needs an orchestrator and tool list — we create a shared one for startup.
+  // Each processMessage() call creates its own tool registry/orchestrator for per-message state,
+  // but the task manager is shared across calls for operational memory continuity.
+  const startupToolRegistry = createToolRegistry();
+  const startupOrchestrator = createToolOrchestrator();
+  startupOrchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
+  registerNativeExecutors(startupOrchestrator);
+  if (jobStore) {
+    for (const tool of getSchedulerToolSchemas()) {
+      startupToolRegistry.register(tool);
+    }
+  }
+
+  const taskManager = createTaskManager({
+    orchestrator: startupOrchestrator,
+    executionLog,
+    availableTools: startupToolRegistry.getTools(),
+  });
+  safeLogger.info('Task pipeline initialized', { executionLogRecords: executionLog.count() });
+
+  // ── Autonomous controller ──────────────────────────────────────────────
+  // Attempt to load autonomous config and create the controller.
+  // If the autonomous module is not configured, the controller stays undefined
+  // and autonomous commands will respond with "not configured".
+  let autonomousController: AutonomousController | undefined;
+
+  try {
+    const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
+    const autonomousConfig = await loadAutonomousConfig(autonomousConfigPath);
+    const autonomousProvider = await createAutonomousProvider(autonomousConfig);
+    const autonomousLoop = new AutonomousLoop(autonomousConfig, process.cwd(), autonomousProvider);
+
+    autonomousController = createAutonomousController({
+      loop: autonomousLoop,
+      cycleIntervalMinutes: autonomousConfig.cycleIntervalMinutes,
+    });
+
+    safeLogger.info('Autonomous controller initialized', {
+      model: autonomousConfig.model,
+      interval: autonomousConfig.cycleIntervalMinutes,
+    });
+
+    // Schedule daily 8am report if not already present
+    const reportJobId = 'daily-autonomous-report';
+    const existingReport = jobStore.getById(reportJobId);
+    if (!existingReport) {
+      jobStore.add({
+        id: reportJobId,
+        triggerType: 'cron',
+        status: 'active',
+        cronExpression: '0 8 * * *',
+        nextFireTime: getNextReportTime(),
+        recipient: allowedSenders?.[0] ?? '',
+        message: 'Generate and send the daily autonomous progress report',
+        description: 'Daily autonomous report (8am)',
+        createdAt: Date.now(),
+        fireCount: 0,
+        source: 'system',
+        label: 'autonomous-daily-report',
+        actionable: true,
+      });
+      safeLogger.info('Scheduled daily autonomous report at 8am');
+    }
+  } catch (error) {
+    safeLogger.warn('Autonomous controller not available', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  // ── Actionable job handler ───────────────────────────────────────────────
+  // When a scheduled job fires with actionable=true, this callback creates
+  // a synthetic Message and runs it through the full processMessage() pipeline
+  // so the LLM actually executes the task (check weather, summarize emails, etc.)
+  // instead of sending a static reminder string.
+  const actionableHandler: ActionableHandler = async (recipient, instruction, jobId) => {
+    safeLogger.info('Actionable job: creating synthetic message', { jobId, recipient: recipient.substring(0, 4) + '***' });
+
+    // Resolve user for this recipient
+    let user: UserProfile | undefined;
+    let userWorkspacePath = defaultWorkspacePath;
+
+    if (useMultiUser && usersConfig) {
+      user = findUserByPhone(recipient, usersConfig);
+      if (user) {
+        userWorkspacePath = user.workspacePath;
+      }
+    }
+
+    // Build a synthetic Message that looks like a user message
+    const syntheticMessage: Message = {
+      rowid: -1,  // Negative rowid signals synthetic origin
+      guid: `scheduled-${jobId}`,
+      text: instruction,
+      isFromMe: false,
+      date: new Date(),
+      chatId: recipient,
+      senderHandle: recipient,
+    };
+
+    // Get or create per-peer mode manager for scheduled jobs
+    if (!modeManagers.has(recipient)) {
+      modeManagers.set(recipient, createModeManager());
+    }
+
+    await processMessage(syntheticMessage, providers.local, skillRegistry, sessionManager, {
+      enableTools,
+      maxToolIterations,
+      workspacePath: userWorkspacePath,
+      user,
+      jobStore,
+      approvalBridge,
+      taskManager,
+      autonomousController,
+      modeManager: modeManagers.get(recipient),
+    });
+  };
 
   // Get the current latest message ID (don't process old messages)
   let lastRowId = getLatestMessageRowId();
@@ -452,6 +793,12 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
     try {
       const newMessages = getMessagesSince(lastRowId);
+
+      // Interrupt autonomous cycle if messages arrived and it's running
+      if (newMessages.length > 0 && autonomousController?.busy) {
+        safeLogger.info('Incoming messages: interrupting autonomous cycle');
+        await autonomousController.interrupt();
+      }
 
       for (const message of newMessages) {
         if (message.rowid > lastRowId) {
@@ -493,6 +840,11 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           continue;
         }
 
+        // Get or create per-peer mode manager
+        if (!modeManagers.has(sender)) {
+          modeManagers.set(sender, createModeManager());
+        }
+
         await processMessage(message, providers.local, skillRegistry, sessionManager, {
           enableTools,
           maxToolIterations,
@@ -500,11 +852,19 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           user,
           jobStore,
           approvalBridge,
+          taskManager,
+          autonomousController,
+          modeManager: modeManagers.get(sender),
         });
       }
 
       // Check for due scheduled jobs after processing messages
-      await checkDueJobs(jobStore, sendMessage);
+      await checkDueJobs(jobStore, sendMessage, actionableHandler);
+
+      // Run the next autonomous cycle if ready
+      if (autonomousController) {
+        await autonomousController.tick();
+      }
 
       // Expire any stale approval requests
       approvalBridge.expireStale();

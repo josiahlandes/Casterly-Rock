@@ -154,7 +154,7 @@ export function createScheduledJob(
   input: CreateJobInput,
   recipient: string
 ): CreateJobResult {
-  const { message, label, fireAt, cronExpression, source = 'user_request' } = input;
+  const { message, label, fireAt, cronExpression, source = 'user_request', actionable } = input;
 
   if (!message || message.trim() === '') {
     return { success: false, error: 'Message is required' };
@@ -194,6 +194,7 @@ export function createScheduledJob(
       fireCount: 0,
       source,
       label,
+      actionable,
     };
 
     return { success: true, job };
@@ -221,6 +222,7 @@ export function createScheduledJob(
       fireCount: 0,
       source,
       label,
+      actionable,
     };
 
     return { success: true, job };

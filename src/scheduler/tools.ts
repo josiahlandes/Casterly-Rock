@@ -22,14 +22,24 @@ Use cronExpression for recurring:
 - "0 8 * * *" = every day at 8am
 - "30 17 * * 1-5" = weekdays at 5:30pm
 
-Provide either fireAt OR cronExpression, not both.`,
+Provide either fireAt OR cronExpression, not both.
+
+Set actionable to true when the user wants something DONE at fire time
+(e.g. "check the weather", "summarize my emails"). When false (default),
+the message is sent verbatim as a plain reminder.
+
+IMPORTANT: Reminders always fire back to the person who scheduled them.
+To send a message to someone else at a specific time, set actionable=true
+and put the full instruction as the message (e.g. message="Send Katie a
+message saying Hi"). The instruction will be executed through the full
+assistant pipeline at fire time, which can call send_message.`,
 
   inputSchema: {
     type: 'object',
     properties: {
       message: {
         type: 'string',
-        description: 'The message to send when the reminder fires.',
+        description: 'The message to send when the reminder fires, or the instruction to execute if actionable is true.',
       },
       label: {
         type: 'string',
@@ -42,6 +52,10 @@ Provide either fireAt OR cronExpression, not both.`,
       cronExpression: {
         type: 'string',
         description: 'For recurring: 5-field cron expression (e.g., "0 9 * * 1" for every Monday at 9am).',
+      },
+      actionable: {
+        type: 'boolean',
+        description: 'If true, the message is executed as a task at fire time (e.g. check weather, run a command) instead of sent as a plain reminder. Default false.',
       },
     },
     required: ['message'],

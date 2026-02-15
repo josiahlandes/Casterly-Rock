@@ -16,6 +16,11 @@ import type {
   PerformanceMetric,
   Reflection,
 } from './types.js';
+import {
+  parseVitestJson,
+  failuresToErrorLogEntries,
+  parseCoverageSummary,
+} from './test-parser.js';
 
 const execAsync = promisify(exec);
 
@@ -123,35 +128,26 @@ export class Analyzer {
   }
 
   private async parseTestLogs(): Promise<ErrorLogEntry[]> {
-    const entries: ErrorLogEntry[] = [];
-
     try {
-      // Run tests and capture output
-      const { stdout, stderr } = await execAsync('npm run test 2>&1 || true', {
-        cwd: this.projectRoot,
-        timeout: 60000,
-      });
+      // Check for package.json first — avoids hanging in non-project dirs
+      await fs.access(path.join(this.projectRoot, 'package.json'));
 
-      const output = stdout + stderr;
+      // Run tests with JSON reporter for structured output
+      const { stdout } = await execAsync(
+        'npx vitest run --reporter=json 2>/dev/null || true',
+        { cwd: this.projectRoot, timeout: 120000 }
+      );
 
-      // Look for test failures
-      const failurePattern = /FAIL|Error:|AssertionError/g;
-      const matches = output.match(failurePattern);
+      const parsed = parseVitestJson(stdout);
 
-      if (matches) {
-        entries.push({
-          timestamp: new Date().toISOString(),
-          code: 'TEST_FAILURE',
-          message: `${matches.length} test failures detected`,
-          frequency: matches.length,
-          lastOccurrence: new Date().toISOString(),
-        });
+      if (parsed.failures.length > 0) {
+        return failuresToErrorLogEntries(parsed.failures);
       }
     } catch {
-      // Test run failed, we'll catch this in validation
+      // Test run failed or not a valid project directory
     }
 
-    return entries;
+    return [];
   }
 
   private aggregateErrors(entries: ErrorLogEntry[]): ErrorLogEntry[] {
@@ -309,6 +305,18 @@ export class Analyzer {
       stats.lastCommit = commitOutput.trim();
     } catch {
       // Git command failed
+    }
+
+    // Read coverage data if available
+    try {
+      const coveragePath = path.join(this.projectRoot, 'coverage', 'coverage-summary.json');
+      const coverageJson = await fs.readFile(coveragePath, 'utf-8');
+      const coverage = parseCoverageSummary(coverageJson);
+      if (coverage.totalStatements > 0) {
+        stats.testCoverage = coverage.percentage;
+      }
+    } catch {
+      // No coverage data available
     }
 
     return stats;

@@ -24,11 +24,11 @@ autonomous:
   # Maximum cycles per day (to manage costs and avoid runaway)
   max_cycles_per_day: 12
 
-  # Quiet hours - don't run cycles during these times
+  # Quiet hours - disabled for 24/7 operation via iMessage daemon
   quiet_hours:
     start: "06:00"   # 6 AM
     end: "22:00"     # 10 PM
-    enabled: true    # Only run overnight
+    enabled: false   # Disabled: runs 24/7 when started via iMessage
 
   # ─────────────────────────────────────────────────────────────────────────────
   # SCOPE

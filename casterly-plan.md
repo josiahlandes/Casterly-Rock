@@ -1,12 +1,22 @@
-# Casterly Hybrid Implementation Plan
+# Casterly Implementation Plan
 
-## Overview
+> **NOTE:** This was the original plan. The architecture has evolved to be **fully local** — no cloud routing. gpt-oss:120b on the Mac Studio M4 Max handles all tasks via Ollama. The hybrid cloud/local routing described below was the initial design but was never implemented.
 
-A hybrid LLM system where a **fast local model** (running on M4 Mac Mini with 16GB) serves as both:
-1. **Intelligent Router** - Decides if a request is sensitive or needs frontier capability
-2. **Privacy Handler** - Processes all sensitive data locally (calendar, finances, voice memos, etc.)
+## Original Overview (Superseded)
 
-Cloud APIs (Claude, Grok, GPT, Gemini, etc.) are only called when bleeding-edge capability is needed - saving money while keeping private data at home.
+~~A hybrid LLM system where a **fast local model** (running on M4 Mac Mini with 16GB) serves as both:~~
+1. ~~**Intelligent Router** - Decides if a request is sensitive or needs frontier capability~~
+2. ~~**Privacy Handler** - Processes all sensitive data locally (calendar, finances, voice memos, etc.)~~
+
+~~Cloud APIs (Claude, Grok, GPT, Gemini, etc.) are only called when bleeding-edge capability is needed.~~
+
+## Actual Architecture
+
+A **local-only** AI assistant running on Mac Studio M4 Max via Ollama:
+- **Primary model:** gpt-oss:120b (96/100 benchmark score)
+- **Coding model:** qwen3-coder-next:latest
+- **Interface:** iMessage daemon (polls every 2s) + CLI
+- **All processing local** — no cloud APIs, no data leaves the machine
 
 ---
 

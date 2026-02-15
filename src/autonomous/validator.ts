@@ -13,6 +13,9 @@ import type {
   InvariantCheckResult,
   ValidationResult,
 } from './types.js';
+import { parseVitestJson, computeCoverageDelta, parseCoverageSummary } from './test-parser.js';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 
 const execAsync = promisify(exec);
 
@@ -62,18 +65,29 @@ export class Validator {
   async validate(): Promise<ValidationResult> {
     const startTime = Date.now();
 
+    // Snapshot coverage before running tests (for delta calculation)
+    const coverageBefore = await this.readCoveragePercentage();
+
     // Run all invariants
     const invariantResults = await this.checkAllInvariants();
 
     // Check if any invariant failed
     const invariantsHold = invariantResults.every((r) => r.passed);
 
-    // Extract test-specific results if available
-    const testResult = invariantResults.find((r) => r.name === 'tests_pass');
-    const testsPassed = testResult?.passed ?? true;
+    // Run structured test pass for detailed counts
+    const structuredTests = await this.runTestsStructured();
+
+    const testsPassed = structuredTests.success;
+    const testsRun = structuredTests.summary.total;
+    const testsFailed = structuredTests.summary.failed;
 
     // Collect all errors
     const errors = invariantResults.filter((r) => !r.passed).map((r) => `${r.name}: ${r.error || 'Failed'}`);
+
+    // Add test failure details
+    for (const f of structuredTests.failures) {
+      errors.push(`test: ${f.suiteName ? f.suiteName + ' > ' : ''}${f.testName}`);
+    }
 
     // Collect warnings (from stdout that might contain warnings)
     const warnings = invariantResults
@@ -82,16 +96,24 @@ export class Validator {
 
     const endTime = Date.now();
 
+    // Compute coverage delta if data is available
+    const coverageAfter = await this.readCoveragePercentage();
+    const coverageDelta =
+      coverageBefore > 0 && coverageAfter > 0
+        ? computeCoverageDelta(coverageBefore, coverageAfter)
+        : undefined;
+
     return {
       passed: invariantsHold && testsPassed,
       invariantsHold,
       testsPassed,
-      testsRun: testResult ? 1 : 0, // We don't have detailed test counts
-      testsFailed: testsPassed ? 0 : 1,
+      testsRun,
+      testsFailed,
       errors,
       warnings,
       metrics: {
         testDurationMs: endTime - startTime,
+        coverageDelta,
       },
     };
   }
@@ -152,6 +174,41 @@ export class Validator {
         error: err.stderr || err.message || 'Check failed',
         durationMs: endTime - startTime,
       };
+    }
+  }
+
+  /**
+   * Run tests with the Vitest JSON reporter and parse the structured output.
+   */
+  private async runTestsStructured() {
+    try {
+      const { stdout } = await execAsync(
+        'npx vitest run --reporter=json 2>/dev/null',
+        { cwd: this.projectRoot, timeout: this.timeoutMs }
+      );
+      return parseVitestJson(stdout);
+    } catch (error) {
+      // Even on failure, vitest may have printed JSON to stdout
+      const err = error as { stdout?: string };
+      if (err.stdout) {
+        return parseVitestJson(err.stdout);
+      }
+      return parseVitestJson('');
+    }
+  }
+
+  /**
+   * Read the current coverage percentage from the coverage summary file.
+   * Returns 0 if no coverage data is available.
+   */
+  private async readCoveragePercentage(): Promise<number> {
+    try {
+      const coveragePath = path.join(this.projectRoot, 'coverage', 'coverage-summary.json');
+      const raw = await fs.readFile(coveragePath, 'utf-8');
+      const summary = parseCoverageSummary(raw);
+      return summary.percentage;
+    } catch {
+      return 0;
     }
   }
 

@@ -49,4 +49,7 @@ export {
   createListFilesExecutor,
   createSearchFilesExecutor,
   createReadDocumentExecutor,
+  createCalendarReadExecutor,
+  createReminderCreateExecutor,
+  createHttpGetExecutor,
 } from './executors/index.js';

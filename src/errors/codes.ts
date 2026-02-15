@@ -468,17 +468,8 @@ export function wrapError(error: unknown, fallbackCode: keyof typeof ERROR_CODES
     return createError('E502', { originalMessage: originalError.message }, originalError);
   }
 
-  if (message.includes('billing') || message.includes('payment') || message.includes('credit')) {
-    return createError('E112', { originalMessage: originalError.message }, originalError);
-  }
-
-  if (message.includes('rate limit') || message.includes('too many requests')) {
-    return createError('E113', { originalMessage: originalError.message }, originalError);
-  }
-
-  if (message.includes('unauthorized') || message.includes('invalid api key') || message.includes('authentication')) {
-    return createError('E111', { originalMessage: originalError.message }, originalError);
-  }
+  // NOTE: Cloud-only errors (billing E112, rate-limit E113, auth E111) removed.
+  // Casterly is local-only via Ollama — these conditions never arise.
 
   if (message.includes('model') && message.includes('not found')) {
     return createError('E102', { originalMessage: originalError.message }, originalError);
@@ -526,7 +517,7 @@ export function isRecoverable(error: CasterlyError): boolean {
  * Check if we should retry after this error
  */
 export function shouldRetry(error: CasterlyError): boolean {
-  const retryableCodes = ['E103', 'E113', 'E115', 'E302', 'E501'];
+  const retryableCodes = ['E103', 'E302', 'E501'];
   return retryableCodes.includes(error.code);
 }
 

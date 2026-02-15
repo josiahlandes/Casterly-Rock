@@ -28,4 +28,30 @@ export { Reflector } from './reflector.js';
 export type { AggregateStats, MemoryEntry } from './reflector.js';
 
 // Main loop
-export { AutonomousLoop, main } from './loop.js';
+export { AutonomousLoop, AbortError, loadConfig, main } from './loop.js';
+
+// Controller (daemon-side management)
+export { createAutonomousController } from './controller.js';
+export type { AutonomousController, AutonomousStatus, ControllerOptions } from './controller.js';
+
+// Daily report
+export { formatDailyReport } from './report.js';
+
+// Test & coverage parser
+export {
+  parseVitestJson,
+  testFileToSourceModule,
+  failuresToErrorLogEntries,
+  failuresToObservations,
+  parseCoverageSummary,
+  computeCoverageDelta,
+} from './test-parser.js';
+export type {
+  ParsedTestResults,
+  TestSummary,
+  TestFailure,
+  FileTestResult,
+  CoverageSummary,
+  CoverageMetric,
+  FileCoverage,
+} from './test-parser.js';

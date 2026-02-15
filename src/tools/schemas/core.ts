@@ -6,6 +6,9 @@
  */
 
 import type { ToolSchema } from './types.js';
+import { CODING_TOOLS } from './coding.js';
+import { MESSAGING_TOOLS } from './messaging.js';
+import { PRODUCTIVITY_TOOLS } from './productivity.js';
 
 /**
  * Bash command execution tool
@@ -26,7 +29,11 @@ IMPORTANT: Prefer native tools when available:
 - Use read_file instead of cat/head/tail
 - Use write_file instead of echo/cat heredoc
 - Use list_files instead of ls/find
-- Use search_files instead of grep/rg
+- Use edit_file for search/replace edits to existing files
+- Use glob_files for pattern-based file discovery
+- Use search_files or grep_files instead of grep/rg
+- Use validate_files after editing to catch errors
+- Use send_message to text someone (never bash with osascript)
 
 Safety notes:
 - Destructive commands (rm, mv with overwrite) will be blocked or require approval
@@ -158,16 +165,19 @@ export const SEARCH_FILES_TOOL: ToolSchema = {
  */
 export const READ_DOCUMENT_TOOL: ToolSchema = {
   name: 'read_document',
-  description: `Read and extract content from document files (PDF, DOCX, XLSX, CSV).
+  description: `Read and extract content from document files (PDF, DOCX, XLSX, CSV, ZIP, TAR.GZ).
 
-Use this tool for binary document formats. For plain text files (.txt, .md, .ts, .json, etc.), use read_file instead.
+Use this tool for binary document formats and archives. For plain text files (.txt, .md, .ts, .json, etc.), use read_file instead.
 
 Supported formats:
 - PDF: Extracts text content with page count and metadata
 - DOCX: Extracts text (or HTML) from Word documents
 - XLSX/XLS: Extracts spreadsheet data as structured rows per sheet
 - CSV: Parses comma-separated values into structured headers + rows
+- ZIP: Lists archive contents (file names, sizes, types)
+- TAR.GZ/TGZ: Lists archive contents (file names, sizes, types)
 
+File types are detected by magic bytes (MIME) first, then by extension.
 Returns structured JSON with format-specific fields.`,
   inputSchema: {
     type: 'object',
@@ -208,4 +218,7 @@ export const CORE_TOOLS: ToolSchema[] = [
   LIST_FILES_TOOL,
   SEARCH_FILES_TOOL,
   READ_DOCUMENT_TOOL,
+  ...CODING_TOOLS,
+  ...MESSAGING_TOOLS,
+  ...PRODUCTIVITY_TOOLS,
 ];

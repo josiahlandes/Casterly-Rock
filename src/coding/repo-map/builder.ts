@@ -11,6 +11,9 @@ import * as path from 'path';
 import { glob } from '../tools/glob.js';
 import { tokenCounter } from '../token-counter.js';
 import { extractTypeScript, getTypeScriptExtensions } from './extractors/typescript.js';
+import { extractPython } from './extractors/python.js';
+import { extractGo } from './extractors/go.js';
+import { extractRust } from './extractors/rust.js';
 import { computeImportance } from './pagerank.js';
 import type { RepoMap, FileMap, RepoMapConfig, Language } from './types.js';
 import { DEFAULT_CONFIG, EXTENSION_TO_LANGUAGE } from './types.js';
@@ -64,8 +67,13 @@ export async function buildRepoMap(config: RepoMapConfig): Promise<RepoMap> {
       // Use appropriate extractor based on language
       if (language === 'typescript' || language === 'javascript') {
         extraction = extractTypeScript(content);
+      } else if (language === 'python') {
+        extraction = extractPython(content);
+      } else if (language === 'go') {
+        extraction = extractGo(content);
+      } else if (language === 'rust') {
+        extraction = extractRust(content);
       }
-      // TODO: Add extractors for other languages
 
       // Filter to exported symbols only (unless includePrivate)
       let symbols = extraction.symbols;
@@ -291,13 +299,105 @@ export function getRepoMapSummary(repoMap: RepoMap): {
 
 /**
  * Incrementally update a repo map when files change.
+ *
+ * Re-parses only the changed files and merges them back into the map.
+ * Falls back to a full rebuild if changed files exceed 30% of the map.
  */
 export async function updateRepoMap(
   existingMap: RepoMap,
   changedFiles: string[],
   config: RepoMapConfig
 ): Promise<RepoMap> {
-  // For now, just rebuild the whole map
-  // TODO: Implement incremental updates for better performance
-  return buildRepoMap(config);
+  // Fall back to full rebuild when too many files changed
+  if (changedFiles.length > existingMap.files.length * 0.3) {
+    return buildRepoMap(config);
+  }
+
+  const fullConfig = { ...DEFAULT_CONFIG, ...config };
+  const absoluteRoot = path.isAbsolute(fullConfig.rootPath)
+    ? fullConfig.rootPath
+    : path.resolve(fullConfig.rootPath);
+
+  // Normalize changed file paths to relative
+  const changedRelative = new Set(
+    changedFiles.map((f) =>
+      path.isAbsolute(f) ? path.relative(absoluteRoot, f) : f
+    )
+  );
+
+  // Keep unchanged files
+  const kept = existingMap.files.filter((f) => !changedRelative.has(f.path));
+
+  // Re-parse changed files
+  const referenceGraph = new Map<string, Set<string>>();
+  for (const fm of kept) {
+    referenceGraph.set(fm.path, new Set(fm.references));
+  }
+
+  // Find all source files (needed for reference resolution)
+  const allSourceFiles = await findSourceFiles(
+    absoluteRoot,
+    fullConfig.includePatterns,
+    fullConfig.excludePatterns,
+    fullConfig.languages
+  );
+
+  for (const relativePath of changedRelative) {
+    const filePath = path.join(absoluteRoot, relativePath);
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const ext = path.extname(filePath).toLowerCase();
+      const language = EXTENSION_TO_LANGUAGE[ext];
+
+      let extraction = { symbols: [] as FileMap['symbols'], references: [] as string[] };
+
+      if (language === 'typescript' || language === 'javascript') {
+        extraction = extractTypeScript(content);
+      } else if (language === 'python') {
+        extraction = extractPython(content);
+      } else if (language === 'go') {
+        extraction = extractGo(content);
+      } else if (language === 'rust') {
+        extraction = extractRust(content);
+      }
+
+      let symbols = extraction.symbols;
+      if (!fullConfig.includePrivate) {
+        symbols = symbols.filter((s) => s.exported);
+      }
+
+      const resolvedRefs = resolveReferences(extraction.references, relativePath, allSourceFiles, absoluteRoot);
+      const mapEntry = formatFileMapEntry({ path: relativePath, symbols, references: resolvedRefs, importance: 0, tokens: 0 });
+      const tokens = tokenCounter.count(mapEntry);
+
+      kept.push({
+        path: relativePath,
+        symbols,
+        references: resolvedRefs,
+        importance: 0,
+        tokens,
+      });
+
+      referenceGraph.set(relativePath, new Set(resolvedRefs));
+    } catch {
+      // File was deleted or unreadable — skip it
+    }
+  }
+
+  // Recompute importance with updated graph
+  const importanceScores = computeImportance(referenceGraph);
+  for (const fm of kept) {
+    fm.importance = importanceScores.get(fm.path) ?? 0;
+  }
+
+  kept.sort((a, b) => b.importance - a.importance);
+  const trimmed = trimToBudget(kept, fullConfig.tokenBudget);
+  const totalTokens = trimmed.reduce((sum, f) => sum + f.tokens, 0);
+
+  return {
+    files: trimmed,
+    totalTokens,
+    generatedAt: new Date().toISOString(),
+    rootPath: absoluteRoot,
+  };
 }

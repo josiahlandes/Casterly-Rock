@@ -54,5 +54,6 @@ export {
 // Due job checker
 export {
   type MessageSender,
+  type ActionableHandler,
   checkDueJobs,
 } from './checker.js';
