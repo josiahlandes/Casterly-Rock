@@ -145,6 +145,7 @@ async function processMessage(
     skills,
     channel: 'imessage',
     workspacePath,
+    currentUserId: user?.id,
   });
 
   safeLogger.info('Context assembled', {

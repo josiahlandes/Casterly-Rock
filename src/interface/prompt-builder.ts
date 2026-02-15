@@ -7,6 +7,7 @@
 import type { Skill } from '../skills/types.js';
 import { loadBootstrapFiles, formatBootstrapSection, type BootstrapConfig } from './bootstrap.js';
 import { createMemoryManager, formatMemorySection } from './memory.js';
+import { loadUsersConfig } from './users.js';
 import { safeLogger } from '../logging/safe-logger.js';
 
 export type PromptMode = 'full' | 'minimal' | 'none';
@@ -27,6 +28,8 @@ export interface PromptBuilderOptions {
   bootstrapConfig?: Partial<BootstrapConfig> | undefined;
   /** Include memory in prompt */
   includeMemory?: boolean | undefined;
+  /** Current user ID — used to build contacts roster (excludes self) */
+  currentUserId?: string | undefined;
 }
 
 export interface BuiltPrompt {
@@ -39,6 +42,7 @@ export interface BuiltPrompt {
     capabilities: string;
     skills: string;
     memory: string;
+    contacts: string;
     safety: string;
     context: string;
     guidelines: string;
@@ -105,6 +109,38 @@ function buildSafetySection(): string {
 }
 
 /**
+ * Build the contacts section from users.json
+ *
+ * Loads all enabled users and formats them as a roster the LLM can use
+ * to resolve natural language ("text Katie") to actual phone numbers.
+ * Excludes the current user since they're already in the conversation.
+ */
+function buildContactsSection(currentUserId?: string): string {
+  try {
+    const config = loadUsersConfig();
+    const contacts = config.users.filter(
+      (u) => u.enabled && u.id !== currentUserId && u.phoneNumbers.length > 0,
+    );
+
+    if (contacts.length === 0) {
+      return '';
+    }
+
+    const roster = contacts
+      .map((u) => `- **${u.name}** (${u.id}): ${u.phoneNumbers[0]}`)
+      .join('\n');
+
+    return `## Known Contacts
+
+When asked to message someone, use the send_message tool with their phone number.
+
+${roster}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Build the runtime context section
  */
 function buildContextSection(timezone?: string): string {
@@ -130,7 +166,7 @@ function buildContextSection(timezone?: string): string {
 - **Date**: ${dateStr}
 - **Time**: ${timeStr}
 - **Timezone**: ${tz}
-- **Platform**: macOS (local Mac Mini)`;
+- **Platform**: macOS (local Mac Studio M4 Max)`;
 }
 
 /**
@@ -173,7 +209,7 @@ function buildGuidelinesSection(channel: Channel): string {
  * Build the complete system prompt
  */
 export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
-  const { mode, skills, timezone, channel, workspacePath, bootstrapConfig, includeMemory = true } = options;
+  const { mode, skills, timezone, channel, workspacePath, bootstrapConfig, includeMemory = true, currentUserId } = options;
 
   // Mode: none - just identity
   if (mode === 'none') {
@@ -185,6 +221,7 @@ export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
         capabilities: '',
         skills: '',
         memory: '',
+        contacts: '',
         safety: '',
         context: '',
         guidelines: '',
@@ -224,12 +261,16 @@ export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
     memorySection = formatMemorySection(memoryState);
   }
 
+  // Build contacts roster (only in full mode)
+  const contactsSection = mode === 'full' ? buildContactsSection(currentUserId) : '';
+
   // Assemble the prompt
   const sections = [
     bootstrapSection,
     capabilitiesSection,
     skillsSection,
     memorySection,
+    contactsSection,
     safetySection,
     contextSection,
     guidelinesSection,
@@ -245,6 +286,7 @@ export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
       capabilities: capabilitiesSection,
       skills: skillsSection,
       memory: memorySection,
+      contacts: contactsSection,
       safety: safetySection,
       context: contextSection,
       guidelines: guidelinesSection,
