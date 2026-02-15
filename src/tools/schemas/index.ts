@@ -29,6 +29,21 @@ export {
   CORE_TOOLS,
 } from './core.js';
 
+// Coding tools
+export {
+  EDIT_FILE_TOOL,
+  GLOB_FILES_TOOL,
+  GREP_FILES_TOOL,
+  VALIDATE_FILES_TOOL,
+  CODING_TOOLS,
+} from './coding.js';
+
+// Messaging tools
+export {
+  SEND_MESSAGE_TOOL,
+  MESSAGING_TOOLS,
+} from './messaging.js';
+
 // Registry
 export type { ToolRegistry, AnthropicTool, OllamaTool } from './registry.js';
 export { createToolRegistry } from './registry.js';

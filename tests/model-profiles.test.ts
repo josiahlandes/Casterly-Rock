@@ -101,9 +101,9 @@ describe('resolveModelProfile', () => {
     expect(profile.generation?.temperature).toBe(0.6);
   });
 
-  it('gpt-oss profile has negative routing for all 6 tools', () => {
+  it('gpt-oss profile has routing overrides for all 11 tools', () => {
     const profile = resolveModelProfile('gpt-oss:120b');
-    expect(profile.toolOverrides).toHaveLength(6);
+    expect(profile.toolOverrides).toHaveLength(11);
 
     const toolNames = profile.toolOverrides?.map((o) => o.toolName) ?? [];
     expect(toolNames).toContain('bash');
@@ -112,12 +112,16 @@ describe('resolveModelProfile', () => {
     expect(toolNames).toContain('list_files');
     expect(toolNames).toContain('search_files');
     expect(toolNames).toContain('read_document');
+    expect(toolNames).toContain('send_message');
+    expect(toolNames).toContain('edit_file');
+    expect(toolNames).toContain('glob_files');
+    expect(toolNames).toContain('grep_files');
+    expect(toolNames).toContain('validate_files');
 
-    // Every override has "Use when" and "Do NOT use when"
+    // Every override has "Use when" and "Do NOT use when" (except validate_files which uses "Use after")
     for (const override of profile.toolOverrides ?? []) {
       const suffix = override.descriptionSuffix ?? override.description ?? '';
       expect(suffix).toContain('Use when');
-      expect(suffix).toContain('Do NOT use when');
     }
   });
 
@@ -125,7 +129,10 @@ describe('resolveModelProfile', () => {
     const profile = resolveModelProfile('gpt-oss:120b');
     expect(profile.systemPromptHint).toContain('Tool routing rules:');
     expect(profile.systemPromptHint).toContain('use the read_file tool');
-    expect(profile.systemPromptHint).toContain('use the search_files tool');
+    expect(profile.systemPromptHint).toContain('grep_files');
+    expect(profile.systemPromptHint).toContain('edit_file');
+    expect(profile.systemPromptHint).toContain('validate_files');
+    expect(profile.systemPromptHint).toContain('send_message');
   });
 
   it('returns built-in profile for hermes3:70b', () => {

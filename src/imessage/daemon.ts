@@ -55,6 +55,12 @@ import {
   applyResponseHints,
   getGenerationOverrides,
 } from '../models/index.js';
+import {
+  createTaskManager,
+  createExecutionLog,
+  type TaskManager,
+  type ExecutionLog,
+} from '../tasks/index.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
@@ -81,10 +87,11 @@ async function processMessage(
     user?: UserProfile | undefined;
     jobStore?: JobStore | undefined;
     approvalBridge?: ApprovalBridge | undefined;
+    taskManager?: TaskManager | undefined;
   }
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
-  const { enableTools, maxToolIterations, workspacePath, user, jobStore, approvalBridge } = options;
+  const { enableTools, maxToolIterations, workspacePath, user, jobStore, approvalBridge, taskManager } = options;
 
   // Create memory manager for this user's workspace
   const memoryManager = createMemoryManager({ workspacePath });
@@ -177,12 +184,68 @@ async function processMessage(
   const enrichedTools = enrichToolDescriptions(rawTools, modelProfile);
   const genOverrides = getGenerationOverrides(modelProfile);
 
+  // ─── Task Pipeline Gate ───────────────────────────────────────────────
+  // Classify the message first. Tasks get the structured pipeline
+  // (classify → plan → execute → verify → log). Conversation falls
+  // through to the flat tool loop below.
+  if (taskManager && enableTools) {
+    try {
+      const recentHistory = session.getHistory(6).map((m) => {
+        const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        return `${m.role}: ${text.substring(0, 200)}`;
+      });
+
+      const handleResult = await taskManager.handle(message.text, recentHistory, provider);
+
+      if (handleResult.classification.taskClass !== 'conversation') {
+        safeLogger.info('Task pipeline handled message', {
+          taskClass: handleResult.classification.taskClass,
+          confidence: handleResult.classification.confidence,
+          taskType: handleResult.classification.taskType ?? 'none',
+          hasResult: !!handleResult.taskResult,
+        });
+
+        // Apply model-specific response cleanup
+        let taskResponse = applyResponseHints(handleResult.response, modelProfile);
+
+        // Clean up the response (same as conversation path)
+        taskResponse = taskResponse
+          .replace(/```bash[\s\S]*?```/g, '')
+          .replace(/```sh[\s\S]*?```/g, '')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+
+        session.addMessage({
+          role: 'assistant',
+          content: taskResponse || 'Done!',
+        });
+
+        const result = sendMessage(sender, taskResponse || 'Done!');
+        if (result.success) {
+          safeLogger.info('Task response sent successfully');
+        } else {
+          safeLogger.error('Failed to send task response', { error: result.error });
+        }
+        return;
+      }
+
+      // Classification: conversation — fall through to flat tool loop
+      safeLogger.info('Task classifier: conversation, using flat tool loop', {
+        confidence: handleResult.classification.confidence,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      safeLogger.warn('Task pipeline error, falling back to flat tool loop', { error: errorMsg });
+      // Fall through to the existing flat loop on any pipeline error
+    }
+  }
+
   let iteration = 0;
   let finalResponse = '';
   let previousResults: ToolResultMessage[] = [];
 
   try {
-    // Native tool execution loop
+    // Native tool execution loop (conversation path + fallback)
     while (iteration < maxToolIterations) {
       iteration++;
 
@@ -437,6 +500,28 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   );
   safeLogger.info('Approval bridge initialized');
 
+  // Create task pipeline (classifier → planner → runner → verifier → manager)
+  const executionLog = createExecutionLog();
+  // Task manager needs an orchestrator and tool list — we create a shared one for startup.
+  // Each processMessage() call creates its own tool registry/orchestrator for per-message state,
+  // but the task manager is shared across calls for operational memory continuity.
+  const startupToolRegistry = createToolRegistry();
+  const startupOrchestrator = createToolOrchestrator();
+  startupOrchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
+  registerNativeExecutors(startupOrchestrator);
+  if (jobStore) {
+    for (const tool of getSchedulerToolSchemas()) {
+      startupToolRegistry.register(tool);
+    }
+  }
+
+  const taskManager = createTaskManager({
+    orchestrator: startupOrchestrator,
+    executionLog,
+    availableTools: startupToolRegistry.getTools(),
+  });
+  safeLogger.info('Task pipeline initialized', { executionLogRecords: executionLog.count() });
+
   // Get the current latest message ID (don't process old messages)
   let lastRowId = getLatestMessageRowId();
   let isPolling = false;
@@ -500,6 +585,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           user,
           jobStore,
           approvalBridge,
+          taskManager,
         });
       }
 

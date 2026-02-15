@@ -6,6 +6,8 @@
  */
 
 import type { ToolSchema } from './types.js';
+import { CODING_TOOLS } from './coding.js';
+import { MESSAGING_TOOLS } from './messaging.js';
 
 /**
  * Bash command execution tool
@@ -26,7 +28,11 @@ IMPORTANT: Prefer native tools when available:
 - Use read_file instead of cat/head/tail
 - Use write_file instead of echo/cat heredoc
 - Use list_files instead of ls/find
-- Use search_files instead of grep/rg
+- Use edit_file for search/replace edits to existing files
+- Use glob_files for pattern-based file discovery
+- Use search_files or grep_files instead of grep/rg
+- Use validate_files after editing to catch errors
+- Use send_message to text someone (never bash with osascript)
 
 Safety notes:
 - Destructive commands (rm, mv with overwrite) will be blocked or require approval
@@ -208,4 +214,6 @@ export const CORE_TOOLS: ToolSchema[] = [
   LIST_FILES_TOOL,
   SEARCH_FILES_TOOL,
   READ_DOCUMENT_TOOL,
+  ...CODING_TOOLS,
+  ...MESSAGING_TOOLS,
 ];

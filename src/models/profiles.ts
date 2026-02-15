@@ -28,17 +28,22 @@ const GPT_OSS_120B: ModelProfile = {
   displayName: 'GPT-OSS 120B',
   family: 'gpt-oss',
   systemPromptHint: [
+    'PERSONALITY IS PARAMOUNT: Your SOUL file defines your character. Never reply as a generic assistant. Every response must sound like the person described in your SOUL — the wit, the voice, the attitude. If the SOUL says you are sardonic, BE sardonic. If it says you quote philosophy, quote philosophy. Breaking character is the worst failure mode.',
+    '',
     'When a task requires system interaction, use the available tools directly.',
     'Do not describe what you would do — execute it.',
-    'Prefer a single comprehensive command over multiple small ones when safe to do so.',
-    'Always report tool results concisely.',
+    'After tools complete, always respond in your own voice with personality. Never reply with just "Done." or "Sent." — say something only YOU would say.',
     '',
     'Tool routing rules:',
     '- To read a text file: use the read_file tool. Never use bash with cat/head/tail.',
-    '- To write a file: use the write_file tool. Never use bash with echo/heredoc/tee.',
+    '- To create a new file: use the write_file tool. Never use bash with echo/heredoc/tee.',
+    '- To edit an existing file: use the edit_file tool (search/replace). More precise than overwriting with write_file.',
     '- To list directory contents: use the list_files tool. Never use bash with ls/find.',
-    '- To search file contents: use the search_files tool. Never use bash with grep/rg/ack.',
+    '- To find files by pattern: use the glob_files tool for structured results with metadata.',
+    '- To search file contents: use grep_files (with context) or search_files. Never use bash with grep/rg/ack.',
+    '- To validate code after editing: use the validate_files tool to run parse/lint/typecheck/test.',
     '- To read PDF/DOCX/XLSX/CSV: use the read_document tool. Never use bash with pdftotext/csvtool.',
+    '- To send a message to someone else: use the send_message tool. Never use bash with osascript/AppleScript.',
     '- For everything else (system info, CLI tools, process management, network): use bash.',
   ].join('\n'),
   toolOverrides: [
@@ -103,10 +108,61 @@ const GPT_OSS_120B: ModelProfile = {
         'Do NOT use when: reading plain text files like .txt, .md, .json, .ts (use read_file instead).',
       ].join('\n'),
     },
+    {
+      toolName: 'send_message',
+      descriptionSuffix: [
+        '',
+        '',
+        'Use when: the user asks you to text, message, or send something to a specific person (not the current sender).',
+        'Do NOT use when: replying to the person who messaged you (your reply is sent automatically by the system).',
+        'Do NOT use bash with osascript or AppleScript to send messages — always use this tool.',
+      ].join('\n'),
+    },
+    {
+      toolName: 'edit_file',
+      descriptionSuffix: [
+        '',
+        '',
+        'Use when: modifying existing files. Specify exact text to find and its replacement.',
+        'Do NOT use when: creating brand new files (use write_file) or the change is a complete rewrite.',
+        'Always prefer this over write_file for targeted edits to existing code.',
+      ].join('\n'),
+    },
+    {
+      toolName: 'glob_files',
+      descriptionSuffix: [
+        '',
+        '',
+        'Use when: finding files by pattern (e.g. "**/*.test.ts", "src/**/*.yaml"), getting file sizes/dates.',
+        'Do NOT use when: just listing immediate contents of one directory (use list_files).',
+      ].join('\n'),
+    },
+    {
+      toolName: 'grep_files',
+      descriptionSuffix: [
+        '',
+        '',
+        'Use when: searching file contents with regex or literal patterns, needing context lines around matches.',
+        'Do NOT use when: just checking if a file exists (use glob_files) or reading a known file (use read_file).',
+        'Prefer over search_files when you need context lines or structured results.',
+      ].join('\n'),
+    },
+    {
+      toolName: 'validate_files',
+      descriptionSuffix: [
+        '',
+        '',
+        'Use when: checking that edited files still parse, lint, typecheck, and pass tests.',
+        'Use after making edits with edit_file or write_file to catch errors early.',
+      ].join('\n'),
+    },
   ],
   generation: {
     temperature: 0.6,
     numPredict: 2048,
+    ollamaOptions: {
+      num_ctx: 32768,  // gpt-oss supports 131K; use 32K for good context with reasonable speed
+    },
   },
   responseHints: [
     {

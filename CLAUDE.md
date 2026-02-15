@@ -15,7 +15,7 @@ If you are Claude Code working in this repository, follow these rules on every t
 
 ## Guardrails
 
-1. Treat the following as protected paths: `src/security/*`, `src/router/classifier.ts`, `src/providers/*`, `config/*`, `.env*`, `docs/rulebook.md`, `docs/subagents.md`, `scripts/guardrails.mjs`.
+1. Treat the following as protected paths: `src/security/*`, `src/tasks/classifier.ts`, `src/providers/*`, `config/*`, `.env*`, `docs/rulebook.md`, `docs/subagents.md`, `scripts/guardrails.mjs`.
 2. Do not change protected paths unless the user’s request requires it.
 3. If you must change protected paths, state it clearly and run the full quality gates.
 
