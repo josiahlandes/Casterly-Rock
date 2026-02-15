@@ -118,6 +118,12 @@ describe('buildSystemPrompt — mode: full', () => {
     expect(result.sections.contacts).toContain('Katie');
   });
 
+  it('includes file locations section in full mode', () => {
+    const result = buildSystemPrompt(makeOptions({ mode: 'full' }));
+    expect(result.systemPrompt).toContain('File Locations');
+    expect(result.systemPrompt).toContain('~/Documents/Tyrion/');
+  });
+
   it('assembles all sections into systemPrompt', () => {
     const result = buildSystemPrompt(makeOptions({ mode: 'full' }));
     expect(result.systemPrompt).toContain('Project Context');
