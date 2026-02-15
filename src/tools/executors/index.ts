@@ -17,6 +17,9 @@ import { createGlobFilesExecutor } from './glob-files.js';
 import { createGrepFilesExecutor } from './grep-files.js';
 import { createValidateFilesExecutor } from './validate-files.js';
 import { createSendMessageExecutor } from './send-message.js';
+import { createCalendarReadExecutor } from './calendar-read.js';
+import { createReminderCreateExecutor } from './reminder-create.js';
+import { createHttpGetExecutor } from './http-get.js';
 
 export { createReadFileExecutor } from './read-file.js';
 export { createWriteFileExecutor } from './write-file.js';
@@ -28,6 +31,9 @@ export { createGlobFilesExecutor } from './glob-files.js';
 export { createGrepFilesExecutor } from './grep-files.js';
 export { createValidateFilesExecutor } from './validate-files.js';
 export { createSendMessageExecutor } from './send-message.js';
+export { createCalendarReadExecutor } from './calendar-read.js';
+export { createReminderCreateExecutor } from './reminder-create.js';
+export { createHttpGetExecutor } from './http-get.js';
 
 /**
  * Register all native tool executors with the orchestrator.
@@ -47,4 +53,8 @@ export function registerNativeExecutors(orchestrator: ToolOrchestrator): void {
   orchestrator.registerExecutor(createValidateFilesExecutor());
   // Messaging
   orchestrator.registerExecutor(createSendMessageExecutor());
+  // Productivity (macOS native + HTTP)
+  orchestrator.registerExecutor(createCalendarReadExecutor());
+  orchestrator.registerExecutor(createReminderCreateExecutor());
+  orchestrator.registerExecutor(createHttpGetExecutor());
 }

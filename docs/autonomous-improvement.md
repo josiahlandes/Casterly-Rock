@@ -1,8 +1,25 @@
 # Autonomous Self-Improvement System
 
-> **Status**: Design document - ready for Phase 0 (API validation)
+> **Status**: Implemented — core loop, analyzer, validator, reflector, git ops, provider abstraction, and daemon controller all built. See `src/autonomous/`.
 > **Prerequisites**: Phase 0 requires Claude API access (~$150/mo). Phase 1+ benefits from local hardware.
-> **Last Updated**: 2026-02-04
+> **Last Updated**: 2026-02-15
+>
+> ### Implementation Status
+>
+> | Component | File | Status |
+> |-----------|------|--------|
+> | Loop daemon | `src/autonomous/loop.ts` | Implemented |
+> | Analyzer | `src/autonomous/analyzer.ts` | Implemented (structured test parsing, coverage) |
+> | Provider abstraction | `src/autonomous/provider.ts` | Implemented (Ollama + Claude) |
+> | Validator | `src/autonomous/validator.ts` | Implemented (invariants, structured test results, coverage delta) |
+> | Git operations | `src/autonomous/git.ts` | Implemented (branch, commit, merge, revert, cleanup) |
+> | Reflector | `src/autonomous/reflector.ts` | Implemented (aggregate stats, memory entries) |
+> | Test parser | `src/autonomous/test-parser.ts` | Implemented (Vitest JSON, coverage summary) |
+> | Controller | `src/autonomous/controller.ts` | Implemented (daemon-side management) |
+> | Daily report | `src/autonomous/report.ts` | Implemented |
+> | Config | `config/autonomous.yaml` | Implemented |
+>
+> **Daemon integration**: The autonomous controller is integrated into the iMessage daemon via `src/autonomous/controller.ts`, exposing start/stop/status management.
 
 ## Vision
 
@@ -1053,7 +1070,7 @@ security_agent:
   # LLM analysis
   semantic_analysis:
     enabled: true
-    model: hermes3:8b            # Smaller model for fast analysis
+    model: gpt-oss:120b          # Primary model for analysis
     confidence_threshold: 0.8    # Block if threat confidence > 80%
 
   # Response

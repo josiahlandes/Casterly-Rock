@@ -31,7 +31,7 @@ Guidelines:
 - Validate changes compile/lint before committing
 - Use descriptive commit messages
 - Don't introduce security vulnerabilities`,
-  allowedTools: ['read', 'edit', 'write', 'glob', 'grep', 'git', 'bash', 'test'],
+  allowedTools: [],  // Empty = all tools allowed
   forbiddenTools: [],
   canEdit: true,
   canCreate: true,
@@ -39,7 +39,7 @@ Guidelines:
   canBash: true,
   canGit: true,
   preferredModel: 'qwen3-coder-next:latest',
-  fallbackModel: 'hermes3:70b',
+  fallbackModel: 'gpt-oss:120b',
 };
 
 /**
@@ -83,14 +83,14 @@ Output format:
 
 Do NOT make any file changes in this mode. Output the plan only.
 When the plan is approved, switch to CODE mode to implement.`,
-  allowedTools: ['read', 'glob', 'grep'],
-  forbiddenTools: ['edit', 'write', 'bash', 'git'],
+  allowedTools: ['read_file', 'read_document', 'list_files', 'search_files', 'glob_files', 'grep_files'],
+  forbiddenTools: ['edit_file', 'write_file', 'validate_files', 'bash', 'send_message'],
   canEdit: false,
   canCreate: false,
   canDelete: false,
   canBash: false,
   canGit: false,
-  preferredModel: 'hermes3:70b',
+  preferredModel: 'gpt-oss:120b',
   fallbackModel: 'qwen3-coder-next:latest',
 };
 
@@ -116,14 +116,14 @@ When answering:
 
 You cannot edit files in this mode. If asked to make changes,
 suggest switching to CODE mode.`,
-  allowedTools: ['read', 'glob', 'grep'],
-  forbiddenTools: ['edit', 'write', 'bash', 'git'],
+  allowedTools: ['read_file', 'read_document', 'list_files', 'search_files', 'glob_files', 'grep_files'],
+  forbiddenTools: ['edit_file', 'write_file', 'validate_files', 'bash', 'send_message'],
   canEdit: false,
   canCreate: false,
   canDelete: false,
   canBash: false,
   canGit: false,
-  preferredModel: 'hermes3:70b',
+  preferredModel: 'gpt-oss:120b',
   fallbackModel: 'qwen3-coder-next:latest',
 };
 
@@ -165,15 +165,15 @@ Output format:
 
 You can read files but cannot make changes directly.
 Suggest specific fixes that can be applied in CODE mode.`,
-  allowedTools: ['read', 'glob', 'grep'],
-  forbiddenTools: ['edit', 'write', 'bash', 'git'],
+  allowedTools: ['read_file', 'read_document', 'list_files', 'search_files', 'glob_files', 'grep_files'],
+  forbiddenTools: ['edit_file', 'write_file', 'validate_files', 'bash', 'send_message'],
   canEdit: false,
   canCreate: false,
   canDelete: false,
   canBash: false,
   canGit: false,
   preferredModel: 'qwen3-coder-next:latest',
-  fallbackModel: 'hermes3:70b',
+  fallbackModel: 'gpt-oss:120b',
 };
 
 /**

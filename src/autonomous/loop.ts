@@ -48,6 +48,11 @@ export class AutonomousLoop {
   private lastResetDate: string = '';
   private running: boolean = false;
 
+  /** Exposed for daemon-controlled mode (controller.ts) */
+  get reflectorInstance(): Reflector { return this.reflector; }
+  get configInstance(): AutonomousConfig { return this.config; }
+  get gitInstance(): GitOperations { return this.git; }
+
   constructor(
     config: AutonomousConfig,
     projectRoot: string,
@@ -154,8 +159,11 @@ export class AutonomousLoop {
 
   /**
    * Run a single improvement cycle.
+   *
+   * When called from the daemon controller, pass an AbortSignal so the
+   * cycle can be interrupted between phases if a user message arrives.
    */
-  async runCycle(): Promise<void> {
+  async runCycle(signal?: AbortSignal): Promise<void> {
     this.cycleCount++;
     this.dailyCycleCount++;
 
@@ -179,6 +187,7 @@ export class AutonomousLoop {
 
     try {
       // 1. ANALYZE
+      this.checkAborted(signal, cycleId);
       this.log('Phase 1: Analyzing codebase...', 'INFO');
       await this.git.fetchLatest();
       await this.git.checkoutBase();
@@ -195,6 +204,7 @@ export class AutonomousLoop {
       }
 
       // 2. HYPOTHESIZE
+      this.checkAborted(signal, cycleId);
       this.log('Phase 2: Generating hypotheses...', 'INFO');
       const hypothesizeResult = await this.provider.hypothesize(analyzeResult.observations);
 
@@ -215,6 +225,8 @@ export class AutonomousLoop {
       const maxAttempts = Math.min(viableHypotheses.length, this.config.maxAttemptsPerCycle);
 
       for (let i = 0; i < maxAttempts; i++) {
+        this.checkAborted(signal, cycleId);
+
         const hypothesis = viableHypotheses[i];
         if (!hypothesis) continue;
 
@@ -249,6 +261,11 @@ export class AutonomousLoop {
         'CYCLE'
       );
     } catch (error) {
+      // Re-throw AbortError so the controller can handle it cleanly
+      if (error instanceof AbortError) {
+        throw error;
+      }
+
       this.log(`Cycle ${cycleId} failed: ${error instanceof Error ? error.message : String(error)}`, 'ERROR');
 
       // Make sure we're back on main
@@ -257,6 +274,16 @@ export class AutonomousLoop {
       } catch {
         // Ignore
       }
+    }
+  }
+
+  /**
+   * Check if the abort signal has fired and throw if so.
+   */
+  private checkAborted(signal: AbortSignal | undefined, cycleId: string): void {
+    if (signal?.aborted) {
+      this.log(`Cycle ${cycleId} aborted by controller`, 'WARN');
+      throw new AbortError(cycleId);
     }
   }
 
@@ -443,10 +470,27 @@ export class AutonomousLoop {
 }
 
 // ============================================================================
+// ABORT ERROR
+// ============================================================================
+
+/**
+ * Thrown when a cycle is aborted via AbortSignal (daemon interrupt).
+ */
+export class AbortError extends Error {
+  readonly cycleId: string;
+
+  constructor(cycleId: string) {
+    super(`Cycle ${cycleId} aborted`);
+    this.name = 'AbortError';
+    this.cycleId = cycleId;
+  }
+}
+
+// ============================================================================
 // MAIN ENTRY POINT
 // ============================================================================
 
-async function loadConfig(configPath: string): Promise<AutonomousConfig> {
+export async function loadConfig(configPath: string): Promise<AutonomousConfig> {
   const content = await fs.readFile(configPath, 'utf-8');
   const raw = yaml.parse(content);
 

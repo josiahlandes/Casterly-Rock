@@ -44,6 +44,14 @@ export {
   MESSAGING_TOOLS,
 } from './messaging.js';
 
+// Productivity tools
+export {
+  CALENDAR_READ_TOOL,
+  REMINDER_CREATE_TOOL,
+  HTTP_GET_TOOL,
+  PRODUCTIVITY_TOOLS,
+} from './productivity.js';
+
 // Registry
 export type { ToolRegistry, AnthropicTool, OllamaTool } from './registry.js';
 export { createToolRegistry } from './registry.js';

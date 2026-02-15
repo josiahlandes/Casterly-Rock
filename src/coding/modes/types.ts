@@ -109,8 +109,8 @@ export const DEFAULT_MODE_CONFIG: Required<ModeConfig> = {
   allowOverride: true,
   models: {
     code: 'qwen3-coder-next:latest',
-    architect: 'hermes3:70b',
-    ask: 'hermes3:70b',
+    architect: 'gpt-oss:120b',
+    ask: 'gpt-oss:120b',
     review: 'qwen3-coder-next:latest',
   },
 };

@@ -26,7 +26,8 @@
     "test:trace": "tsx src/test-cli.ts --trace",
     "test:interactive": "tsx src/test-cli.ts --interactive",
     "benchmark": "tsx src/benchmark-cli.ts run",
-    "benchmark:compare": "tsx src/benchmark-cli.ts compare"
+    "benchmark:compare": "tsx src/benchmark-cli.ts compare",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [],
   "author": "",
@@ -35,8 +36,11 @@
   "dependencies": {
     "csv-parse": "^6.1.0",
     "exceljs": "^4.4.0",
+    "extract-zip": "^2.0.1",
+    "file-type": "^19.6.0",
     "mammoth": "^1.11.0",
     "pdf-parse": "^2.4.5",
+    "tar": "^7.5.7",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },
@@ -45,6 +49,7 @@
     "@types/node": "^25.0.10",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
+    "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.39.2",
     "eslint-plugin-security": "^3.0.1",
     "tsx": "^4.21.0",

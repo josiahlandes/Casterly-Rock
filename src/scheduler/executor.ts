@@ -10,7 +10,7 @@
 import { safeLogger } from '../logging/safe-logger.js';
 import type { NativeToolCall, NativeToolResult, NativeToolExecutor } from '../tools/schemas/types.js';
 import type { JobStore } from './store.js';
-import type { CreateJobInput } from './types.js';
+import type { CreateJobInput, ScheduledJob } from './types.js';
 import { createScheduledJob } from './trigger.js';
 
 // ─── schedule_reminder ──────────────────────────────────────────────────────
@@ -45,13 +45,15 @@ function createScheduleReminderExecutor(
 
       jobStore.add(result.job);
 
+      const actionLabel = result.job.actionable ? ' (actionable — will execute task)' : '';
       const summary = result.job.triggerType === 'one_shot'
-        ? `Reminder scheduled for ${new Date(result.job.fireAt!).toLocaleString()}`
-        : `Recurring job scheduled: ${result.job.cronExpression}`;
+        ? `Reminder scheduled for ${new Date(result.job.fireAt!).toLocaleString()}${actionLabel}`
+        : `Recurring job scheduled: ${result.job.cronExpression}${actionLabel}`;
 
       safeLogger.info('Scheduler: reminder created', {
         id: result.job.id,
         type: result.job.triggerType,
+        actionable: result.job.actionable ?? false,
         description: result.job.description,
       });
 
@@ -62,6 +64,7 @@ function createScheduleReminderExecutor(
           id: result.job.id,
           type: result.job.triggerType,
           label: result.job.label,
+          actionable: result.job.actionable ?? false,
           summary,
         }),
       };
@@ -90,14 +93,15 @@ function createListRemindersExecutor(
         };
       }
 
-      const lines = activeJobs.map((job) => {
+      const lines = activeJobs.map((job: ScheduledJob) => {
         const label = job.label ? ` (${job.label})` : '';
+        const mode = job.actionable ? ' [actionable]' : '';
         if (job.triggerType === 'one_shot') {
           const when = job.fireAt ? new Date(job.fireAt).toLocaleString() : 'unknown';
-          return `- [${job.id}]${label}: "${job.description}" → fires at ${when}`;
+          return `- [${job.id}]${label}${mode}: "${job.description}" → fires at ${when}`;
         }
         const nextFire = job.nextFireTime ? new Date(job.nextFireTime).toLocaleString() : 'unknown';
-        return `- [${job.id}]${label}: "${job.description}" → cron: ${job.cronExpression}, next: ${nextFire} (fired ${job.fireCount} times)`;
+        return `- [${job.id}]${label}${mode}: "${job.description}" → cron: ${job.cronExpression}, next: ${nextFire} (fired ${job.fireCount} times)`;
       });
 
       return {

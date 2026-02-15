@@ -19,6 +19,31 @@ import type { ToolSchema, GenerateWithToolsResponse } from '../tools/schemas/typ
 import type { TaskPlan, TaskStep, Verification, ExecutionRecord } from './types.js';
 
 /**
+ * Format tool input parameters as a concise param list for the planner.
+ *
+ * Example output:
+ *   "\n    Params: message* (string), fireAt (string), cronExpression (string), actionable (boolean)"
+ */
+export function formatToolParams(schema: ToolSchema['inputSchema']): string {
+  const props = schema.properties;
+  const required = new Set(schema.required);
+  const keys = Object.keys(props);
+
+  if (keys.length === 0) {
+    return '';
+  }
+
+  const parts = keys.map((name) => {
+    const prop = props[name];
+    if (!prop) return name;
+    const req = required.has(name) ? '*' : '';
+    return `${name}${req} (${prop.type})`;
+  });
+
+  return `\n    Params: ${parts.join(', ')}`;
+}
+
+/**
  * Tool schema that forces the model to output a structured plan.
  * The model MUST call this tool — it's the only tool available during planning.
  */
@@ -111,9 +136,13 @@ Rules:
 - Choose appropriate verification for each step
 - You MUST call the create_plan tool. Do not respond with text.`);
 
-  // List available tools
+  // List available tools with parameter schemas
   const toolDescriptions = availableTools
-    .map((t) => `- ${t.name}: ${t.description.split('\n')[0]}`)
+    .map((t) => {
+      const firstLine = t.description.split('\n')[0] ?? '';
+      const params = formatToolParams(t.inputSchema);
+      return `- ${t.name}: ${firstLine}${params}`;
+    })
     .join('\n');
   parts.push(`\nAvailable tools:\n${toolDescriptions}`);
 

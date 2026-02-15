@@ -1,8 +1,8 @@
 # Coding Interface
 
-> **Status**: Design document
+> **Status**: Implemented — see `src/coding/` for source
 > **Inspiration**: [Aider](https://github.com/Aider-AI/aider) repo map architecture
-> **Last Updated**: 2026-02-08
+> **Last Updated**: 2026-02-15
 
 ## Overview
 
@@ -55,7 +55,7 @@ This is what Claude Code is to Opus, or what Aider is to GPT-4. Tyrion needs the
               ┌───────────────────────────────┐
               │        Model Router           │
               │                               │
-              │  Hermes 3 70B (reasoning)     │
+              │  gpt-oss:120b (reasoning)     │
               │  Qwen3-Coder (implementation) │
               └───────────────────────────────┘
 ```
@@ -518,13 +518,13 @@ The coding interface routes to different models based on task:
 ```typescript
 interface ModelRouter {
   // Planning, architecture decisions
-  architect: 'hermes3:70b';
+  architect: 'gpt-oss:120b';
 
   // Code implementation
   code: 'qwen3-coder-next:latest';
 
   // Quick questions, explanations
-  ask: 'hermes3:70b';
+  ask: 'gpt-oss:120b';
 
   // Code review
   review: 'qwen3-coder-next:latest';
@@ -537,7 +537,7 @@ interface ModelRouter {
 function routeToModel(mode: Mode, task: string): string {
   switch (mode) {
     case 'architect':
-      return 'hermes3:70b';       // Reasoning for planning
+      return 'gpt-oss:120b';      // Reasoning for planning
 
     case 'code':
       return 'qwen3-coder-next';  // Coding specialist
@@ -546,7 +546,7 @@ function routeToModel(mode: Mode, task: string): string {
       // Use coding model for code questions, reasoning for general
       return isCodeQuestion(task)
         ? 'qwen3-coder-next'
-        : 'hermes3:70b';
+        : 'gpt-oss:120b';
 
     case 'review':
       return 'qwen3-coder-next';  // Code understanding
@@ -597,42 +597,44 @@ The coding interface can be used by both:
 
 ## Implementation Roadmap
 
-### Phase 1: Core Tools
-- [ ] Implement `read` tool with token counting
-- [ ] Implement `edit` tool with search/replace
-- [ ] Implement `write` tool with validation
-- [ ] Implement `glob` and `grep` tools
+### Phase 1: Core Tools — COMPLETE
+- [x] Implement `read` tool with token counting
+- [x] Implement `edit` tool with search/replace
+- [x] Implement `write` tool with validation
+- [x] Implement `glob` and `grep` tools
 
-### Phase 2: Repo Map
-- [ ] Integrate tree-sitter for TypeScript
-- [ ] Symbol extraction (functions, classes, types)
-- [ ] Dependency graph building
-- [ ] PageRank scoring
-- [ ] Token budget management
+### Phase 2: Repo Map — COMPLETE
+- [x] TypeScript symbol extraction (functions, classes, types, exports)
+- [x] Dependency graph building via import analysis
+- [x] PageRank scoring (`src/coding/repo-map/pagerank.ts`)
+- [x] Token budget management
+- [ ] Add extractors for non-JS/TS languages (TODO in `builder.ts`)
+- [ ] Incremental repo map updates (TODO in `builder.ts`)
 
-### Phase 3: Context Manager
-- [ ] File tracking
-- [ ] Token budget allocation
-- [ ] Auto-suggest relevant files
-- [ ] Context window optimization
+### Phase 3: Context Manager — COMPLETE
+- [x] File tracking
+- [x] Token budget allocation via context profiles
+- [x] Auto-suggest relevant files (`src/coding/auto-context.ts`)
+- [x] Context window optimization via scoped profiles
 
-### Phase 4: Session Memory
-- [ ] Session state persistence
-- [ ] Todo tracking
-- [ ] Decision logging
-- [ ] Cross-session learning
+### Phase 4: Session Memory — COMPLETE
+- [x] Session state persistence (`src/interface/session.ts`)
+- [x] Todo tracking (via interface memory)
+- [x] Decision logging
+- [x] Cross-session learning (via interface bootstrap + memory)
 
-### Phase 5: Validation Loop
-- [ ] Lint integration
-- [ ] TypeCheck integration
-- [ ] Test runner integration
-- [ ] Auto-commit with conventional messages
+### Phase 5: Validation Loop — COMPLETE
+- [x] Parse check (`src/coding/validation/parser.ts`)
+- [x] Lint integration (`src/coding/validation/runner.ts`)
+- [x] TypeCheck integration (`src/coding/validation/runner.ts`)
+- [x] Validation pipeline (`src/coding/validation/pipeline.ts`)
 
-### Phase 6: Modes
-- [ ] Code mode implementation
-- [ ] Architect mode implementation
-- [ ] Ask mode implementation
-- [ ] Mode switching
+### Phase 6: Modes — COMPLETE
+- [x] Code mode implementation
+- [x] Architect mode implementation
+- [x] Ask mode implementation
+- [x] Review mode implementation
+- [x] Mode definitions (`src/coding/modes/definitions.ts`)
 
 ---
 
@@ -1597,9 +1599,9 @@ coding:
 
   # Model routing
   models:
-    architect: hermes3:70b
+    architect: gpt-oss:120b
     code: qwen3-coder-next:latest
-    ask: hermes3:70b
+    ask: gpt-oss:120b
     review: qwen3-coder-next:latest
 
   # Session settings

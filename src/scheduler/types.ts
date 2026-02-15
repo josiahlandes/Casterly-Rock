@@ -2,7 +2,8 @@
  * Scheduler Types (ISSUE-003)
  *
  * Types for the proactive scheduler: one-shot timers and recurring cron jobs.
- * Phase 1 scope — event watches and proactive alerts are deferred.
+ * Supports both static reminders (send a message) and actionable tasks
+ * (re-enter the LLM pipeline to execute commands at fire time).
  */
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
@@ -50,6 +51,13 @@ export interface ScheduledJob {
   source: JobSource;
   /** Optional label for user-friendly listing */
   label?: string | undefined;
+  /**
+   * When true, the message is re-injected as a synthetic user message through
+   * the full LLM pipeline (classify → plan → execute) instead of being sent
+   * verbatim. This lets scheduled jobs perform actions ("check the weather",
+   * "summarize my emails") rather than just deliver static text.
+   */
+  actionable?: boolean | undefined;
 }
 
 // ─── Input/Output Types ─────────────────────────────────────────────────────
@@ -68,6 +76,8 @@ export interface CreateJobInput {
   cronExpression?: string | undefined;
   /** Source of the job */
   source?: JobSource | undefined;
+  /** If true, the message is executed as a task instead of sent verbatim */
+  actionable?: boolean | undefined;
 }
 
 /**
