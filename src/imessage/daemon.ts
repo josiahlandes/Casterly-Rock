@@ -36,6 +36,7 @@ import { getMessagesSince, getLatestMessageRowId, type Message } from './reader.
 import { sendMessage, checkMessagesAvailable } from './sender.js';
 import { filterToolCalls } from './tool-filter.js';
 import { isAcknowledgementMessage } from './message-utils.js';
+import { guardInboundMessage } from './input-guard.js';
 import {
   createJobStore,
   getSchedulerToolSchemas,
@@ -830,6 +831,28 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
               sender: sender.substring(0, 4) + '***',
             });
           }
+        }
+
+        // ─── Input Guard (physical pre-LLM filtering) ─────────────────
+        const guard = guardInboundMessage(message.text, sender);
+
+        if (!guard.allowed) {
+          safeLogger.warn('Input guard rejected message', {
+            sender: sender.substring(0, 4) + '***',
+            reason: guard.reason,
+          });
+          sendMessage(sender, "I can't process that message.");
+          continue;
+        }
+
+        // Use sanitized text for all downstream processing
+        message.text = guard.sanitized ?? message.text;
+
+        if (guard.warnings && guard.warnings.length > 0) {
+          safeLogger.info('Input guard warnings', {
+            sender: sender.substring(0, 4) + '***',
+            warnings: guard.warnings,
+          });
         }
 
         // Check if this message is an approval response
