@@ -7,7 +7,8 @@
 
 import { writeFile, appendFile, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, extname, basename, join } from 'node:path';
+import { homedir } from 'node:os';
 import { safeLogger } from '../../logging/safe-logger.js';
 import type { NativeToolCall, NativeToolResult, NativeToolExecutor } from '../schemas/types.js';
 
@@ -24,6 +25,18 @@ const PROTECTED_WRITE_PATHS = [
 
 /** Max content size to write (10MB) */
 const MAX_WRITE_SIZE = 10 * 1024 * 1024;
+
+/** User document directory — non-code files go here, not the repo */
+const USER_DOCUMENTS_DIR = join(homedir(), 'Documents', 'Tyrion');
+
+/**
+ * Extensions that are user documents, not code.
+ * When these land in the repo root (relative path, no subdirectory), redirect to ~/Documents/Tyrion/.
+ */
+const DOCUMENT_EXTENSIONS = new Set([
+  '.csv', '.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx',
+  '.rtf', '.odt', '.ods', '.ppt', '.pptx', '.pages', '.numbers',
+]);
 
 interface WriteFileInput {
   path: string;
@@ -69,7 +82,26 @@ export function createWriteFileExecutor(): NativeToolExecutor {
         };
       }
 
-      const resolved = resolve(filePath);
+      // Redirect user documents away from the repo root.
+      // If the path is relative (no directory component) and has a document extension,
+      // route it to ~/Documents/Tyrion/ instead of the current working directory.
+      let effectivePath = filePath;
+      if (filePath.startsWith('~/')) {
+        effectivePath = join(homedir(), filePath.slice(2));
+      } else {
+        const ext = extname(filePath).toLowerCase();
+        const dir = dirname(filePath);
+        const isRelativeRoot = dir === '.' || dir === '';
+        if (isRelativeRoot && DOCUMENT_EXTENSIONS.has(ext)) {
+          effectivePath = join(USER_DOCUMENTS_DIR, basename(filePath));
+          safeLogger.info('write_file redirected to user documents', {
+            original: filePath,
+            redirected: effectivePath,
+          });
+        }
+      }
+
+      const resolved = resolve(effectivePath);
 
       // Safety check
       if (isProtectedPath(resolved)) {

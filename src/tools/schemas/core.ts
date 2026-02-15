@@ -83,13 +83,15 @@ export const READ_FILE_TOOL: ToolSchema = {
  */
 export const WRITE_FILE_TOOL: ToolSchema = {
   name: 'write_file',
-  description: 'Write content to a file. Creates parent directories if needed. Supports append mode.',
+  description: `Write content to a file. Creates parent directories if needed. Supports append mode.
+
+IMPORTANT: User documents (budgets, schedules, notes, lists, etc.) must be written to ~/Documents/Tyrion/, NOT the project repository. Use absolute paths for user documents (e.g. ~/Documents/Tyrion/budget.csv). Only code and config files belong in the repository.`,
   inputSchema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Absolute or relative path to the file to write.',
+        description: 'Absolute or relative path. Use ~/Documents/Tyrion/ for user documents, not the repo.',
       },
       content: {
         type: 'string',

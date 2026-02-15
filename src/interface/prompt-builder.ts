@@ -96,6 +96,17 @@ To use a skill, use the bash tool to run the appropriate commands. Each skill pr
 }
 
 /**
+ * Build the file locations section
+ */
+function buildFileLocationsSection(): string {
+  return `## File Locations
+
+- **User documents** (budgets, schedules, notes, lists, exports, etc.): always write to ~/Documents/Tyrion/
+- **Code and config files**: write to the project repository
+- NEVER create user documents in the repository root — they don't belong in version control`;
+}
+
+/**
  * Build the safety section
  */
 function buildSafetySection(): string {
@@ -248,6 +259,7 @@ export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
   const safetySection = buildSafetySection();
   const contextSection = buildContextSection(timezone);
   const guidelinesSection = buildGuidelinesSection(channel);
+  const fileLocationsSection = mode === 'full' ? buildFileLocationsSection() : '';
 
   // Mode: minimal - skip some sections
   const skillsSection = mode === 'full' ? buildSkillsSection(skills) : '';
@@ -269,6 +281,7 @@ export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
     bootstrapSection,
     capabilitiesSection,
     skillsSection,
+    fileLocationsSection,
     memorySection,
     contactsSection,
     safetySection,
