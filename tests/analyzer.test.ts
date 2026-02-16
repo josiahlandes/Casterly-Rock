@@ -65,8 +65,8 @@ describe('Analyzer — parseErrorLogs', () => {
 
   it('parses error patterns from daemon log', async () => {
     const logsDir = setupLogsDir();
-    const todayParts = new Date().toISOString().split('T');
-    const today = (todayParts[0] ?? '').replace(/-/g, '');
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const logFile = join(logsDir, `daemon-${today}.log`);
 
     writeFileSync(
@@ -93,8 +93,8 @@ describe('Analyzer — parseErrorLogs', () => {
 
   it('aggregates duplicate errors by frequency', async () => {
     const logsDir = setupLogsDir();
-    const todayParts = new Date().toISOString().split('T');
-    const today = (todayParts[0] ?? '').replace(/-/g, '');
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const logFile = join(logsDir, `daemon-${today}.log`);
 
     writeFileSync(
@@ -121,8 +121,8 @@ describe('Analyzer — parseErrorLogs', () => {
 
   it('sorts by frequency descending', async () => {
     const logsDir = setupLogsDir();
-    const todayParts = new Date().toISOString().split('T');
-    const today = (todayParts[0] ?? '').replace(/-/g, '');
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const logFile = join(logsDir, `daemon-${today}.log`);
 
     writeFileSync(
@@ -138,8 +138,8 @@ describe('Analyzer — parseErrorLogs', () => {
 
   it('ignores non-error lines in daemon log', async () => {
     const logsDir = setupLogsDir();
-    const todayParts = new Date().toISOString().split('T');
-    const today = (todayParts[0] ?? '').replace(/-/g, '');
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const logFile = join(logsDir, `daemon-${today}.log`);
 
     writeFileSync(

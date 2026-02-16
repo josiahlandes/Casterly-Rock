@@ -96,32 +96,48 @@ export class Analyzer {
   private async parseDaemonLogs(): Promise<ErrorLogEntry[]> {
     const entries: ErrorLogEntry[] = [];
 
-    // Find today's daemon log
-    const todayParts = new Date().toISOString().split('T');
-    const today = (todayParts[0] ?? '').replace(/-/g, '');
-    const logFile = path.join(this.logsDir, `daemon-${today}.log`);
+    // Use local date (not UTC) to match how the daemon writes logs
+    const now = new Date();
+    const localYear = now.getFullYear();
+    const localMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const localDay = String(now.getDate()).padStart(2, '0');
+    const today = `${localYear}${localMonth}${localDay}`;
 
-    try {
-      const content = await fs.readFile(logFile, 'utf-8');
-      const lines = content.split('\n');
+    // Also check yesterday's log (in case of timezone edge cases)
+    const yesterday = new Date(now.getTime() - 86_400_000);
+    const yYear = yesterday.getFullYear();
+    const yMonth = String(yesterday.getMonth() + 1).padStart(2, '0');
+    const yDay = String(yesterday.getDate()).padStart(2, '0');
+    const yesterdayStr = `${yYear}${yMonth}${yDay}`;
 
-      // Pattern: [ERROR] E1001: Provider timeout
-      const errorPattern = /\[ERROR\]\s*([A-Z]\d+):\s*(.+)/;
+    const logFiles = [
+      path.join(this.logsDir, `daemon-${today}.log`),
+      path.join(this.logsDir, `daemon-${yesterdayStr}.log`),
+    ];
 
-      for (const line of lines) {
-        const match = line.match(errorPattern);
-        if (match && match[1] && match[2]) {
-          entries.push({
-            timestamp: new Date().toISOString(),
-            code: match[1],
-            message: match[2],
-            frequency: 1,
-            lastOccurrence: new Date().toISOString(),
-          });
+    // Pattern: [ERROR] E1001: Provider timeout
+    const errorPattern = /\[ERROR\]\s*([A-Z]\d+):\s*(.+)/;
+
+    for (const logFile of logFiles) {
+      try {
+        const content = await fs.readFile(logFile, 'utf-8');
+        const lines = content.split('\n');
+
+        for (const line of lines) {
+          const match = line.match(errorPattern);
+          if (match && match[1] && match[2]) {
+            entries.push({
+              timestamp: new Date().toISOString(),
+              code: match[1],
+              message: match[2],
+              frequency: 1,
+              lastOccurrence: new Date().toISOString(),
+            });
+          }
         }
+      } catch {
+        // File doesn't exist, that's fine
       }
-    } catch {
-      // File doesn't exist, that's fine
     }
 
     return entries;
