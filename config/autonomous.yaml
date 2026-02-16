@@ -8,7 +8,7 @@
 
 autonomous:
   # Master switch - set to true to enable autonomous improvement
-  enabled: false
+  enabled: true
 
   # Provider: Always ollama (local inference)
   provider: ollama
