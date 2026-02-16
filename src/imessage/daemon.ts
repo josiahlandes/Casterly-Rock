@@ -303,6 +303,14 @@ async function processMessage(
   ]);
 
   try {
+    // ─── Debug: dump full prompt on first iteration ──────────────────────
+    safeLogger.info('DEBUG: System prompt length', { chars: enrichedSystemPrompt.length, tokens: Math.ceil(enrichedSystemPrompt.length / 4) });
+    safeLogger.info('DEBUG: Context prompt length', { chars: assembled.context.length, tokens: Math.ceil(assembled.context.length / 4) });
+    safeLogger.info('DEBUG: System prompt (first 2000 chars)', { text: enrichedSystemPrompt.substring(0, 2000) });
+    safeLogger.info('DEBUG: System prompt (last 1000 chars)', { text: enrichedSystemPrompt.substring(enrichedSystemPrompt.length - 1000) });
+    safeLogger.info('DEBUG: Context prompt (full)', { text: assembled.context.substring(0, 3000) });
+    safeLogger.info('DEBUG: Tools registered', { count: enrichedTools.length, names: enrichedTools.map((t) => t.name) });
+
     // Native tool execution loop (conversation path + fallback)
     while (iteration < maxToolIterations) {
       iteration++;
