@@ -31,6 +31,7 @@ import {
 } from '../interface/index.js';
 import type { Channel } from '../interface/prompt-builder.js';
 import { filterToolCalls } from '../imessage/tool-filter.js';
+import { sanitizeToolOutput } from '../security/tool-output-sanitizer.js';
 import { isAcknowledgementMessage } from '../imessage/message-utils.js';
 import {
   getSchedulerToolSchemas,
@@ -517,12 +518,31 @@ export async function processChatMessage(
       })),
     });
 
-    // Set up for next iteration
-    previousResults = results.map((r) => ({
-      callId: r.toolCallId,
-      result: r.success ? (r.output ?? 'Success') : `Error: ${r.error}`,
-      isError: !r.success,
-    }));
+    // Set up for next iteration — sanitize tool outputs before they re-enter the LLM context
+    previousResults = results.map((r) => {
+      if (!r.success) {
+        return {
+          callId: r.toolCallId,
+          result: `Error: ${r.error}`,
+          isError: true,
+        };
+      }
+
+      // Find the tool name for this result so we can apply appropriate sanitization
+      const matchingCall = [...newCalls, ...dupCalls, ...blockedCalls]
+        .find((c) => c.id === r.toolCallId);
+      const toolName = matchingCall?.name ?? 'unknown';
+      const rawOutput = r.output ?? 'Success';
+
+      // Sanitize: fences web content, strips injection patterns, flags suspicious output
+      const sanitized = sanitizeToolOutput(toolName, rawOutput);
+
+      return {
+        callId: r.toolCallId,
+        result: sanitized.output,
+        isError: false,
+      };
+    });
 
     // Include any text from response
     if (response.text) {
