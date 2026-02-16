@@ -303,6 +303,27 @@ async function processMessage(
   ]);
 
   try {
+    // Debug: dump full prompt on first iteration
+    safeLogger.info('DEBUG: Prompt sizes', {
+      systemChars: enrichedSystemPrompt.length,
+      systemTokens: Math.ceil(enrichedSystemPrompt.length / 4),
+      contextChars: assembled.context.length,
+      contextTokens: Math.ceil(assembled.context.length / 4),
+      historyMessages: assembled.historyMessagesIncluded ?? 0,
+      toolCount: enrichedTools.length,
+      toolNames: enrichedTools.map((t) => t.name),
+    });
+    // Log system prompt in 4K chunks so nothing is hidden
+    for (let i = 0; i < enrichedSystemPrompt.length; i += 4000) {
+      const chunk = enrichedSystemPrompt.substring(i, i + 4000);
+      safeLogger.info(`DEBUG: System prompt [${i}-${Math.min(i + 4000, enrichedSystemPrompt.length)}]`, { text: chunk });
+    }
+    // Log context prompt in 4K chunks
+    for (let i = 0; i < assembled.context.length; i += 4000) {
+      const chunk = assembled.context.substring(i, i + 4000);
+      safeLogger.info(`DEBUG: Context prompt [${i}-${Math.min(i + 4000, assembled.context.length)}]`, { text: chunk });
+    }
+
     // Native tool execution loop (conversation path + fallback)
     while (iteration < maxToolIterations) {
       iteration++;
@@ -463,14 +484,17 @@ async function processMessage(
       iterations: iteration,
     });
 
+    // Fall back to an honest message if response was empty after cleanup
+    const finalMessage = cleanedResponse || 'Tried to handle that but came up empty. Mind asking again?';
+
     // Add assistant response to session
     session.addMessage({
       role: 'assistant',
-      content: cleanedResponse || 'Done!',
+      content: finalMessage,
     });
 
     // Send the response
-    const result = sendMessage(sender, cleanedResponse || 'Done!');
+    const result = sendMessage(sender, finalMessage);
 
     if (result.success) {
       safeLogger.info('Response sent successfully');

@@ -101,9 +101,9 @@ describe('resolveModelProfile', () => {
     expect(profile.generation?.temperature).toBe(0.6);
   });
 
-  it('gpt-oss profile has routing overrides for all 11 tools', () => {
+  it('gpt-oss profile has routing overrides for all 13 tools', () => {
     const profile = resolveModelProfile('gpt-oss:120b');
-    expect(profile.toolOverrides).toHaveLength(11);
+    expect(profile.toolOverrides).toHaveLength(13);
 
     const toolNames = profile.toolOverrides?.map((o) => o.toolName) ?? [];
     expect(toolNames).toContain('bash');
@@ -117,6 +117,8 @@ describe('resolveModelProfile', () => {
     expect(toolNames).toContain('glob_files');
     expect(toolNames).toContain('grep_files');
     expect(toolNames).toContain('validate_files');
+    expect(toolNames).toContain('calendar_read');
+    expect(toolNames).toContain('reminder_create');
 
     // Every override has "Use when" and "Do NOT use when" (except validate_files which uses "Use after")
     for (const override of profile.toolOverrides ?? []) {
