@@ -155,8 +155,9 @@ export function assembleContext(options: ContextAssemblyOptions): AssembledConte
   const senderNote = sender ? ` (from ${sender})` : '';
   const currentMessage = `User${senderNote}: ${userMessage}`;
 
-  // Assemble parts
-  const parts: string[] = [systemPrompt];
+  // Assemble context (history + current message only).
+  // The system prompt is returned separately — the provider sends it as role: system.
+  const parts: string[] = [];
 
   if (historyFormatted) {
     parts.push('## Conversation History\n\n' + historyFormatted);

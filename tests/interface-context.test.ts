@@ -8,8 +8,9 @@ import {
   formatMessage,
   formatHistory,
   trimHistoryToFit,
+  assembleContext,
 } from '../src/interface/context.js';
-import type { ConversationMessage } from '../src/interface/session.js';
+import type { ConversationMessage, Session, SessionState } from '../src/interface/session.js';
 import {
   getMessageText,
   isSimpleContent,
@@ -513,5 +514,86 @@ describe('shouldSessionReset', () => {
   it('returns false for session active just now', () => {
     const now = new Date().toISOString();
     expect(shouldSessionReset(now, 4)).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// assembleContext — system prompt NOT duplicated in context string
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function makeMockSession(messages: ConversationMessage[] = []): Session {
+  const state: SessionState = {
+    key: 'test',
+    channel: 'imessage',
+    createdAt: new Date().toISOString(),
+    lastActiveAt: new Date().toISOString(),
+    messages,
+    totalMessages: messages.length,
+  };
+  return {
+    state,
+    addMessage: () => {},
+    getHistory: (max?: number) => messages.slice(-(max ?? messages.length)),
+    clear: () => {},
+    save: () => {},
+    shouldReset: () => false,
+  };
+}
+
+describe('assembleContext', () => {
+  it('does not duplicate system prompt in context string', () => {
+    const session = makeMockSession([
+      makeMsg('user', 'Hello'),
+      makeMsg('assistant', 'Hi there'),
+    ]);
+    const result = assembleContext({
+      session,
+      userMessage: 'What is the weather?',
+      skills: [],
+      channel: 'imessage',
+    });
+
+    // systemPrompt should contain bootstrap/personality content
+    expect(result.systemPrompt.length).toBeGreaterThan(0);
+
+    // context should NOT contain the system prompt — only history + current message
+    expect(result.context).not.toContain('# Project Context');
+    expect(result.context).not.toContain('IDENTITY.md');
+    expect(result.context).toContain('## Current Message');
+    expect(result.context).toContain('What is the weather?');
+  });
+
+  it('includes conversation history in context', () => {
+    const session = makeMockSession([
+      makeMsg('user', 'First message'),
+      makeMsg('assistant', 'First reply'),
+    ]);
+    const result = assembleContext({
+      session,
+      userMessage: 'Second message',
+      skills: [],
+      channel: 'imessage',
+    });
+
+    expect(result.context).toContain('## Conversation History');
+    expect(result.context).toContain('First message');
+    expect(result.context).toContain('First reply');
+    expect(result.context).toContain('## Current Message');
+    expect(result.context).toContain('Second message');
+  });
+
+  it('returns system prompt separately', () => {
+    const session = makeMockSession();
+    const result = assembleContext({
+      session,
+      userMessage: 'Test',
+      skills: [],
+      channel: 'imessage',
+    });
+
+    // System prompt should have identity content
+    expect(result.systemPrompt).toContain('Casterly Rock');
+    // Context should NOT have the system prompt
+    expect(result.context).not.toContain('Casterly Rock');
   });
 });

@@ -10,7 +10,7 @@ import type { LlmProvider } from './base.js';
 import { OllamaProvider } from './ollama.js';
 
 export { BillingError } from './base.js';
-export type { LlmProvider } from './base.js';
+export type { LlmProvider, PreviousAssistantMessage } from './base.js';
 
 export interface ProviderRegistry {
   local: LlmProvider;
