@@ -395,7 +395,15 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
     const autonomousConfig = await loadAutonomousConfig(autonomousConfigPath);
     const autonomousProvider = await createAutonomousProvider(autonomousConfig);
-    const autonomousLoop = new AutonomousLoop(autonomousConfig, process.cwd(), autonomousProvider);
+    const autonomousLoop = new AutonomousLoop(
+      autonomousConfig,
+      process.cwd(),
+      autonomousProvider,
+      {
+        approvalBridge,
+        approvalRecipient: allowedSenders?.[0],
+      },
+    );
 
     autonomousController = createAutonomousController({
       loop: autonomousLoop,

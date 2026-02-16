@@ -101,12 +101,18 @@ git:
   # Prefix for auto-generated branches
   branch_prefix: "auto/"
 
-  # Integration strategy: "direct" or "pull_request"
-  integration_mode: direct
+  # Integration strategy: "approval_required" (default), "direct", or "pull_request"
+  # approval_required: sends iMessage summary, waits for owner approval before merging
+  # direct: merges to main automatically after validation (no human review — use with caution)
+  # pull_request: creates a GitHub PR (requires gh CLI)
+  integration_mode: approval_required
+
+  # Approval timeout in minutes (for approval_required mode)
+  approval_timeout_minutes: 10
 
   # Pull request settings (if integration_mode: pull_request)
   pull_request:
-    auto_merge: true
+    auto_merge: false
     require_ci: true
     labels:
       - autonomous

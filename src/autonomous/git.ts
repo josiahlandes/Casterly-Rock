@@ -225,11 +225,15 @@ export class GitOperations {
 
   /**
    * Integrate a branch (merge or PR based on config).
+   * For approval_required mode, the approval gate runs in the loop BEFORE
+   * calling integrate() — so by the time we get here, approval is already granted.
    */
   async integrate(branchName: string): Promise<IntegrationResult> {
     if (this.config.integrationMode === 'pull_request') {
       return await this.createPullRequest(branchName);
     } else {
+      // Both 'direct' and 'approval_required' use direct merge
+      // (approval gate is handled upstream in the loop)
       return await this.mergeDirect(branchName);
     }
   }

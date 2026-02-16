@@ -110,7 +110,7 @@ autonomous:
     expect(config.git.remote).toBe('origin');
     expect(config.git.baseBranch).toBe('main');
     expect(config.git.branchPrefix).toBe('auto/');
-    expect(config.git.integrationMode).toBe('direct');
+    expect(config.git.integrationMode).toBe('approval_required');
     expect(config.git.pullRequest).toBeUndefined();
     expect(config.git.cleanup.deleteMergedBranches).toBe(true);
     expect(config.git.cleanup.deleteFailedBranches).toBe(true);
@@ -233,6 +233,28 @@ autonomous:
     const config = await loadConfig(fp);
     expect(config.allowedDirectories).toEqual(['lib/', 'modules/']);
     expect(config.forbiddenPatterns).toEqual(['**/*.secret', '**/keys/**']);
+  });
+
+  it('reads approval_required integration mode and timeout', async () => {
+    const fp = writeYaml('approval.yaml', `
+autonomous:
+  enabled: false
+git:
+  integration_mode: approval_required
+  approval_timeout_minutes: 15
+`);
+    const config = await loadConfig(fp);
+    expect(config.git.integrationMode).toBe('approval_required');
+    expect(config.approvalTimeoutMinutes).toBe(15);
+  });
+
+  it('defaults approval timeout to 10 minutes', async () => {
+    const fp = writeYaml('approval-default.yaml', `
+autonomous:
+  enabled: false
+`);
+    const config = await loadConfig(fp);
+    expect(config.approvalTimeoutMinutes).toBe(10);
   });
 
   it('reads numeric tuning options', async () => {

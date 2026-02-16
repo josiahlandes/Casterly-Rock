@@ -14,6 +14,7 @@ import { Analyzer } from './analyzer.js';
 import { GitOperations } from './git.js';
 import { Validator, buildInvariants } from './validator.js';
 import { Reflector, type MemoryEntry } from './reflector.js';
+import type { ApprovalBridge } from '../approval/index.js';
 import type {
   AutonomousConfig,
   CycleMetrics,
@@ -34,6 +35,14 @@ const CYCLE_ID_PREFIX = 'cycle';
 // AUTONOMOUS LOOP
 // ============================================================================
 
+/** Options for wiring the loop into the daemon */
+export interface LoopOptions {
+  /** Approval bridge for integration_mode: approval_required */
+  approvalBridge?: ApprovalBridge | undefined;
+  /** iMessage recipient for approval requests (owner's phone or Apple ID) */
+  approvalRecipient?: string | undefined;
+}
+
 export class AutonomousLoop {
   private readonly config: AutonomousConfig;
   private readonly projectRoot: string;
@@ -42,6 +51,8 @@ export class AutonomousLoop {
   private readonly git: GitOperations;
   private readonly validator: Validator;
   private readonly reflector: Reflector;
+  private readonly approvalBridge?: ApprovalBridge | undefined;
+  private readonly approvalRecipient?: string | undefined;
 
   private cycleCount: number = 0;
   private dailyCycleCount: number = 0;
@@ -56,11 +67,14 @@ export class AutonomousLoop {
   constructor(
     config: AutonomousConfig,
     projectRoot: string,
-    provider: AutonomousProvider
+    provider: AutonomousProvider,
+    options?: LoopOptions,
   ) {
     this.config = config;
     this.projectRoot = projectRoot;
     this.provider = provider;
+    this.approvalBridge = options?.approvalBridge;
+    this.approvalRecipient = options?.approvalRecipient;
 
     this.analyzer = new Analyzer(projectRoot);
     this.git = new GitOperations(projectRoot, config.git);
@@ -357,6 +371,27 @@ export class AutonomousLoop {
 
       this.log('Validation passed!', 'INFO');
 
+      // Approval gate (for integration_mode: approval_required)
+      if (this.config.git.integrationMode === 'approval_required') {
+        const approved = await this.requestApproval(hypothesis, implementation, branch);
+        if (!approved) {
+          this.log('Approval denied or timed out — reverting', 'WARN');
+          await this.git.revert(branch);
+          outcome = 'failure';
+
+          await this.reflectAndSave(
+            cycleId,
+            hypothesis,
+            implementation,
+            ['Owner denied or did not approve the change'],
+            outcome,
+            false
+          );
+          return false;
+        }
+        this.log('Owner approved — integrating', 'INFO');
+      }
+
       // Integrate
       this.log('Integrating changes...', 'INFO');
       const integrationResult = await this.git.integrate(branch);
@@ -419,6 +454,57 @@ export class AutonomousLoop {
 
       return false;
     }
+  }
+
+  /**
+   * Request owner approval via iMessage before merging.
+   * Returns true if approved, false if denied or timed out.
+   *
+   * If no approval bridge is configured, logs a warning and returns false
+   * (safety: never auto-merge when approval_required but bridge is missing).
+   */
+  private async requestApproval(
+    hypothesis: Hypothesis,
+    implementation: Implementation,
+    branch: string,
+  ): Promise<boolean> {
+    if (!this.approvalBridge || !this.approvalRecipient) {
+      this.log(
+        'integration_mode is approval_required but no approval bridge or recipient configured — denying by default',
+        'WARN'
+      );
+      return false;
+    }
+
+    // Build human-readable summary
+    const filesChanged = implementation.changes
+      .map((c) => `  - ${c.path} (${c.type})`)
+      .join('\n');
+
+    const summary = [
+      'Autonomous improvement ready for review:',
+      '',
+      `Hypothesis: ${hypothesis.proposal}`,
+      `Approach: ${hypothesis.approach}`,
+      `Confidence: ${hypothesis.confidence.toFixed(2)} | Impact: ${hypothesis.expectedImpact}`,
+      `Branch: ${branch}`,
+      '',
+      'Files changed:',
+      filesChanged,
+      '',
+      'Validation: All quality gates passed',
+      '',
+      `Reply "yes" to merge to main, or "no" to discard.`,
+      `(Auto-denied in ${this.config.approvalTimeoutMinutes} minutes)`,
+    ].join('\n');
+
+    this.log('Sending approval request to owner...', 'INFO');
+
+    // Use the approval bridge to request + wait
+    const request = this.approvalBridge.requestApproval(summary, this.approvalRecipient);
+    const approved = await this.approvalBridge.waitForApproval(request.id);
+
+    return approved;
   }
 
   /**
@@ -514,6 +600,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
     forbiddenPatterns: raw.autonomous?.forbidden_patterns ?? ['**/*.env*', '**/secrets*'],
     autoIntegrateThreshold: raw.autonomous?.auto_integrate_threshold ?? 0.9,
     attemptThreshold: raw.autonomous?.attempt_threshold ?? 0.5,
+    approvalTimeoutMinutes: raw.git?.approval_timeout_minutes ?? 10,
     maxBranchAgeHours: raw.autonomous?.max_branch_age_hours ?? 24,
     maxConcurrentBranches: raw.autonomous?.max_concurrent_branches ?? 3,
     sandboxTimeoutSeconds: raw.autonomous?.sandbox_timeout_seconds ?? 300,
@@ -522,7 +609,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
       remote: raw.git?.remote ?? 'origin',
       baseBranch: raw.git?.base_branch ?? 'main',
       branchPrefix: raw.git?.branch_prefix ?? 'auto/',
-      integrationMode: raw.git?.integration_mode ?? 'direct',
+      integrationMode: raw.git?.integration_mode ?? 'approval_required',
       pullRequest: raw.git?.pull_request
         ? {
             autoMerge: raw.git.pull_request.auto_merge ?? true,

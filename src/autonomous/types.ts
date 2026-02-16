@@ -100,7 +100,7 @@ export interface ValidationResult {
 // INTEGRATION
 // ============================================================================
 
-export type IntegrationMode = 'direct' | 'pull_request';
+export type IntegrationMode = 'direct' | 'pull_request' | 'approval_required';
 
 export interface IntegrationResult {
   success: boolean;
@@ -179,6 +179,9 @@ export interface AutonomousConfig {
   // Thresholds
   autoIntegrateThreshold: number;
   attemptThreshold: number;
+
+  // Approval (for integration_mode: approval_required)
+  approvalTimeoutMinutes: number;
 
   // Resource limits (Mac Studio - generous defaults)
   maxBranchAgeHours: number;

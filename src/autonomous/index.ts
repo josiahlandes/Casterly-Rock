@@ -29,6 +29,7 @@ export type { AggregateStats, MemoryEntry } from './reflector.js';
 
 // Main loop
 export { AutonomousLoop, AbortError, loadConfig, main } from './loop.js';
+export type { LoopOptions } from './loop.js';
 
 // Controller (daemon-side management)
 export { createAutonomousController } from './controller.js';
