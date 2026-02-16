@@ -392,9 +392,9 @@ describe('createTaskManager', () => {
     const provider = makeMockProvider({
       classifyAs: 'complex_task',
       planSteps: [
-        { id: 'step-1', description: 'First', tool: 'bash', dependsOn: [] },
-        { id: 'step-2', description: 'Second', tool: 'bash', dependsOn: ['step-1'] },
-        { id: 'step-3', description: 'Third', tool: 'bash', dependsOn: ['step-2'] },
+        { id: 'step-1', description: 'First', tool: 'bash', input: { command: 'echo step1' }, dependsOn: [] },
+        { id: 'step-2', description: 'Second', tool: 'bash', input: { command: 'echo step2' }, dependsOn: ['step-1'] },
+        { id: 'step-3', description: 'Third', tool: 'bash', input: { command: 'echo step3' }, dependsOn: ['step-2'] },
       ],
     });
     const orchestrator = makeMockOrchestrator();
@@ -415,7 +415,7 @@ describe('createTaskManager', () => {
     const provider = makeMockProvider({
       classifyAs: 'simple_task',
       planSteps: [
-        { id: 'step-1', description: 'Failing step', tool: 'bash', dependsOn: [] },
+        { id: 'step-1', description: 'Failing step', tool: 'bash', input: { command: 'sudo rm -rf /' }, dependsOn: [] },
       ],
     });
     const orchestrator = makeMockOrchestrator(async (call: NativeToolCall) => ({

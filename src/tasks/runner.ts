@@ -19,6 +19,50 @@ import type { NativeToolResult } from '../tools/schemas/types.js';
 import type { TaskPlan, TaskStep, StepOutcome, TaskRunResult } from './types.js';
 import { verifyStepOutcome } from './verifier.js';
 
+/**
+ * Known required parameters for common tools.
+ * Used to fast-fail steps with missing required input rather
+ * than retrying 3x with the same empty payload.
+ */
+const TOOL_REQUIRED_PARAMS: Record<string, string[]> = {
+  bash: ['command'],
+  read_file: ['path'],
+  write_file: ['path', 'content'],
+  edit_file: ['path', 'old_text', 'new_text'],
+  search_files: ['query'],
+  grep_files: ['pattern'],
+  list_files: ['path'],
+  glob_files: ['pattern'],
+  read_document: ['path'],
+  calendar_read: [],
+  reminder_create: ['message'],
+  http_get: ['url'],
+  schedule_reminder: ['message'],
+  send_message: ['recipient', 'text'],
+};
+
+/**
+ * Validate that a step has the minimum required input parameters.
+ * Returns null if valid, or an error message if invalid.
+ */
+function validateStepInput(step: TaskStep): string | null {
+  const required = TOOL_REQUIRED_PARAMS[step.tool];
+  if (!required || required.length === 0) {
+    return null; // unknown tool or no required params
+  }
+
+  const missing = required.filter((param) => {
+    const val = step.input[param];
+    return val === undefined || val === null || val === '';
+  });
+
+  if (missing.length > 0) {
+    return `Missing required parameters for ${step.tool}: ${missing.join(', ')}`;
+  }
+
+  return null;
+}
+
 // ─── Semaphore ──────────────────────────────────────────────────────────────
 
 /**
@@ -76,6 +120,30 @@ async function executeStep(
   orchestrator: ToolOrchestrator,
   maxRetries: number
 ): Promise<{ outcome: StepOutcome; toolResult: NativeToolResult }> {
+  // Fast-fail: check required params before attempting execution
+  const validationError = validateStepInput(step);
+  if (validationError) {
+    safeLogger.warn('Step input validation failed', {
+      stepId: step.id,
+      tool: step.tool,
+      error: validationError,
+    });
+    const failOutcome: StepOutcome = {
+      stepId: step.id,
+      tool: step.tool,
+      success: false,
+      retries: 0,
+      failureReason: validationError,
+      durationMs: 0,
+    };
+    const failResult: NativeToolResult = {
+      toolCallId: `${step.id}-validation`,
+      success: false,
+      error: validationError,
+    };
+    return { outcome: failOutcome, toolResult: failResult };
+  }
+
   let lastResult: NativeToolResult | null = null;
   let retries = 0;
 

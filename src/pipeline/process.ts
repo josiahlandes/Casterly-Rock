@@ -251,7 +251,28 @@ export async function processChatMessage(
           hasResult: !!handleResult.taskResult,
         });
 
-        let taskResponse = applyResponseHints(handleResult.response, modelProfile);
+        // Pass the raw task output through the LLM with the personality
+        // system prompt so the user gets a natural, in-character response
+        // instead of robotic "Done. [goal]. Results: [data]" text.
+        let taskResponse: string;
+        try {
+          const personalityPass = await provider.generateWithTools(
+            {
+              prompt: `The user asked: "${input.text}"\n\nHere are the results from running the task:\n${handleResult.response}\n\nUsing the task results above, write a short, natural reply to the user. Include the key data they asked for. Do NOT mention that a "task" was run — just answer them directly.`,
+              systemPrompt: enrichedSystemPrompt,
+              maxTokens: 512,
+              temperature: 0.7,
+            },
+            [], // no tools — just generate text
+          );
+          taskResponse = personalityPass.text.trim();
+        } catch (passError) {
+          const passMsg = passError instanceof Error ? passError.message : String(passError);
+          safeLogger.warn('Personality pass failed, using raw task response', { error: passMsg });
+          taskResponse = handleResult.response;
+        }
+
+        taskResponse = applyResponseHints(taskResponse, modelProfile);
         taskResponse = taskResponse
           .replace(/```bash[\s\S]*?```/g, '')
           .replace(/```sh[\s\S]*?```/g, '')

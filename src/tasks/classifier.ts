@@ -63,11 +63,11 @@ Categories:
 const CLASSIFIER_SYSTEM_PROMPT = `You are a message classifier. Your ONLY job is to classify the user's message by calling the classify_message tool.
 
 Rules:
-- If the user is chatting, greeting, asking factual questions, or making conversation → "conversation"
-- If the user wants one simple action (check something, read something, get info) → "simple_task"
-- If the user wants multiple things done, or something requiring planning → "complex_task"
-- When in doubt between conversation and simple_task, prefer "conversation"
-- When in doubt between simple_task and complex_task, prefer "simple_task"
+- "conversation" — The user is chatting, greeting, asking questions you can answer from knowledge, reflecting, or combining conversation with a request. If the message is primarily conversational with an incidental action, choose this.
+- "simple_task" — The user's ENTIRE message is a direct, unambiguous command for a single action: "What time is it?", "Read /tmp/foo.txt", "Check my calendar today". No opinion, no follow-up, no conversational filler.
+- "complex_task" — The user explicitly wants multiple distinct actions completed, or a workflow requiring coordination.
+
+IMPORTANT: Default to "conversation" unless the message is clearly and purely a task command. Most messages from real users include conversational context — classify those as "conversation" so the assistant can respond naturally while using tools.
 
 You MUST call the classify_message tool. Do not respond with text.`;
 
