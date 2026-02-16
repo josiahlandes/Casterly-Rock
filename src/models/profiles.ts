@@ -44,6 +44,9 @@ const GPT_OSS_120B: ModelProfile = {
     '- To validate code after editing: use the validate_files tool to run parse/lint/typecheck/test.',
     '- To read PDF/DOCX/XLSX/CSV: use the read_document tool. Never use bash with pdftotext/csvtool.',
     '- To send a message to someone else: use the send_message tool. Never use bash with osascript/AppleScript.',
+    '- To read calendar events: use the calendar_read tool. Never use bash with osascript to read calendars.',
+    '- To create a reminder: use the reminder_create tool. Never use bash with osascript to create reminders.',
+    '- To create calendar events: use bash with a single-line osascript command. Always pass the entire script as one string to the "command" parameter.',
     '- For everything else (system info, CLI tools, process management, network): use bash.',
   ].join('\n'),
   toolOverrides: [
@@ -52,8 +55,8 @@ const GPT_OSS_120B: ModelProfile = {
       descriptionSuffix: [
         '',
         '',
-        'Use when: system info (date, whoami, uname), CLI tools (git, npm, brew, icalbuddy, curl), process management (ps, kill), network operations, or any task without a dedicated tool.',
-        'Do NOT use when: reading files (use read_file), writing files (use write_file), listing directories (use list_files), searching file contents (use search_files), or reading documents (use read_document).',
+        'Use when: system info (date, whoami, uname), CLI tools (git, npm, brew, curl), process management (ps, kill), network operations, creating calendar events with osascript, or any task without a dedicated tool.',
+        'Do NOT use when: reading files (use read_file), writing files (use write_file), listing directories (use list_files), searching file contents (use search_files), reading documents (use read_document), reading calendar events (use calendar_read), creating reminders (use reminder_create), or sending messages (use send_message).',
         '',
         'You may chain commands with && or use subshells when it reduces round-trips.',
         'Example: mkdir -p /tmp/test && echo "done" > /tmp/test/status.txt',
@@ -154,6 +157,26 @@ const GPT_OSS_120B: ModelProfile = {
         '',
         'Use when: checking that edited files still parse, lint, typecheck, and pass tests.',
         'Use after making edits with edit_file or write_file to catch errors early.',
+      ].join('\n'),
+    },
+    {
+      toolName: 'calendar_read',
+      descriptionSuffix: [
+        '',
+        '',
+        'Use when: checking what events are on the calendar, finding free time, reading upcoming events.',
+        'Do NOT use when: creating or adding new calendar events (use bash with osascript -l JavaScript for that).',
+        'All parameters are optional — calling with no args returns today\'s events.',
+      ].join('\n'),
+    },
+    {
+      toolName: 'reminder_create',
+      descriptionSuffix: [
+        '',
+        '',
+        'Use when: the user asks you to remind them of something, set a reminder, or create a to-do.',
+        'Do NOT use when: just reading or listing reminders.',
+        'Always prefer this over bash osascript for creating reminders.',
       ].join('\n'),
     },
   ],
