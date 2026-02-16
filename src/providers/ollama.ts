@@ -47,6 +47,11 @@ interface OllamaChatRequest {
   options?: {
     temperature?: number;
     num_predict?: number;
+    num_ctx?: number;
+    repeat_penalty?: number;
+    top_p?: number;
+    top_k?: number;
+    [key: string]: unknown;
   } | undefined;
 }
 
@@ -157,16 +162,47 @@ export class OllamaProvider implements LlmProvider {
         });
       }
 
-      // If we have previous tool results, we need to reconstruct the conversation
-      if (previousResults && previousResults.length > 0) {
-        // The prompt contains the conversation context
-        // Add user message
-        messages.push({
-          role: 'user',
-          content: request.prompt,
-        });
+      // User message is always first after system
+      messages.push({
+        role: 'user',
+        content: request.prompt,
+      });
 
-        // Add tool results as tool messages
+      // Thread previous assistant responses and tool results for multi-turn tool use.
+      // The API expects: user → assistant (with tool_calls) → tool_result → ...
+      if (request.previousAssistantMessages && previousResults) {
+        let toolResultIndex = 0;
+
+        for (const assistantMsg of request.previousAssistantMessages) {
+          // Add the assistant message with its tool calls
+          messages.push({
+            role: 'assistant',
+            content: assistantMsg.text,
+            tool_calls: assistantMsg.toolCalls.map((tc) => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: {
+                name: tc.name,
+                arguments: tc.arguments,
+              },
+            })),
+          });
+
+          // Add the corresponding tool results
+          for (const _tc of assistantMsg.toolCalls) {
+            if (toolResultIndex < previousResults.length) {
+              const result = previousResults[toolResultIndex]!;
+              messages.push({
+                role: 'tool',
+                content: result.result,
+                tool_call_id: result.callId,
+              });
+              toolResultIndex++;
+            }
+          }
+        }
+      } else if (previousResults && previousResults.length > 0) {
+        // Fallback: tool results without assistant messages (legacy callers)
         for (const result of previousResults) {
           messages.push({
             role: 'tool',
@@ -174,12 +210,6 @@ export class OllamaProvider implements LlmProvider {
             tool_call_id: result.callId,
           });
         }
-      } else {
-        // Simple case: just the user message
-        messages.push({
-          role: 'user',
-          content: request.prompt,
-        });
       }
 
       const chatRequest: OllamaChatRequest = {
@@ -190,6 +220,7 @@ export class OllamaProvider implements LlmProvider {
         options: {
           temperature: request.temperature ?? 0.7,
           num_predict: request.maxTokens ?? 2048,
+          ...(request.providerOptions ?? {}),
         },
       };
 

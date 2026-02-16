@@ -9,6 +9,21 @@ export type { GenerateWithToolsResponse } from '../tools/schemas/types.js';
 export type ProviderKind = 'local' | 'cloud';
 
 /**
+ * Represents a previous assistant response that contained tool calls.
+ * Used to reconstruct proper conversation threading for multi-turn tool use.
+ */
+export interface PreviousAssistantMessage {
+  /** Text content from the assistant response */
+  text: string;
+  /** Tool calls the assistant made */
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    arguments: string; // JSON string
+  }>;
+}
+
+/**
  * Request parameters for LLM generation
  */
 export interface GenerateRequest {
@@ -23,6 +38,12 @@ export interface GenerateRequest {
 
   /** Temperature for response randomness (0.0-1.0) */
   temperature?: number;
+
+  /** Provider-specific options (e.g., Ollama's num_ctx, repeat_penalty) */
+  providerOptions?: Record<string, unknown>;
+
+  /** Previous assistant responses for multi-turn tool calling */
+  previousAssistantMessages?: PreviousAssistantMessage[];
 }
 
 /**

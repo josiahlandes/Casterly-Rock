@@ -7,7 +7,7 @@
 import { join } from 'node:path';
 import { loadConfig } from '../config/index.js';
 import { safeLogger } from '../logging/safe-logger.js';
-import { buildProviders, type LlmProvider } from '../providers/index.js';
+import { buildProviders, type LlmProvider, type PreviousAssistantMessage } from '../providers/index.js';
 import { createSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import {
   createToolRegistry,
@@ -299,6 +299,10 @@ async function processMessage(
   let iteration = 0;
   let finalResponse = '';
   let previousResults: ToolResultMessage[] = [];
+  const previousAssistantMessages: PreviousAssistantMessage[] = [];
+
+  // Extract standard fields from genOverrides; pass the rest as provider-specific options
+  const { temperature: genTemp, num_predict: genNumPredict, ...providerSpecificOptions } = genOverrides as Record<string, unknown>;
 
   // Deduplication: prevent the LLM from calling the same state-changing tool
   // with identical parameters multiple times in one conversation turn.
@@ -333,13 +337,21 @@ async function processMessage(
     while (iteration < maxToolIterations) {
       iteration++;
 
-      const response = await provider.generateWithTools(
-        {
+      const generateRequest: import('../providers/base.js').GenerateRequest = {
           prompt: assembled.context,
           systemPrompt: enrichedSystemPrompt,
-          maxTokens: (genOverrides.num_predict as number | undefined) ?? 2048,
-          temperature: (genOverrides.temperature as number | undefined) ?? 0.7,
-        },
+          maxTokens: (genNumPredict as number | undefined) ?? 2048,
+          temperature: (genTemp as number | undefined) ?? 0.7,
+      };
+      if (Object.keys(providerSpecificOptions).length > 0) {
+        generateRequest.providerOptions = providerSpecificOptions;
+      }
+      if (previousAssistantMessages.length > 0) {
+        generateRequest.previousAssistantMessages = previousAssistantMessages;
+      }
+
+      const response = await provider.generateWithTools(
+        generateRequest,
         enrichedTools,
         previousResults.length > 0 ? previousResults : undefined
       );
@@ -446,6 +458,16 @@ async function processMessage(
           error: result.error?.substring(0, 100),
         });
       }
+
+      // Store assistant response for proper threading in next iteration
+      previousAssistantMessages.push({
+        text: response.text,
+        toolCalls: response.toolCalls.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: JSON.stringify(tc.input),
+        })),
+      });
 
       // Set up for next iteration
       previousResults = results.map((r) => ({
