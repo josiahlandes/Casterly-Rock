@@ -261,7 +261,26 @@ async function main(): Promise<void> {
     output: process.stdout,
   });
 
+  // Track whether we're processing a message (prevents premature exit on pipe close)
+  let processing = false;
+  let stdinClosed = false;
+
+  // Handle stdin close gracefully (e.g. when piping input)
+  rl.on('close', () => {
+    stdinClosed = true;
+    if (!processing) {
+      console.log('\n\x1b[90mSession ended.\x1b[0m');
+      process.exit(0);
+    }
+  });
+
   const prompt = (): void => {
+    if (stdinClosed) {
+      console.log('\n\x1b[90mSession ended.\x1b[0m');
+      process.exit(0);
+      return;
+    }
+
     rl.question('\x1b[1mtyrion>\x1b[0m ', async (rawInput) => {
       const input = rawInput.trim();
 
@@ -290,14 +309,22 @@ async function main(): Promise<void> {
         channel: 'cli',
       };
 
+      processing = true;
       try {
         const result = await processChatMessage(chatInput, deps, processOptions);
         printResponse(result);
       } catch (error) {
         printError(error);
       }
+      processing = false;
 
       console.log('');
+
+      if (stdinClosed) {
+        console.log('\x1b[90mSession ended.\x1b[0m');
+        process.exit(0);
+        return;
+      }
       prompt();
     });
   };

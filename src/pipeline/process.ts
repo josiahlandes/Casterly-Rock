@@ -295,27 +295,6 @@ export async function processChatMessage(
     'schedule_reminder', 'cancel_reminder', 'write_file', 'send_message', 'reminder_create',
   ]);
 
-  // Debug: dump prompt sizes
-  safeLogger.info('DEBUG: Prompt sizes', {
-    systemChars: enrichedSystemPrompt.length,
-    systemTokens: Math.ceil(enrichedSystemPrompt.length / 4),
-    contextChars: assembled.context.length,
-    contextTokens: Math.ceil(assembled.context.length / 4),
-    historyMessages: assembled.historyMessagesIncluded ?? 0,
-    toolCount: enrichedTools.length,
-    toolNames: enrichedTools.map((t) => t.name),
-  });
-  // Log system prompt in 4K chunks
-  for (let i = 0; i < enrichedSystemPrompt.length; i += 4000) {
-    const chunk = enrichedSystemPrompt.substring(i, i + 4000);
-    safeLogger.info(`DEBUG: System prompt [${i}-${Math.min(i + 4000, enrichedSystemPrompt.length)}]`, { text: chunk });
-  }
-  // Log context prompt in 4K chunks
-  for (let i = 0; i < assembled.context.length; i += 4000) {
-    const chunk = assembled.context.substring(i, i + 4000);
-    safeLogger.info(`DEBUG: Context prompt [${i}-${Math.min(i + 4000, assembled.context.length)}]`, { text: chunk });
-  }
-
   while (iteration < maxToolIterations) {
     iteration++;
 
