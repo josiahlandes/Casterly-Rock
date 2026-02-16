@@ -22,6 +22,7 @@ import type {
   Hypothesis,
   Implementation,
   Observation,
+  PendingBranch,
 } from './types.js';
 
 // ============================================================================
@@ -58,11 +59,13 @@ export class AutonomousLoop {
   private dailyCycleCount: number = 0;
   private lastResetDate: string = '';
   private running: boolean = false;
+  private readonly _pendingBranches: PendingBranch[] = [];
 
   /** Exposed for daemon-controlled mode (controller.ts) */
   get reflectorInstance(): Reflector { return this.reflector; }
   get configInstance(): AutonomousConfig { return this.config; }
   get gitInstance(): GitOperations { return this.git; }
+  get pendingBranchList(): PendingBranch[] { return [...this._pendingBranches]; }
 
   constructor(
     config: AutonomousConfig,
@@ -371,28 +374,35 @@ export class AutonomousLoop {
 
       this.log('Validation passed!', 'INFO');
 
-      // Approval gate (for integration_mode: approval_required)
+      // Pending review (for integration_mode: approval_required)
+      // Branch stays alive for owner to review at their leisure.
+      // No blocking wait, no timeout, no auto-revert.
       if (this.config.git.integrationMode === 'approval_required') {
-        const approved = await this.requestApproval(hypothesis, implementation, branch);
-        if (!approved) {
-          this.log('Approval denied or timed out — reverting', 'WARN');
-          await this.git.revert(branch);
-          outcome = 'failure';
+        outcome = 'pending_review';
+        this.log(`Branch ${branch} validated and pushed — awaiting owner review`, 'INFO');
 
-          await this.reflectAndSave(
-            cycleId,
-            hypothesis,
-            implementation,
-            ['Owner denied or did not approve the change'],
-            outcome,
-            false
-          );
-          return false;
-        }
-        this.log('Owner approved — integrating', 'INFO');
+        // Record pending branch for handoff
+        this._pendingBranches.push({
+          branch,
+          hypothesisId: hypothesis.id,
+          proposal: hypothesis.proposal,
+          approach: hypothesis.approach,
+          confidence: hypothesis.confidence,
+          impact: hypothesis.expectedImpact,
+          filesChanged: implementation.changes.map((c) => ({ path: c.path, type: c.type })),
+          validatedAt: new Date().toISOString(),
+          commitHash: implementation.commitHash ?? '',
+        });
+
+        // Reflect on pending_review
+        await this.reflectAndSave(cycleId, hypothesis, implementation, [], outcome, false);
+
+        // Return to base branch for next hypothesis
+        await this.git.checkoutBase();
+        return true; // Counted as success (validation passed)
       }
 
-      // Integrate
+      // Integrate (for direct or pull_request modes)
       this.log('Integrating changes...', 'INFO');
       const integrationResult = await this.git.integrate(branch);
 
@@ -524,7 +534,7 @@ export class AutonomousLoop {
         observation: hypothesis.observation,
         hypothesis,
         implementation,
-        validationPassed: outcome === 'success',
+        validationPassed: outcome === 'success' || outcome === 'pending_review',
         validationErrors: errors,
         integrated,
         outcome,

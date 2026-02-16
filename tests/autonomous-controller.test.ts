@@ -86,6 +86,7 @@ function createMockLoop(runCycleFn?: (signal?: AbortSignal) => Promise<void>) {
     reflectorInstance: mockReflector,
     configInstance: { cycleIntervalMinutes: 60 },
     gitInstance: mockGit,
+    pendingBranchList: [],
   };
 
   return { loop: loop as unknown as InstanceType<typeof import('../src/autonomous/loop.js').AutonomousLoop>, mockReflector, mockGit };

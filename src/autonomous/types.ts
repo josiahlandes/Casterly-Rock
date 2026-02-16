@@ -116,7 +116,7 @@ export interface IntegrationResult {
 // REFLECTION
 // ============================================================================
 
-export type CycleOutcome = 'success' | 'failure' | 'partial' | 'skipped';
+export type CycleOutcome = 'success' | 'failure' | 'partial' | 'skipped' | 'pending_review';
 
 export interface Reflection {
   cycleId: string;
@@ -130,6 +130,34 @@ export interface Reflection {
   learnings: string;
   tokensUsed?: { input: number; output: number } | undefined;
   durationMs: number;
+}
+
+// ============================================================================
+// HANDOFF STATE
+// ============================================================================
+
+export interface PendingBranch {
+  branch: string;
+  hypothesisId: string;
+  proposal: string;
+  approach: string;
+  confidence: number;
+  impact: string;
+  filesChanged: { path: string; type: string }[];
+  validatedAt: string;
+  commitHash: string;
+}
+
+export interface HandoffState {
+  timestamp: string;
+  pendingBranches: PendingBranch[];
+  lastCycleId: string | null;
+  nightSummary: {
+    cyclesCompleted: number;
+    hypothesesAttempted: number;
+    hypothesesValidated: number;
+    tokenUsage: { input: number; output: number };
+  };
 }
 
 // ============================================================================

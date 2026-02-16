@@ -24,11 +24,12 @@ autonomous:
   # Maximum cycles per day (to manage costs and avoid runaway)
   max_cycles_per_day: 12
 
-  # Quiet hours - disabled for 24/7 operation via iMessage daemon
+  # Work window: 10pm to 6am (overnight only)
+  # Quiet hours define when NOT to run — daytime is quiet
   quiet_hours:
-    start: "06:00"   # 6 AM
-    end: "22:00"     # 10 PM
-    enabled: false   # Disabled: runs 24/7 when started via iMessage
+    start: "06:00"   # 6 AM — quiet starts (stop working)
+    end: "22:00"     # 10 PM — quiet ends (start working)
+    enabled: true    # Night-only operation: work 10pm-6am
 
   # ─────────────────────────────────────────────────────────────────────────────
   # SCOPE
@@ -102,13 +103,13 @@ git:
   branch_prefix: "auto/"
 
   # Integration strategy: "approval_required" (default), "direct", or "pull_request"
-  # approval_required: sends iMessage summary, waits for owner approval before merging
+  # approval_required: validates on branch, leaves for owner review via morning summary
   # direct: merges to main automatically after validation (no human review — use with caution)
   # pull_request: creates a GitHub PR (requires gh CLI)
   integration_mode: approval_required
 
-  # Approval timeout in minutes (for approval_required mode)
-  approval_timeout_minutes: 10
+  # No approval timeout — branches stay alive until owner reviews them
+  # Owner merges at their leisure via "merge auto/hyp-xxx" command
 
   # Pull request settings (if integration_mode: pull_request)
   pull_request:

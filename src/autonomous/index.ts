@@ -32,11 +32,11 @@ export { AutonomousLoop, AbortError, loadConfig, main } from './loop.js';
 export type { LoopOptions } from './loop.js';
 
 // Controller (daemon-side management)
-export { createAutonomousController } from './controller.js';
+export { createAutonomousController, isInWorkWindow } from './controller.js';
 export type { AutonomousController, AutonomousStatus, ControllerOptions } from './controller.js';
 
-// Daily report
-export { formatDailyReport } from './report.js';
+// Reports
+export { formatDailyReport, formatMorningSummary } from './report.js';
 
 // Test & coverage parser
 export {

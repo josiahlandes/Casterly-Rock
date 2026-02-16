@@ -5,7 +5,7 @@
  * a concise iMessage-friendly daily progress report.
  */
 
-import type { Reflection } from './types.js';
+import type { Reflection, HandoffState } from './types.js';
 import type { AggregateStats } from './reflector.js';
 
 /**
@@ -81,6 +81,88 @@ export function formatDailyReport(
     lines.push('');
     lines.push(`Tokens: ${formatTokenCount(totalIn)} input / ${formatTokenCount(totalOut)} output`);
   }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format the 8am morning summary with overnight handoff state.
+ *
+ * This is an informational report — no approval prompt, no action required.
+ * The owner reviews branches at their convenience and merges via iMessage.
+ */
+export function formatMorningSummary(
+  stats: AggregateStats,
+  reflections: Reflection[],
+  handoff: HandoffState | null,
+): string {
+  const lines: string[] = [];
+
+  lines.push('Good morning! Here is your overnight autonomous report:');
+  lines.push('');
+
+  // ── Night summary ──────────────────────────────────────────────
+
+  if (handoff) {
+    const ns = handoff.nightSummary;
+    lines.push(`Cycles: ${ns.cyclesCompleted} completed (10pm - 6am)`);
+    lines.push(`Hypotheses: ${ns.hypothesesAttempted} attempted, ${ns.hypothesesValidated} validated`);
+  } else if (stats.totalCycles > 0) {
+    lines.push(`Cycles: ${stats.totalCycles} completed`);
+  } else {
+    lines.push('No cycles ran overnight.');
+    return lines.join('\n');
+  }
+
+  // ── Pending branches ───────────────────────────────────────────
+
+  const pending = handoff?.pendingBranches ?? [];
+
+  if (pending.length > 0) {
+    lines.push('');
+    lines.push('Branches ready for review:');
+    for (const b of pending) {
+      lines.push(`  - ${b.branch}: ${b.proposal}`);
+      const fileList = b.filesChanged
+        .map((f) => `${f.path} (${f.type})`)
+        .join(', ');
+      lines.push(`    Files: ${fileList}`);
+      const time = new Date(b.validatedAt).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
+      lines.push(`    Confidence: ${b.confidence.toFixed(2)} | Validated at ${time}`);
+    }
+  }
+
+  // ── Failed attempts ────────────────────────────────────────────
+
+  const failures = reflections
+    .filter((r) => r.outcome === 'failure')
+    .slice(0, 5);
+
+  if (failures.length > 0) {
+    lines.push('');
+    lines.push('Failed attempts:');
+    for (const f of failures) {
+      const reason = f.learnings ? ` (${truncate(f.learnings, 40)})` : '';
+      lines.push(`  - ${f.hypothesis.proposal}${reason}`);
+    }
+  }
+
+  // ── Token usage ────────────────────────────────────────────────
+
+  const tokenInput = handoff?.nightSummary.tokenUsage.input ?? stats.totalTokensUsed.input;
+  const tokenOutput = handoff?.nightSummary.tokenUsage.output ?? stats.totalTokensUsed.output;
+
+  if (tokenInput > 0 || tokenOutput > 0) {
+    lines.push('');
+    lines.push(`Tokens: ${formatTokenCount(tokenInput)} input / ${formatTokenCount(tokenOutput)} output`);
+  }
+
+  lines.push('');
+  lines.push('Review branches at your convenience. Tell me "merge auto/hyp-xxx" when ready.');
 
   return lines.join('\n');
 }
