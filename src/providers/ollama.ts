@@ -25,14 +25,18 @@ interface OllamaChatMessage {
 }
 
 /**
- * Ollama tool call format (OpenAI-compatible)
+ * Ollama tool call format (OpenAI-compatible).
+ *
+ * NOTE: Despite the OpenAI spec typing `arguments` as a JSON string,
+ * Ollama actually returns (and expects) a parsed object. We type it
+ * as `unknown` and normalise in parseToolCalls().
  */
 interface OllamaToolCall {
   id?: string;
   type: 'function';
   function: {
     name: string;
-    arguments: string; // JSON string
+    arguments: unknown; // object from Ollama, JSON string from OpenAI compat
   };
 }
 
@@ -91,7 +95,10 @@ function formatToolsForOllama(tools: ToolSchema[]): OllamaTool[] {
 }
 
 /**
- * Parse tool calls from Ollama response
+ * Parse tool calls from Ollama response.
+ *
+ * Ollama returns `arguments` as a plain object (not a JSON string),
+ * but we also handle the string case for OpenAI-compat providers.
  */
 function parseToolCalls(toolCalls: OllamaToolCall[] | undefined): NativeToolCall[] {
   if (!toolCalls || toolCalls.length === 0) {
@@ -100,11 +107,18 @@ function parseToolCalls(toolCalls: OllamaToolCall[] | undefined): NativeToolCall
 
   return toolCalls.map((tc) => {
     let input: Record<string, unknown> = {};
-    try {
-      input = JSON.parse(tc.function.arguments);
-    } catch {
-      // If arguments aren't valid JSON, use as-is
-      input = { raw: tc.function.arguments };
+    const args = tc.function.arguments;
+
+    if (typeof args === 'object' && args !== null) {
+      // Ollama returns arguments as a parsed object — use directly
+      input = args as Record<string, unknown>;
+    } else if (typeof args === 'string') {
+      // OpenAI-compat: arguments is a JSON string
+      try {
+        input = JSON.parse(args);
+      } catch {
+        input = { raw: args };
+      }
     }
 
     return {
@@ -174,18 +188,28 @@ export class OllamaProvider implements LlmProvider {
         let toolResultIndex = 0;
 
         for (const assistantMsg of request.previousAssistantMessages) {
-          // Add the assistant message with its tool calls
+          // Add the assistant message with its tool calls.
+          // PreviousAssistantMessage stores arguments as a JSON string (provider-agnostic),
+          // but Ollama expects arguments as a parsed object — so we parse here.
           messages.push({
             role: 'assistant',
             content: assistantMsg.text,
-            tool_calls: assistantMsg.toolCalls.map((tc) => ({
-              id: tc.id,
-              type: 'function' as const,
-              function: {
-                name: tc.name,
-                arguments: tc.arguments,
-              },
-            })),
+            tool_calls: assistantMsg.toolCalls.map((tc) => {
+              let parsedArgs: unknown;
+              try {
+                parsedArgs = JSON.parse(tc.arguments);
+              } catch {
+                parsedArgs = tc.arguments;
+              }
+              return {
+                id: tc.id,
+                type: 'function' as const,
+                function: {
+                  name: tc.name,
+                  arguments: parsedArgs,
+                },
+              };
+            }),
           });
 
           // Add the corresponding tool results
@@ -224,12 +248,13 @@ export class OllamaProvider implements LlmProvider {
         },
       };
 
+      const requestBody = JSON.stringify(chatRequest);
       const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(chatRequest),
+        body: requestBody,
         signal: controller.signal,
       });
 
@@ -240,7 +265,7 @@ export class OllamaProvider implements LlmProvider {
         );
       }
 
-      const data = (await response.json()) as OllamaChatResponse;
+      const data = await response.json() as OllamaChatResponse;
 
       if (data.error) {
         throw new ProviderError(`Ollama error: ${data.error}`);

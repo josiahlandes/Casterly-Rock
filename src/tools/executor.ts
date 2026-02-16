@@ -192,14 +192,19 @@ export async function executeBashToolCall(
   const { timeoutMs = 30000, autoApprove = false, approvalCallback } = options;
 
   // Extract command from tool call input
-  // Normalize: some models send {raw:{cmd:["bash","-lc","actual command"]}} instead of {command:"..."}
+  // Normalize: gpt-oss sometimes wraps the command in non-standard ways:
+  //   {raw:{cmd:["bash","-lc","actual command"]}}  — array variant
+  //   {raw:{command:"actual command"}}               — nested object variant
   let command = call.input.command;
   if (typeof command !== 'string') {
     const raw = call.input.raw as Record<string, unknown> | undefined;
-    if (raw?.cmd && Array.isArray(raw.cmd)) {
-      // Extract the actual command from ["bash", "-lc", "the real command"]
-      const cmdArr = raw.cmd as string[];
-      command = cmdArr.length >= 3 ? cmdArr[cmdArr.length - 1] : cmdArr.join(' ');
+    if (raw) {
+      if (typeof raw.command === 'string') {
+        command = raw.command;
+      } else if (raw.cmd && Array.isArray(raw.cmd)) {
+        const cmdArr = raw.cmd as string[];
+        command = cmdArr.length >= 3 ? cmdArr[cmdArr.length - 1] : cmdArr.join(' ');
+      }
     }
   }
 
