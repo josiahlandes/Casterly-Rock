@@ -270,16 +270,16 @@ export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
   // Build contacts roster (only in full mode)
   const contactsSection = mode === 'full' ? buildContactsSection() : '';
 
-  // Assemble the prompt
+  // Assemble the prompt — context (date/time) early so the model always sees it
   const sections = [
     bootstrapSection,
+    contextSection,
+    contactsSection,
     capabilitiesSection,
     skillsSection,
     fileLocationsSection,
     memorySection,
-    contactsSection,
     safetySection,
-    contextSection,
     guidelinesSection,
   ].filter(Boolean);
 
