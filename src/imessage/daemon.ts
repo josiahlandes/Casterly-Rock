@@ -29,6 +29,7 @@ import {
   removeContact,
   getAllowedPhones,
   isAdmin,
+  findContactByPhone,
   type SessionManager,
   type AddressBook,
 } from '../interface/index.js';
@@ -137,11 +138,15 @@ async function processMessage(
   // Get or create session for this sender
   const session = sessionManager.getSession('imessage', sender);
 
+  // Resolve sender to a human-readable label so the model knows who is talking
+  const contact = findContactByPhone(sender);
+  const senderLabel = contact ? `${contact.name} (${sender})` : sender;
+
   // Add user message to session
   session.addMessage({
     role: 'user',
     content: message.text,
-    sender,
+    sender: senderLabel,
   });
 
   if (isAcknowledgementMessage(message.text)) {
@@ -167,7 +172,7 @@ async function processMessage(
   const assembled = assembleContext({
     session,
     userMessage: message.text,
-    sender,
+    sender: senderLabel,
     skills,
     channel: 'imessage',
     workspacePath,
