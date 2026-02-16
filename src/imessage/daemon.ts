@@ -7,23 +7,17 @@
 import { join } from 'node:path';
 import { loadConfig } from '../config/index.js';
 import { safeLogger } from '../logging/safe-logger.js';
-import { buildProviders, type LlmProvider, type PreviousAssistantMessage } from '../providers/index.js';
+import { buildProviders, type LlmProvider } from '../providers/index.js';
 import { createSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import {
   createToolRegistry,
   createToolOrchestrator,
   createBashExecutor,
   registerNativeExecutors,
-  type ToolResultMessage,
-  type NativeToolResult,
 } from '../tools/index.js';
 import {
   createSessionManager,
-  assembleContext,
   findWorkspacePath,
-  createMemoryManager,
-  parseMemoryCommands,
-  executeMemoryCommands,
   loadAddressBook,
   addContact,
   removeContact,
@@ -36,13 +30,10 @@ import {
 import { wrapError, formatErrorForUser } from '../errors/index.js';
 import { getMessagesSince, getLatestMessageRowId, type Message } from './reader.js';
 import { sendMessage, checkMessagesAvailable } from './sender.js';
-import { filterToolCalls } from './tool-filter.js';
-import { isAcknowledgementMessage } from './message-utils.js';
 import { guardInboundMessage } from './input-guard.js';
 import {
   createJobStore,
   getSchedulerToolSchemas,
-  createSchedulerExecutors,
   checkDueJobs,
   parseCronExpression,
   getNextFireTime,
@@ -54,13 +45,6 @@ import {
   createApprovalBridge,
   type ApprovalBridge,
 } from '../approval/index.js';
-import {
-  resolveModelProfile,
-  enrichSystemPrompt,
-  enrichToolDescriptions,
-  applyResponseHints,
-  getGenerationOverrides,
-} from '../models/index.js';
 import {
   createTaskManager,
   createExecutionLog,
@@ -78,6 +62,7 @@ import {
   createModeManager,
   type ModeManager,
 } from '../coding/modes/index.js';
+import { processChatMessage, type ChatInput } from '../pipeline/index.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
@@ -122,407 +107,32 @@ async function processMessage(
     return;
   }
 
-  // Create memory manager for this user's workspace
-  const memoryManager = createMemoryManager({ workspacePath });
-
-  safeLogger.info('Processing incoming message', {
-    from: sender.substring(0, 4) + '***',
-    chatId: message.chatId.substring(0, 8) + '***',
-  });
-
-  safeLogger.info('User message', {
-    message: message.text.substring(0, 100) + (message.text.length > 100 ? '...' : ''),
-    length: message.text.length,
-  });
-
-  // Get or create session for this sender
-  const session = sessionManager.getSession('imessage', sender);
-
-  // Resolve sender to a human-readable label so the model knows who is talking
+  // Build ChatInput for the shared pipeline
   const contact = findContactByPhone(sender);
   const senderLabel = contact ? `${contact.name} (${sender})` : sender;
-
-  // Add user message to session
-  session.addMessage({
-    role: 'user',
-    content: message.text,
-    sender: senderLabel,
-  });
-
-  if (isAcknowledgementMessage(message.text)) {
-    const reply = "You're welcome!";
-    session.addMessage({
-      role: 'assistant',
-      content: reply,
-    });
-
-    const result = sendMessage(sender, reply);
-    if (result.success) {
-      safeLogger.info('Acknowledgement sent');
-    } else {
-      safeLogger.error('Failed to send acknowledgement', { error: result.error });
-    }
-    return;
-  }
-
-  // Get available skills for context
-  const skills = skillRegistry.getAvailable();
-
-  // Assemble context using the interface layer
-  const assembled = assembleContext({
-    session,
-    userMessage: message.text,
-    sender: senderLabel,
-    skills,
+  const chatInput: ChatInput = {
+    text: message.text,
+    sender,
+    senderLabel,
     channel: 'imessage',
-    workspacePath,
-  });
-
-  safeLogger.info('Context assembled', {
-    estimatedTokens: assembled.estimatedTokens,
-    historyMessages: assembled.historyMessagesIncluded,
-  });
-
-  // Set up native tool use
-  const toolRegistry = createToolRegistry();
-  const orchestrator = createToolOrchestrator();
-  orchestrator.registerExecutor(createBashExecutor(
-    approvalBridge
-      ? {
-          approvalCallback: async (command: string) => {
-            const request = approvalBridge.requestApproval(command, sender);
-            return approvalBridge.waitForApproval(request.id);
-          },
-        }
-      : { autoApprove: true }
-  ));
-  registerNativeExecutors(orchestrator);
-
-  // Register scheduler tools if job store is available
-  if (jobStore) {
-    for (const tool of getSchedulerToolSchemas()) {
-      toolRegistry.register(tool);
-    }
-    for (const executor of createSchedulerExecutors(jobStore, sender)) {
-      orchestrator.registerExecutor(executor);
-    }
-  }
-
-  // ─── Mode Detection ─────────────────────────────────────────────────
-  // Auto-detect mode from user input (code, architect, ask, review).
-  // Mode influences: system prompt, tool availability, preferred model.
-  let modeSystemPrompt = '';
-  if (modeManager) {
-    const detection = modeManager.autoDetectAndSwitch(message.text);
-    if (detection) {
-      const currentMode = modeManager.getCurrentMode();
-      modeSystemPrompt = currentMode.systemPrompt;
-      safeLogger.info('Mode detected', {
-        mode: currentMode.name,
-        confidence: detection.confidence,
-        reason: detection.reason,
-        preferredModel: modeManager.getPreferredModel(),
-      });
-    }
-  }
-
-  // Resolve model profile for per-model tuning
-  const modelProfile = resolveModelProfile(provider.model);
-  const baseSystemPrompt = modeSystemPrompt
-    ? `${assembled.systemPrompt}\n\n## Active Mode\n\n${modeSystemPrompt}`
-    : assembled.systemPrompt;
-  const enrichedSystemPrompt = enrichSystemPrompt(baseSystemPrompt, modelProfile);
-  const rawTools = enableTools ? toolRegistry.getTools() : [];
-  // Filter tools by current mode's allowed/forbidden lists
-  const modeFilteredTools = modeManager
-    ? rawTools.filter((t) => modeManager.isToolAllowed(t.name))
-    : rawTools;
-  const enrichedTools = enrichToolDescriptions(modeFilteredTools, modelProfile);
-  const genOverrides = getGenerationOverrides(modelProfile);
-
-  // ─── Task Pipeline Gate ───────────────────────────────────────────────
-  // Classify the message first. Tasks get the structured pipeline
-  // (classify → plan → execute → verify → log). Conversation falls
-  // through to the flat tool loop below.
-  if (taskManager && enableTools) {
-    try {
-      const recentHistory = session.getHistory(6).map((m) => {
-        const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-        return `${m.role}: ${text.substring(0, 200)}`;
-      });
-
-      const handleResult = await taskManager.handle(message.text, recentHistory, provider);
-
-      if (handleResult.classification.taskClass !== 'conversation') {
-        safeLogger.info('Task pipeline handled message', {
-          taskClass: handleResult.classification.taskClass,
-          confidence: handleResult.classification.confidence,
-          taskType: handleResult.classification.taskType ?? 'none',
-          hasResult: !!handleResult.taskResult,
-        });
-
-        // Apply model-specific response cleanup
-        let taskResponse = applyResponseHints(handleResult.response, modelProfile);
-
-        // Clean up the response (same as conversation path)
-        taskResponse = taskResponse
-          .replace(/```bash[\s\S]*?```/g, '')
-          .replace(/```sh[\s\S]*?```/g, '')
-          .replace(/\n{3,}/g, '\n\n')
-          .trim();
-
-        session.addMessage({
-          role: 'assistant',
-          content: taskResponse || 'Done!',
-        });
-
-        const result = sendMessage(sender, taskResponse || 'Done!');
-        if (result.success) {
-          safeLogger.info('Task response sent successfully');
-        } else {
-          safeLogger.error('Failed to send task response', { error: result.error });
-        }
-        return;
-      }
-
-      // Classification: conversation — fall through to flat tool loop
-      safeLogger.info('Task classifier: conversation, using flat tool loop', {
-        confidence: handleResult.classification.confidence,
-      });
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      safeLogger.warn('Task pipeline error, falling back to flat tool loop', { error: errorMsg });
-      // Fall through to the existing flat loop on any pipeline error
-    }
-  }
-
-  let iteration = 0;
-  let finalResponse = '';
-  let previousResults: ToolResultMessage[] = [];
-  const previousAssistantMessages: PreviousAssistantMessage[] = [];
-
-  // Extract standard fields from genOverrides; pass the rest as provider-specific options
-  const { temperature: genTemp, num_predict: genNumPredict, ...providerSpecificOptions } = genOverrides as Record<string, unknown>;
-
-  // Deduplication: prevent the LLM from calling the same state-changing tool
-  // with identical parameters multiple times in one conversation turn.
-  const completedToolCalls = new Set<string>();
-  const STATE_CHANGING_TOOLS = new Set([
-    'schedule_reminder', 'cancel_reminder', 'write_file', 'send_message', 'reminder_create',
-  ]);
+  };
 
   try {
-    // Debug: dump full prompt on first iteration
-    safeLogger.info('DEBUG: Prompt sizes', {
-      systemChars: enrichedSystemPrompt.length,
-      systemTokens: Math.ceil(enrichedSystemPrompt.length / 4),
-      contextChars: assembled.context.length,
-      contextTokens: Math.ceil(assembled.context.length / 4),
-      historyMessages: assembled.historyMessagesIncluded ?? 0,
-      toolCount: enrichedTools.length,
-      toolNames: enrichedTools.map((t) => t.name),
-    });
-    // Log system prompt in 4K chunks so nothing is hidden
-    for (let i = 0; i < enrichedSystemPrompt.length; i += 4000) {
-      const chunk = enrichedSystemPrompt.substring(i, i + 4000);
-      safeLogger.info(`DEBUG: System prompt [${i}-${Math.min(i + 4000, enrichedSystemPrompt.length)}]`, { text: chunk });
-    }
-    // Log context prompt in 4K chunks
-    for (let i = 0; i < assembled.context.length; i += 4000) {
-      const chunk = assembled.context.substring(i, i + 4000);
-      safeLogger.info(`DEBUG: Context prompt [${i}-${Math.min(i + 4000, assembled.context.length)}]`, { text: chunk });
-    }
-
-    // Native tool execution loop (conversation path + fallback)
-    while (iteration < maxToolIterations) {
-      iteration++;
-
-      const generateRequest: import('../providers/base.js').GenerateRequest = {
-          prompt: assembled.context,
-          systemPrompt: enrichedSystemPrompt,
-          maxTokens: (genNumPredict as number | undefined) ?? 2048,
-          temperature: (genTemp as number | undefined) ?? 0.7,
-      };
-      if (Object.keys(providerSpecificOptions).length > 0) {
-        generateRequest.providerOptions = providerSpecificOptions;
-      }
-      if (previousAssistantMessages.length > 0) {
-        generateRequest.previousAssistantMessages = previousAssistantMessages;
-      }
-
-      const response = await provider.generateWithTools(
-        generateRequest,
-        enrichedTools,
-        previousResults.length > 0 ? previousResults : undefined
-      );
-
-      safeLogger.info('LLM response', {
-        provider: response.providerId,
-        model: response.model,
-        textLength: response.text.length,
-        toolCalls: response.toolCalls.length,
-        stopReason: response.stopReason,
-        iteration,
-      });
-
-      // If no tool calls, we're done
-      if (response.toolCalls.length === 0) {
-        finalResponse = response.text;
-        break;
-      }
-
-      // Filter tool calls (block message-sending commands)
-      const { allowed: filteredCalls, blocked: blockedCalls } = filterToolCalls(response.toolCalls);
-
-      if (blockedCalls.length > 0) {
-        safeLogger.warn('Blocked tool calls for iMessage channel', {
-          blocked: blockedCalls.length,
-        });
-      }
-
-      // Dedup: split filtered calls into new vs duplicate
-      const newCalls: typeof filteredCalls = [];
-      const dupCalls: typeof filteredCalls = [];
-
-      for (const call of filteredCalls) {
-        if (STATE_CHANGING_TOOLS.has(call.name)) {
-          const key = `${call.name}:${JSON.stringify(call.input)}`;
-          if (completedToolCalls.has(key)) {
-            dupCalls.push(call);
-            continue;
-          }
-        }
-        newCalls.push(call);
-      }
-
-      if (dupCalls.length > 0) {
-        safeLogger.warn('Blocked duplicate tool calls', {
-          duplicates: dupCalls.length,
-          tools: dupCalls.map((c) => c.name),
-        });
-      }
-
-      // Log tool calls
-      for (const call of newCalls) {
-        safeLogger.info('Tool call', {
-          name: call.name,
-          id: call.id,
-          input: JSON.stringify(call.input).substring(0, 200),
-          iteration,
-        });
-      }
-
-      // Execute allowed, non-duplicate tool calls
-      const results: NativeToolResult[] = [];
-
-      if (newCalls.length > 0) {
-        const executedResults = await orchestrator.executeAll(newCalls);
-        results.push(...executedResults);
-
-        // Track successful state-changing calls for dedup
-        for (let i = 0; i < newCalls.length; i++) {
-          const call = newCalls[i]!;
-          const result = executedResults[i];
-          if (result?.success && STATE_CHANGING_TOOLS.has(call.name)) {
-            const key = `${call.name}:${JSON.stringify(call.input)}`;
-            completedToolCalls.add(key);
-          }
-        }
-      }
-
-      // Add duplicate calls with dedup error results
-      for (const dupCall of dupCalls) {
-        results.push({
-          toolCallId: dupCall.id,
-          success: false,
-          error: 'Already completed — this action was already performed successfully. Compose your final text response to the user.',
-        });
-      }
-
-      // Add blocked calls with error results
-      for (const blockedCall of blockedCalls) {
-        results.push({
-          toolCallId: blockedCall.id,
-          success: false,
-          error:
-            'Tool call blocked (message sending is handled by Casterly; reply with the final message text only).',
-        });
-      }
-
-      // Log results
-      for (const result of results) {
-        safeLogger.info('Tool result', {
-          toolCallId: result.toolCallId,
-          success: result.success,
-          outputLength: result.output?.length ?? 0,
-          error: result.error?.substring(0, 100),
-        });
-      }
-
-      // Store assistant response for proper threading in next iteration
-      previousAssistantMessages.push({
-        text: response.text,
-        toolCalls: response.toolCalls.map((tc) => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: JSON.stringify(tc.input),
-        })),
-      });
-
-      // Set up for next iteration
-      previousResults = results.map((r) => ({
-        callId: r.toolCallId,
-        result: r.success ? (r.output ?? 'Success') : `Error: ${r.error}`,
-        isError: !r.success,
-      }));
-
-      // Include any text from response
-      if (response.text) {
-        finalResponse += response.text + '\n';
-      }
-    }
-
-    if (iteration >= maxToolIterations) {
-      safeLogger.warn('Max tool iterations reached', { maxToolIterations });
-      finalResponse += '\n\n(Reached maximum tool execution limit)';
-    }
-
-    // Apply model-specific response cleanup
-    finalResponse = applyResponseHints(finalResponse, modelProfile);
-
-    // Process memory commands from the response
-    const memoryCommands = parseMemoryCommands(finalResponse);
-    if (memoryCommands.length > 0) {
-      safeLogger.info('Processing memory commands', { count: memoryCommands.length });
-      executeMemoryCommands(memoryCommands, memoryManager);
-    }
-
-    // Clean up the response
-    const cleanedResponse = finalResponse
-      .replace(/```bash[\s\S]*?```/g, '')
-      .replace(/```sh[\s\S]*?```/g, '')
-      .replace(/\[(?:REMEMBER|NOTE|MEMORY)\](?:\[[^\]]*\])?\s*[^\[]*/gi, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-
-    safeLogger.info('Final response', {
-      response: cleanedResponse.substring(0, 200) + (cleanedResponse.length > 200 ? '...' : ''),
-      length: cleanedResponse.length,
-      iterations: iteration,
+    const pipelineResult = await processChatMessage(chatInput, {
+      provider,
+      skillRegistry,
+      sessionManager,
+      modeManager,
+      jobStore,
+      approvalBridge,
+      taskManager,
+    }, {
+      enableTools,
+      maxToolIterations,
+      workspacePath,
     });
 
-    // Fall back to an honest message if response was empty after cleanup
-    const finalMessage = cleanedResponse || 'Tried to handle that but came up empty. Mind asking again?';
-
-    // Add assistant response to session
-    session.addMessage({
-      role: 'assistant',
-      content: finalMessage,
-    });
-
-    // Send the response
-    const result = sendMessage(sender, finalMessage);
-
+    const result = sendMessage(sender, pipelineResult.response);
     if (result.success) {
       safeLogger.info('Response sent successfully');
     } else {
