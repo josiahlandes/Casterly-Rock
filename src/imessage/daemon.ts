@@ -794,7 +794,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
     // Get or create per-peer mode manager for scheduled jobs
     if (!modeManagers.has(recipient)) {
-      modeManagers.set(recipient, createModeManager());
+      modeManagers.set(recipient, createModeManager({ autoDetect: false }));
     }
 
     await processMessage(syntheticMessage, providers.local, skillRegistry, sessionManager, {
@@ -888,9 +888,9 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           continue;
         }
 
-        // Get or create per-peer mode manager
+        // Get or create per-peer mode manager (auto-detect off — only explicit /code etc.)
         if (!modeManagers.has(sender)) {
-          modeManagers.set(sender, createModeManager());
+          modeManagers.set(sender, createModeManager({ autoDetect: false }));
         }
 
         await processMessage(message, providers.local, skillRegistry, sessionManager, {
