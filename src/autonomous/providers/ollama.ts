@@ -78,6 +78,7 @@ export class OllamaAutonomousProvider extends BaseAutonomousProvider {
     const response = await this.callOllama(prompt, {
       systemPrompt: `You are an expert code analyzer for the Casterly project.
 Identify issues and opportunities for improvement.
+Feature backlog items represent deliberate owner requests — always generate a feature_request observation for each pending backlog item with source: 'backlog'.
 Return your analysis as a JSON object with an "observations" array.
 Each observation must have: id, type, severity, frequency, context, suggestedArea, timestamp, source.
 IMPORTANT: Return ONLY valid JSON, no other text.`,
@@ -141,6 +142,19 @@ IMPORTANT: Return ONLY valid JSON, no other text.`,
     // Format codebase stats
     const statsStr = `Files: ${context.codebaseStats.totalFiles}, Lines: ${context.codebaseStats.totalLines}, Lint errors: ${context.codebaseStats.lintErrors}, Type errors: ${context.codebaseStats.typeErrors}`;
     prompt = prompt.replace('{{codebaseStats}}', statsStr);
+
+    // Format backlog items
+    const backlogStr =
+      context.backlogItems.length > 0
+        ? context.backlogItems
+            .slice(0, 10)
+            .map(
+              (b) =>
+                `[P${b.priority}] ${b.id}: ${b.title}\n  ${b.description}\n  Approach: ${b.approach}\n  Areas: ${b.affectedAreas.join(', ')}`,
+            )
+            .join('\n\n')
+        : 'No pending backlog items';
+    prompt = prompt.replace('{{backlog}}', backlogStr);
 
     return prompt;
   }

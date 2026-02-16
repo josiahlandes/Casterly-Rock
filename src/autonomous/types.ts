@@ -12,7 +12,8 @@ export type ObservationType =
   | 'capability_gap'
   | 'resource_concern'
   | 'test_failure'
-  | 'code_smell';
+  | 'code_smell'
+  | 'feature_request';
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 
@@ -24,7 +25,7 @@ export interface Observation {
   context: Record<string, unknown>;
   suggestedArea: string;
   timestamp: string;
-  source: 'error_logs' | 'performance_metrics' | 'test_results' | 'static_analysis';
+  source: 'error_logs' | 'performance_metrics' | 'test_results' | 'static_analysis' | 'backlog';
 }
 
 // ============================================================================
@@ -38,7 +39,8 @@ export type HypothesisApproach =
   | 'add_test'
   | 'refactor'
   | 'update_config'
-  | 'improve_docs';
+  | 'improve_docs'
+  | 'add_feature';
 
 export type Complexity = 'trivial' | 'simple' | 'moderate' | 'complex';
 
@@ -211,6 +213,9 @@ export interface AutonomousConfig {
   // Approval (for integration_mode: approval_required)
   approvalTimeoutMinutes: number;
 
+  // Backlog
+  backlogPath?: string | undefined;
+
   // Resource limits (Mac Studio - generous defaults)
   maxBranchAgeHours: number;
   maxConcurrentBranches: number;
@@ -248,6 +253,27 @@ export interface AnalysisContext {
   performanceMetrics: PerformanceMetric[];
   recentReflections: Reflection[];
   codebaseStats: CodebaseStats;
+  backlogItems: BacklogItem[];
+}
+
+// ============================================================================
+// BACKLOG
+// ============================================================================
+
+export type BacklogStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface BacklogItem {
+  id: string;
+  title: string;
+  description: string;
+  priority: number; // 1 (highest) to 5 (lowest)
+  approach: HypothesisApproach;
+  affectedAreas: string[];
+  acceptanceCriteria: string[];
+  status: BacklogStatus;
+  completedAt?: string | undefined;
+  completedBranch?: string | undefined;
+  failureReason?: string | undefined;
 }
 
 export interface ErrorLogEntry {

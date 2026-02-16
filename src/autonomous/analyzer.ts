@@ -9,8 +9,11 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as yaml from 'yaml';
 import type {
   AnalysisContext,
+  BacklogItem,
+  BacklogStatus,
   CodebaseStats,
   ErrorLogEntry,
   PerformanceMetric,
@@ -32,24 +35,29 @@ export class Analyzer {
   private readonly projectRoot: string;
   private readonly logsDir: string;
   private readonly reflectionsDir: string;
+  private readonly backlogPath: string;
 
-  constructor(projectRoot: string, options?: { logsDir?: string; reflectionsDir?: string }) {
+  constructor(projectRoot: string, options?: { logsDir?: string; reflectionsDir?: string; backlogPath?: string }) {
     this.projectRoot = projectRoot;
     this.logsDir = options?.logsDir || path.join(projectRoot, 'logs');
     this.reflectionsDir =
       options?.reflectionsDir ||
       path.join(process.env['HOME'] || '~', '.casterly', 'autonomous', 'reflections');
+    this.backlogPath = options?.backlogPath
+      ? (path.isAbsolute(options.backlogPath) ? options.backlogPath : path.join(projectRoot, options.backlogPath))
+      : path.join(projectRoot, 'config', 'backlog.yaml');
   }
 
   /**
    * Gather all context needed for analysis phase.
    */
   async gatherContext(): Promise<AnalysisContext> {
-    const [errorLogs, performanceMetrics, recentReflections, codebaseStats] = await Promise.all([
+    const [errorLogs, performanceMetrics, recentReflections, codebaseStats, backlogItems] = await Promise.all([
       this.parseErrorLogs(),
       this.gatherPerformanceMetrics(),
       this.loadRecentReflections(),
       this.gatherCodebaseStats(),
+      this.loadBacklog(),
     ]);
 
     return {
@@ -57,6 +65,7 @@ export class Analyzer {
       performanceMetrics,
       recentReflections,
       codebaseStats,
+      backlogItems,
     };
   }
 
@@ -336,6 +345,60 @@ export class Analyzer {
     }
 
     return stats;
+  }
+
+  // --------------------------------------------------------------------------
+  // BACKLOG
+  // --------------------------------------------------------------------------
+
+  /**
+   * Load pending backlog items, sorted by priority (1 = highest).
+   */
+  async loadBacklog(): Promise<BacklogItem[]> {
+    try {
+      const content = await fs.readFile(this.backlogPath, 'utf-8');
+      const parsed = yaml.parse(content) as { backlog?: BacklogItem[] } | null;
+      const items = parsed?.backlog ?? [];
+
+      return items
+        .filter((item) => item.status === 'pending')
+        .sort((a, b) => a.priority - b.priority);
+    } catch {
+      // File doesn't exist or is invalid — that's fine
+      return [];
+    }
+  }
+
+  /**
+   * Update the status of a backlog item in the YAML file.
+   */
+  async updateBacklogStatus(
+    itemId: string,
+    status: BacklogStatus,
+    metadata?: { branch?: string; reason?: string },
+  ): Promise<void> {
+    try {
+      const content = await fs.readFile(this.backlogPath, 'utf-8');
+      const parsed = yaml.parse(content) as { backlog?: BacklogItem[] } | null;
+      const items = parsed?.backlog ?? [];
+
+      const item = items.find((i) => i.id === itemId);
+      if (!item) return;
+
+      item.status = status;
+      if (status === 'completed') {
+        item.completedAt = new Date().toISOString();
+        item.completedBranch = metadata?.branch;
+      }
+      if (status === 'failed') {
+        item.failureReason = metadata?.reason;
+      }
+
+      const output = yaml.stringify({ backlog: items });
+      await fs.writeFile(this.backlogPath, output, 'utf-8');
+    } catch {
+      // Best-effort update — file may not exist
+    }
   }
 
   // --------------------------------------------------------------------------

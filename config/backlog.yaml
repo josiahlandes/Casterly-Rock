@@ -1,0 +1,122 @@
+# Feature Backlog for Autonomous Self-Improvement
+#
+# Items here are picked up by the autonomous loop alongside dynamic observations.
+# Priority: 1 (highest) to 5 (lowest).
+# Status: pending | in_progress | completed | failed.
+# The loop marks items completed/failed after each attempt.
+
+backlog:
+  - id: bl-001
+    title: "Skill metadata parser"
+    description: >
+      Parse openclaw metadata sections from SKILL.md files in workspace/skills/.
+      Each skill has YAML frontmatter with an openclaw field containing requires.bins
+      (array of required CLI binaries), optional requires.anyBins, install[] (array of
+      installation recipes with id, kind, package/formula, bins, label), and emoji.
+      Create a SkillMetadata type and a parseSkillMetadata() function that reads a
+      SKILL.md file and extracts the openclaw section into a typed object. Also create
+      a loadAllSkillMetadata() that scans workspace/skills/ and returns SkillMetadata[]
+      for all skills found.
+    priority: 1
+    approach: add_feature
+    affectedAreas:
+      - src/skills/
+    acceptanceCriteria:
+      - Reads YAML frontmatter from SKILL.md files
+      - Extracts openclaw.requires.bins and openclaw.requires.anyBins arrays
+      - Extracts openclaw.install[] with id, kind, package, bins, label fields
+      - Returns typed SkillMetadata for a single skill
+      - loadAllSkillMetadata() scans workspace/skills/ directories
+      - Handles missing or malformed metadata gracefully (returns null)
+      - Includes unit tests
+    status: pending
+
+  - id: bl-002
+    title: "Dependency resolver for skills"
+    description: >
+      Check if required binaries for each skill are available on the system.
+      Use child_process exec with 'which' (or 'command -v') to verify each binary
+      listed in requires.bins. For requires.anyBins, at least one must be present.
+      Return a DependencyStatus per skill indicating satisfied, missing, or partial,
+      along with a list of which binaries are missing and which are found.
+    priority: 1
+    approach: add_feature
+    affectedAreas:
+      - src/skills/
+    acceptanceCriteria:
+      - Checks each binary in requires.bins via which/command -v
+      - For anyBins, reports satisfied if at least one binary is found
+      - Returns per-skill DependencyStatus with missing/found binary lists
+      - Works on macOS (darwin) with standard PATH
+      - Does not throw on missing binaries (returns status object)
+      - Includes unit tests with mocked exec
+    status: pending
+
+  - id: bl-003
+    title: "Installer coordinator for skill dependencies"
+    description: >
+      Execute installation recipes from openclaw.install[] arrays to install
+      missing skill dependencies. Support install kinds: brew (Homebrew formula),
+      node (npm install -g), uv (uv tool install), go (go install). Filter
+      install recipes by OS when an os[] field is present (default: all platforms).
+      After install, verify the binary exists. This should be invocable as a
+      native tool executor so the daemon can offer to install missing deps.
+    priority: 2
+    approach: add_feature
+    affectedAreas:
+      - src/skills/
+      - src/tools/executors/
+    acceptanceCriteria:
+      - Supports brew, node, uv, go install kinds
+      - Filters install recipes by platform when os[] is present
+      - Executes install commands via child_process
+      - Verifies installed binary exists after each install
+      - Returns success/failure status per install attempt
+      - Never installs without explicit approval
+      - Includes unit tests with mocked exec
+    status: pending
+
+  - id: bl-004
+    title: "Skill registry client for clawhub.com"
+    description: >
+      Client module to interact with the clawhub.com skill registry. Support
+      searching for skills by keyword, fetching skill metadata (name, version,
+      description, dependencies), and downloading/installing skill packages to
+      workspace/skills/. Prefer using the clawhub CLI if installed (check via
+      which), falling back to direct HTTP API calls to clawhub.com/api/ if
+      the CLI is not available.
+    priority: 3
+    approach: add_feature
+    affectedAreas:
+      - src/skills/
+    acceptanceCriteria:
+      - Search skills by keyword via clawhub CLI or HTTP fallback
+      - Fetch skill metadata (name, version, dependencies)
+      - Install skill to workspace/skills/ directory
+      - Check for updates to installed skills
+      - Graceful fallback when clawhub CLI not installed
+      - Error handling for network failures and invalid responses
+      - Includes unit tests with mocked HTTP/exec
+    status: pending
+
+  - id: bl-005
+    title: "Skill verification and enablement check"
+    description: >
+      Combine the metadata parser (bl-001) and dependency resolver (bl-002) to
+      produce a readiness report for each skill. A skill is 'ready' when all
+      required binaries are present. Skills with unsatisfied deps should be
+      flagged with a clear message about what is missing and how to install it.
+      Integrate with the skill loading path so that only ready skills are
+      registered in the active tool registry.
+    priority: 2
+    approach: add_feature
+    affectedAreas:
+      - src/skills/
+    acceptanceCriteria:
+      - Produces a readiness report per skill (ready | not_ready | partial)
+      - Lists missing dependencies with installation suggestions from install[]
+      - Gates skill enablement on dependency satisfaction
+      - Provides a summary function to show all skill statuses
+      - Integrates with existing skill loading mechanism
+      - Includes unit tests
+    status: pending

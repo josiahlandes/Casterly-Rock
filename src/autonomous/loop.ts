@@ -79,7 +79,9 @@ export class AutonomousLoop {
     this.approvalBridge = options?.approvalBridge;
     this.approvalRecipient = options?.approvalRecipient;
 
-    this.analyzer = new Analyzer(projectRoot);
+    this.analyzer = new Analyzer(projectRoot, config.backlogPath ? {
+      backlogPath: config.backlogPath,
+    } : undefined);
     this.git = new GitOperations(projectRoot, config.git);
     this.validator = new Validator(projectRoot, {
       invariants: buildInvariants(config),
@@ -238,6 +240,25 @@ export class AutonomousLoop {
         return;
       }
 
+      // Priority sort: backlog P1-P2 items first, then by confidence * impact
+      const impactScore: Record<string, number> = { low: 1, medium: 2, high: 3 };
+      viableHypotheses.sort((a, b) => {
+        const aIsBacklogHighPri =
+          a.observation.source === 'backlog' &&
+          ((a.observation.context['priority'] as number) ?? 5) <= 2;
+        const bIsBacklogHighPri =
+          b.observation.source === 'backlog' &&
+          ((b.observation.context['priority'] as number) ?? 5) <= 2;
+
+        if (aIsBacklogHighPri && !bIsBacklogHighPri) return -1;
+        if (!aIsBacklogHighPri && bIsBacklogHighPri) return 1;
+
+        return (
+          b.confidence * (impactScore[b.expectedImpact] ?? 1) -
+          a.confidence * (impactScore[a.expectedImpact] ?? 1)
+        );
+      });
+
       // 3. ATTEMPT HYPOTHESES
       const maxAttempts = Math.min(viableHypotheses.length, this.config.maxAttemptsPerCycle);
 
@@ -369,6 +390,15 @@ export class AutonomousLoop {
 
         // Reflect on failure
         await this.reflectAndSave(cycleId, hypothesis, implementation, validation.errors, outcome, false);
+
+        // Mark backlog item as failed if applicable
+        if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
+          await this.analyzer.updateBacklogStatus(
+            hypothesis.observation.context['backlogId'] as string,
+            'failed',
+            { reason: validation.errors.join('; ') },
+          );
+        }
         return false;
       }
 
@@ -396,6 +426,15 @@ export class AutonomousLoop {
 
         // Reflect on pending_review
         await this.reflectAndSave(cycleId, hypothesis, implementation, [], outcome, false);
+
+        // Mark backlog item as completed if applicable
+        if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
+          await this.analyzer.updateBacklogStatus(
+            hypothesis.observation.context['backlogId'] as string,
+            'completed',
+            { branch },
+          );
+        }
 
         // Return to base branch for next hypothesis
         await this.git.checkoutBase();
@@ -430,6 +469,15 @@ export class AutonomousLoop {
 
       // Reflect on success
       await this.reflectAndSave(cycleId, hypothesis, implementation, [], outcome, true);
+
+      // Mark backlog item as completed if applicable
+      if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
+        await this.analyzer.updateBacklogStatus(
+          hypothesis.observation.context['backlogId'] as string,
+          'completed',
+          { branch: branch ?? undefined },
+        );
+      }
 
       // Add to MEMORY.md if significant
       if (hypothesis.expectedImpact === 'high' || hypothesis.confidence >= 0.9) {
@@ -611,6 +659,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
     autoIntegrateThreshold: raw.autonomous?.auto_integrate_threshold ?? 0.9,
     attemptThreshold: raw.autonomous?.attempt_threshold ?? 0.5,
     approvalTimeoutMinutes: raw.git?.approval_timeout_minutes ?? 10,
+    backlogPath: raw.autonomous?.backlog_path ?? 'config/backlog.yaml',
     maxBranchAgeHours: raw.autonomous?.max_branch_age_hours ?? 24,
     maxConcurrentBranches: raw.autonomous?.max_concurrent_branches ?? 3,
     sandboxTimeoutSeconds: raw.autonomous?.sandbox_timeout_seconds ?? 300,
