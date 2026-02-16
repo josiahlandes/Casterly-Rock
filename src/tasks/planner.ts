@@ -92,7 +92,7 @@ Rules for planning:
             },
             input: {
               type: 'object',
-              description: 'Input parameters for the tool call.',
+              description: 'REQUIRED: The input parameters for the tool call. Must include ALL required parameters (marked with *) from the Available tools list. For example, bash needs {"command": "..."}, read_file needs {"path": "..."}, edit_file needs {"path": "...", "old_text": "...", "new_text": "..."}. Never leave this empty.',
             },
             dependsOn: {
               type: 'array',
@@ -109,7 +109,7 @@ Rules for planning:
               description: 'Value for verification: expected exit code, file path, substring, schema JSON, or judge prompt.',
             },
           },
-          required: ['id', 'description', 'tool', 'dependsOn'],
+          required: ['id', 'description', 'tool', 'input', 'dependsOn'],
         },
       },
     },
@@ -132,9 +132,17 @@ Rules:
 - Break the task into small, concrete steps
 - Each step calls exactly one tool from the available tools list
 - Set dependsOn correctly — steps without dependencies can run in parallel
-- Include tool input parameters when you can determine them from the instruction
+- CRITICAL: Every step MUST have a complete "input" object with ALL required parameters filled in. Parameters marked with * are required. Never leave input empty or missing required params.
 - Choose appropriate verification for each step
-- You MUST call the create_plan tool. Do not respond with text.`);
+- You MUST call the create_plan tool. Do not respond with text.
+
+Examples of correct step inputs:
+- bash: {"command": "date +%H:%M:%S"}
+- read_file: {"path": "/tmp/example.txt"}
+- write_file: {"path": "/tmp/out.txt", "content": "hello"}
+- edit_file: {"path": "/tmp/code.ts", "old_text": "return a / b;", "new_text": "if (b === 0) throw new Error('div by zero');\\nreturn a / b;"}
+- list_files: {"path": "/tmp"}
+- grep_files: {"pattern": "TODO", "path": "/tmp/project"}`);
 
   // List available tools with parameter schemas
   const toolDescriptions = availableTools
@@ -244,10 +252,59 @@ function parsePlan(response: GenerateWithToolsResponse): TaskPlan | null {
 }
 
 /**
+ * Known required parameters for common tools.
+ * Used to validate planner output and trigger re-planning
+ * when required parameters are missing.
+ */
+const TOOL_REQUIRED_PARAMS: Record<string, string[]> = {
+  bash: ['command'],
+  read_file: ['path'],
+  write_file: ['path', 'content'],
+  edit_file: ['path', 'old_text', 'new_text'],
+  search_files: ['query'],
+  grep_files: ['pattern'],
+  list_files: ['path'],
+  glob_files: ['pattern'],
+  read_document: ['path'],
+  calendar_read: [],
+  reminder_create: ['message'],
+  http_get: ['url'],
+  schedule_reminder: ['message'],
+  send_message: ['recipient', 'text'],
+};
+
+/**
+ * Validate a plan's steps for missing required tool parameters.
+ * Returns a list of error messages (empty if all steps are valid).
+ */
+export function validatePlanInputs(plan: TaskPlan): string[] {
+  const errors: string[] = [];
+
+  for (const step of plan.steps) {
+    const required = TOOL_REQUIRED_PARAMS[step.tool];
+    if (!required || required.length === 0) continue;
+
+    const missing = required.filter((param) => {
+      const val = step.input[param];
+      return val === undefined || val === null || val === '';
+    });
+
+    if (missing.length > 0) {
+      errors.push(`Step "${step.id}" (${step.tool}): missing required params: ${missing.join(', ')}`);
+    }
+  }
+
+  return errors;
+}
+
+/**
  * Create a structured task plan from a user instruction.
  *
  * Uses a focused LLM call with the create_plan tool as the only
  * available tool, forcing structured output.
+ *
+ * If the plan has steps with missing required parameters, the planner
+ * is re-called once with feedback about what's missing.
  *
  * @param instruction - The user's instruction to plan for
  * @param availableTools - Tools the plan can use
@@ -262,64 +319,115 @@ export async function createTaskPlan(
   provider: LlmProvider
 ): Promise<TaskPlan> {
   const systemPrompt = buildPlannerSystemPrompt(availableTools, executionHistory);
+  const maxPlanAttempts = 2; // initial + 1 retry
+  let prevValidationErrors: string[] = [];
 
-  try {
-    const response = await provider.generateWithTools(
-      {
-        prompt: `Create a plan for this task:\n\n${instruction}`,
-        systemPrompt,
-        maxTokens: PROFILES.planner.generation.maxTokens,
-        temperature: PROFILES.planner.generation.temperature,
-      },
-      [PLAN_TOOL]
-    );
+  for (let attempt = 0; attempt < maxPlanAttempts; attempt++) {
+    try {
+      // On retry, include the validation errors as feedback
+      let prompt = `Create a plan for this task:\n\n${instruction}`;
+      if (attempt > 0 && prevValidationErrors.length > 0) {
+        prompt += `\n\nIMPORTANT — Your previous plan had missing parameters. Fix these:\n${prevValidationErrors.join('\n')}\n\nYou MUST fill in the "input" object for every step with ALL required parameters.`;
+      }
 
-    const plan = parsePlan(response);
+      const response = await provider.generateWithTools(
+        {
+          prompt,
+          systemPrompt,
+          maxTokens: PROFILES.planner.generation.maxTokens,
+          temperature: PROFILES.planner.generation.temperature,
+        },
+        [PLAN_TOOL]
+      );
 
-    if (plan) {
-      safeLogger.info('Task plan created', {
-        goal: plan.goal.substring(0, 100),
-        steps: plan.steps.length,
-        criteria: plan.completionCriteria.length,
-        tools: [...new Set(plan.steps.map((s) => s.tool))].join(', '),
+      const plan = parsePlan(response);
+
+      if (!plan) {
+        // Model didn't call the tool — create a minimal single-step plan
+        safeLogger.warn('Planner did not call create_plan tool, creating fallback plan');
+        return {
+          goal: instruction.substring(0, 200),
+          completionCriteria: ['Task completed successfully'],
+          steps: [
+            {
+              id: 'step-1',
+              description: instruction.substring(0, 200),
+              tool: 'bash',
+              input: { command: 'echo "Plan generation failed — manual intervention needed"' },
+              dependsOn: [],
+              verification: { type: 'none' },
+            },
+          ],
+        };
+      }
+
+      // Validate the plan
+      const validationErrors = validatePlanInputs(plan);
+
+      if (validationErrors.length === 0) {
+        safeLogger.info('Task plan created', {
+          goal: plan.goal.substring(0, 100),
+          steps: plan.steps.length,
+          criteria: plan.completionCriteria.length,
+          tools: [...new Set(plan.steps.map((s) => s.tool))].join(', '),
+          attempt: attempt + 1,
+        });
+        return plan;
+      }
+
+      // Plan has validation errors
+      if (attempt < maxPlanAttempts - 1) {
+        // We have retries left — store errors and loop
+        prevValidationErrors = validationErrors;
+        safeLogger.warn('Plan has missing parameters, retrying', {
+          errors: validationErrors,
+          attempt: attempt + 1,
+        });
+        continue;
+      }
+
+      // Last attempt — return the plan anyway (runner will fast-fail bad steps)
+      safeLogger.warn('Plan still has missing parameters after retry, proceeding anyway', {
+        errors: validationErrors,
+        attempt: attempt + 1,
       });
       return plan;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      safeLogger.error('Planning failed', { error: errorMessage, attempt: attempt + 1 });
+
+      // Return a minimal error plan
+      return {
+        goal: instruction.substring(0, 200),
+        completionCriteria: ['Task completed successfully'],
+        steps: [
+          {
+            id: 'step-1',
+            description: `Planning error: ${errorMessage}`,
+            tool: 'bash',
+            input: { command: `echo "Planning failed: ${errorMessage.replace(/"/g, '\\"')}"` },
+            dependsOn: [],
+            verification: { type: 'none' },
+          },
+        ],
+      };
     }
-
-    // Model didn't call the tool — create a minimal single-step plan
-    safeLogger.warn('Planner did not call create_plan tool, creating fallback plan');
-    return {
-      goal: instruction.substring(0, 200),
-      completionCriteria: ['Task completed successfully'],
-      steps: [
-        {
-          id: 'step-1',
-          description: instruction.substring(0, 200),
-          tool: 'bash',
-          input: { command: 'echo "Plan generation failed — manual intervention needed"' },
-          dependsOn: [],
-          verification: { type: 'none' },
-        },
-      ],
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    safeLogger.error('Planning failed', { error: errorMessage });
-
-    // Return a minimal error plan
-    return {
-      goal: instruction.substring(0, 200),
-      completionCriteria: ['Task completed successfully'],
-      steps: [
-        {
-          id: 'step-1',
-          description: `Planning error: ${errorMessage}`,
-          tool: 'bash',
-          input: { command: `echo "Planning failed: ${errorMessage.replace(/"/g, '\\"')}"` },
-          dependsOn: [],
-          verification: { type: 'none' },
-        },
-      ],
-    };
   }
+
+  // Should never reach here, but TypeScript needs it
+  return {
+    goal: instruction.substring(0, 200),
+    completionCriteria: ['Task completed successfully'],
+    steps: [
+      {
+        id: 'step-1',
+        description: instruction.substring(0, 200),
+        tool: 'bash',
+        input: { command: 'echo "Plan generation exhausted all attempts"' },
+        dependsOn: [],
+        verification: { type: 'none' },
+      },
+    ],
+  };
 }
+

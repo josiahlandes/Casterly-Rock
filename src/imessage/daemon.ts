@@ -292,7 +292,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   const {
     pollIntervalMs,
     enableTools = true,
-    maxToolIterations = 5,
+    maxToolIterations = 8,
     workspacePath,
     sessionScope = 'per-peer',
   } = daemonConfig;
