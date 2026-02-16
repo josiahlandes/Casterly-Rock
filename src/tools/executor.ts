@@ -192,7 +192,16 @@ export async function executeBashToolCall(
   const { timeoutMs = 30000, autoApprove = false, approvalCallback } = options;
 
   // Extract command from tool call input
-  const command = call.input.command;
+  // Normalize: some models send {raw:{cmd:["bash","-lc","actual command"]}} instead of {command:"..."}
+  let command = call.input.command;
+  if (typeof command !== 'string') {
+    const raw = call.input.raw as Record<string, unknown> | undefined;
+    if (raw?.cmd && Array.isArray(raw.cmd)) {
+      // Extract the actual command from ["bash", "-lc", "the real command"]
+      const cmdArr = raw.cmd as string[];
+      command = cmdArr.length >= 3 ? cmdArr[cmdArr.length - 1] : cmdArr.join(' ');
+    }
+  }
 
   if (typeof command !== 'string') {
     return {
