@@ -52,9 +52,9 @@ export interface AssembledContext {
 }
 
 const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
-  maxContextTokens: 8000,      // gpt-oss:120b supports large context
-  reserveForResponse: 1500,
-  maxHistoryMessages: 10,
+  maxContextTokens: 131072,    // gpt-oss:120b context length
+  reserveForResponse: 4096,
+  maxHistoryMessages: 50,
 };
 
 /**
