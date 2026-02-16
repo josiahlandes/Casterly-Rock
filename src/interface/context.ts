@@ -52,9 +52,9 @@ export interface AssembledContext {
 }
 
 const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
-  maxContextTokens: 3500,      // Stay well under Ollama's 4096 limit
-  reserveForResponse: 500,
-  maxHistoryMessages: 10,       // Fewer messages = faster responses
+  maxContextTokens: 8000,      // gpt-oss:120b supports large context
+  reserveForResponse: 1500,
+  maxHistoryMessages: 10,
 };
 
 /**
