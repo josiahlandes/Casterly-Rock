@@ -9,7 +9,8 @@ const ALLOWED_CONSOLE_LOG_FILES = new Set([
   'src/index.ts',
   'src/test-cli.ts',
   'src/autonomous/loop.ts',  // Daemon needs to log output
-  'src/benchmark-cli.ts'     // Benchmark CLI needs console output
+  'src/benchmark-cli.ts',    // Benchmark CLI needs console output
+  'src/terminal-repl.ts'     // Terminal REPL needs console output
 ]);
 
 function walk(dir) {
