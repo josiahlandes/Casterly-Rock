@@ -96,21 +96,19 @@ export {
   assembleProfileContext,
 } from './context-profiles.js';
 
-// Multi-user management
+// Address book
 export {
-  type UserProfile,
-  type UsersConfig,
-  normalizePhoneNumber,
-  getUsersConfigPath,
-  getUserWorkspaceBasePath,
-  loadUsersConfig,
-  saveUsersConfig,
-  findUserByPhone,
-  getAllowedPhoneNumbers,
-  ensureUserWorkspace,
-  createDefaultBootstrapFiles,
-  addUser,
-  removeUser,
-  setUserEnabled,
-  listUsers,
-} from './users.js';
+  type Contact,
+  type AddressBook,
+  loadAddressBook,
+  saveAddressBook,
+  addContact,
+  removeContact,
+  findContactByPhone,
+  getAllowedPhones,
+  isAdmin,
+  getContactsConfigPath,
+} from './contacts.js';
+
+// Phone number utility (still in users.ts)
+export { normalizePhoneNumber } from './users.js';

@@ -29,12 +29,13 @@ vi.mock('../src/interface/memory.js', () => ({
   formatMemorySection: vi.fn().mockReturnValue('# Memory\n\nUser likes coffee'),
 }));
 
-// Mock users to avoid file system dependencies
-vi.mock('../src/interface/users.js', () => ({
-  loadUsersConfig: vi.fn().mockReturnValue({
-    users: [
-      { id: 'josiah', name: 'Josiah', phoneNumbers: ['+15551234567'], enabled: true },
-      { id: 'katie', name: 'Katie', phoneNumbers: ['+15559876543'], enabled: true },
+// Mock contacts to avoid file system dependencies
+vi.mock('../src/interface/contacts.js', () => ({
+  loadAddressBook: vi.fn().mockReturnValue({
+    admin: '+15551234567',
+    contacts: [
+      { name: 'Josiah', phone: '+15551234567', addedAt: 1700000000000 },
+      { name: 'Katie', phone: '+15559876543', addedAt: 1700000000000 },
     ],
   }),
 }));
@@ -71,7 +72,7 @@ function makeOptions(overrides: Partial<PromptBuilderOptions> = {}): PromptBuild
 describe('buildSystemPrompt — mode: none', () => {
   it('returns minimal identity-only prompt', () => {
     const result = buildSystemPrompt(makeOptions({ mode: 'none' }));
-    expect(result.systemPrompt).toBe('You are Tyrion, a helpful AI assistant.');
+    expect(result.systemPrompt).toBe('You are Tyrion Lannister of Casterly Rock.');
     expect(result.sections.identity).toContain('Tyrion');
     expect(result.sections.bootstrap).toBe('');
     expect(result.sections.capabilities).toBe('');
@@ -107,14 +108,8 @@ describe('buildSystemPrompt — mode: full', () => {
 
   it('includes contacts section', () => {
     const result = buildSystemPrompt(makeOptions({ mode: 'full' }));
-    expect(result.sections.contacts).toContain('Known Contacts');
+    expect(result.sections.contacts).toContain('People You Know');
     expect(result.sections.contacts).toContain('Josiah');
-    expect(result.sections.contacts).toContain('Katie');
-  });
-
-  it('excludes current user from contacts', () => {
-    const result = buildSystemPrompt(makeOptions({ mode: 'full', currentUserId: 'josiah' }));
-    expect(result.sections.contacts).not.toContain('Josiah');
     expect(result.sections.contacts).toContain('Katie');
   });
 
@@ -271,10 +266,9 @@ describe('buildSystemPrompt — context', () => {
     expect(result.sections.context).toContain('Timezone');
   });
 
-  it('includes platform info', () => {
+  it('includes location info', () => {
     const result = buildSystemPrompt(makeOptions({}));
-    expect(result.sections.context).toContain('macOS');
-    expect(result.sections.context).toContain('M4 Max');
+    expect(result.sections.context).toContain('Casterly Rock');
   });
 });
 

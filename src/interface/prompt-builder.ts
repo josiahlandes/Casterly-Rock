@@ -7,7 +7,7 @@
 import type { Skill } from '../skills/types.js';
 import { loadBootstrapFiles, formatBootstrapSection, type BootstrapConfig } from './bootstrap.js';
 import { createMemoryManager, formatMemorySection } from './memory.js';
-import { loadUsersConfig } from './users.js';
+import { loadAddressBook } from './contacts.js';
 import { safeLogger } from '../logging/safe-logger.js';
 
 export type PromptMode = 'full' | 'minimal' | 'none';
@@ -28,8 +28,6 @@ export interface PromptBuilderOptions {
   bootstrapConfig?: Partial<BootstrapConfig> | undefined;
   /** Include memory in prompt */
   includeMemory?: boolean | undefined;
-  /** Current user ID — used to build contacts roster (excludes self) */
-  currentUserId?: string | undefined;
 }
 
 export interface BuiltPrompt {
@@ -120,30 +118,26 @@ function buildSafetySection(): string {
 }
 
 /**
- * Build the contacts section from users.json
+ * Build the contacts section from the address book
  *
- * Loads all enabled users and formats them as a roster the LLM can use
+ * Loads all contacts and formats them as a roster the LLM can use
  * to resolve natural language ("text Katie") to actual phone numbers.
- * Excludes the current user since they're already in the conversation.
  */
-function buildContactsSection(currentUserId?: string): string {
+function buildContactsSection(): string {
   try {
-    const config = loadUsersConfig();
-    const contacts = config.users.filter(
-      (u) => u.enabled && u.id !== currentUserId && u.phoneNumbers.length > 0,
-    );
+    const book = loadAddressBook();
 
-    if (contacts.length === 0) {
+    if (book.contacts.length === 0) {
       return '';
     }
 
-    const roster = contacts
-      .map((u) => `- **${u.name}** (${u.id}): ${u.phoneNumbers[0]}`)
+    const roster = book.contacts
+      .map((c) => `- **${c.name}**: ${c.phone}`)
       .join('\n');
 
-    return `## Known Contacts
+    return `## People You Know
 
-When asked to message someone, use the send_message tool with their phone number.
+You can send and receive messages with these people. To message someone, use the send_message tool with their number.
 
 ${roster}`;
   } catch {
@@ -177,7 +171,7 @@ function buildContextSection(timezone?: string): string {
 - **Date**: ${dateStr}
 - **Time**: ${timeStr}
 - **Timezone**: ${tz}
-- **Platform**: macOS (local Mac Studio M4 Max)`;
+- **Location**: Casterly Rock`;
 }
 
 /**
@@ -220,14 +214,14 @@ function buildGuidelinesSection(channel: Channel): string {
  * Build the complete system prompt
  */
 export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
-  const { mode, skills, timezone, channel, workspacePath, bootstrapConfig, includeMemory = true, currentUserId } = options;
+  const { mode, skills, timezone, channel, workspacePath, bootstrapConfig, includeMemory = true } = options;
 
   // Mode: none - just identity
   if (mode === 'none') {
     return {
-      systemPrompt: 'You are Tyrion, a helpful AI assistant.',
+      systemPrompt: 'You are Tyrion Lannister of Casterly Rock.',
       sections: {
-        identity: 'You are Tyrion, a helpful AI assistant.',
+        identity: 'You are Tyrion Lannister of Casterly Rock.',
         bootstrap: '',
         capabilities: '',
         skills: '',
@@ -274,7 +268,7 @@ export function buildSystemPrompt(options: PromptBuilderOptions): BuiltPrompt {
   }
 
   // Build contacts roster (only in full mode)
-  const contactsSection = mode === 'full' ? buildContactsSection(currentUserId) : '';
+  const contactsSection = mode === 'full' ? buildContactsSection() : '';
 
   // Assemble the prompt
   const sections = [

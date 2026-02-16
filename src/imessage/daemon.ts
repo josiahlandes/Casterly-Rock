@@ -24,12 +24,13 @@ import {
   createMemoryManager,
   parseMemoryCommands,
   executeMemoryCommands,
-  loadUsersConfig,
-  findUserByPhone,
-  getAllowedPhoneNumbers,
+  loadAddressBook,
+  addContact,
+  removeContact,
+  getAllowedPhones,
+  isAdmin,
   type SessionManager,
-  type UserProfile,
-  type UsersConfig,
+  type AddressBook,
 } from '../interface/index.js';
 import { wrapError, formatErrorForUser } from '../errors/index.js';
 import { getMessagesSince, getLatestMessageRowId, type Message } from './reader.js';
@@ -79,12 +80,10 @@ import {
 
 export interface DaemonConfig {
   pollIntervalMs: number;
-  allowedSenders?: string[] | undefined;
   enableTools?: boolean | undefined;
   maxToolIterations?: number | undefined;
   workspacePath?: string | undefined;
   sessionScope?: 'main' | 'per-peer' | undefined;
-  useMultiUser?: boolean | undefined;
 }
 
 /**
@@ -99,7 +98,6 @@ async function processMessage(
     enableTools: boolean;
     maxToolIterations: number;
     workspacePath: string;
-    user?: UserProfile | undefined;
     jobStore?: JobStore | undefined;
     approvalBridge?: ApprovalBridge | undefined;
     taskManager?: TaskManager | undefined;
@@ -108,7 +106,7 @@ async function processMessage(
   }
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
-  const { enableTools, maxToolIterations, workspacePath, user, jobStore, approvalBridge, taskManager, autonomousController, modeManager } = options;
+  const { enableTools, maxToolIterations, workspacePath, jobStore, approvalBridge, taskManager, autonomousController, modeManager } = options;
 
   // ─── Autonomous commands (bypass LLM entirely) ─────────────────────
   const autonomousReply = handleAutonomousCommand(message.text, autonomousController);
@@ -129,11 +127,9 @@ async function processMessage(
   safeLogger.info('Processing incoming message', {
     from: sender.substring(0, 4) + '***',
     chatId: message.chatId.substring(0, 8) + '***',
-    user: user?.id ?? 'unknown',
   });
 
   safeLogger.info('User message', {
-    user: user?.id ?? 'unknown',
     message: message.text.substring(0, 100) + (message.text.length > 100 ? '...' : ''),
     length: message.text.length,
   });
@@ -175,7 +171,6 @@ async function processMessage(
     skills,
     channel: 'imessage',
     workspacePath,
-    currentUserId: user?.id,
   });
 
   safeLogger.info('Context assembled', {
@@ -463,7 +458,6 @@ async function processMessage(
       .trim();
 
     safeLogger.info('Final response', {
-      user: user?.id ?? 'unknown',
       response: cleanedResponse.substring(0, 200) + (cleanedResponse.length > 200 ? '...' : ''),
       length: cleanedResponse.length,
       iterations: iteration,
@@ -545,6 +539,65 @@ function handleAutonomousCommand(
   return null;
 }
 
+// ─── Admin Command Patterns ──────────────────────────────────────────────────
+
+const ADD_CONTACT_RE = /^add\s+contact\s+(\S+)\s+(\+?\d[\d\s\-().]+)$/i;
+const REMOVE_CONTACT_RE = /^remove\s+contact\s+(\S+)$/i;
+const LIST_CONTACTS_RE = /^list\s+contacts$/i;
+
+/**
+ * Try to handle the message as an admin command for contacts management.
+ * Returns the reply string if handled, or null if not an admin command.
+ * Only the admin phone can execute these commands.
+ */
+function handleAdminCommand(
+  text: string,
+  sender: string,
+  book: AddressBook,
+): string | null {
+  const trimmed = text.trim();
+
+  // Check add contact
+  const addMatch = ADD_CONTACT_RE.exec(trimmed);
+  if (addMatch) {
+    if (!isAdmin(sender, book)) return null;
+    const name = addMatch[1]!;
+    const phone = addMatch[2]!.trim();
+    try {
+      const contact = addContact(name, phone);
+      safeLogger.info('Admin: contact added', { name: contact.name, phone: contact.phone });
+      return `Contact added: ${contact.name} (${contact.phone})`;
+    } catch (error) {
+      return `Failed to add contact: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  // Check remove contact
+  const removeMatch = REMOVE_CONTACT_RE.exec(trimmed);
+  if (removeMatch) {
+    if (!isAdmin(sender, book)) return null;
+    const name = removeMatch[1]!;
+    const removed = removeContact(name);
+    if (removed) {
+      safeLogger.info('Admin: contact removed', { name });
+      return `Contact removed: ${name}`;
+    }
+    return `Contact not found: ${name}`;
+  }
+
+  // Check list contacts
+  if (LIST_CONTACTS_RE.test(trimmed)) {
+    if (!isAdmin(sender, book)) return null;
+    if (book.contacts.length === 0) {
+      return 'No contacts in address book.';
+    }
+    const lines = book.contacts.map((c) => `- ${c.name}: ${c.phone}`);
+    return `Address book (${book.contacts.length}):\n${lines.join('\n')}`;
+  }
+
+  return null;
+}
+
 /**
  * Check if a sender is allowed (if allowlist is configured)
  */
@@ -577,12 +630,10 @@ function getNextReportTime(): number {
 export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   const {
     pollIntervalMs,
-    allowedSenders: explicitAllowedSenders,
     enableTools = true,
     maxToolIterations = 5,
     workspacePath,
     sessionScope = 'per-peer',
-    useMultiUser = true,
   } = daemonConfig;
 
   // Check if Messages is available
@@ -591,35 +642,26 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     throw new Error(`iMessage not available: ${messagesCheck.error}`);
   }
 
-  // Load users configuration for multi-user mode
-  let usersConfig: UsersConfig | undefined;
-  let allowedSenders: string[] | undefined = explicitAllowedSenders;
+  // Load address book (contacts + admin)
+  let addressBook = loadAddressBook();
+  let allowedSenders = getAllowedPhones(addressBook);
 
-  if (useMultiUser) {
-    usersConfig = loadUsersConfig();
+  safeLogger.info('Address book loaded', {
+    admin: addressBook.admin ? addressBook.admin.substring(0, 4) + '***' : 'none',
+    contacts: addressBook.contacts.length,
+    allowedPhones: allowedSenders.length,
+  });
 
-    if (usersConfig.users.length > 0) {
-      allowedSenders = getAllowedPhoneNumbers(usersConfig);
-      safeLogger.info('Multi-user mode enabled', {
-        users: usersConfig.users.filter((u) => u.enabled).map((u) => u.id),
-        allowedPhones: allowedSenders.length,
-      });
-    } else {
-      safeLogger.warn('Multi-user mode enabled but no users configured in users.json');
-    }
-  }
-
-  // Find default workspace path
+  // Find workspace path (single workspace for all contacts)
   const defaultWorkspacePath = workspacePath || findWorkspacePath() || join(process.cwd(), 'workspace');
 
   safeLogger.info('iMessage daemon starting', {
     pollIntervalMs,
-    hasAllowlist: !!allowedSenders && allowedSenders.length > 0,
+    hasAllowlist: allowedSenders.length > 0,
     enableTools,
     maxToolIterations,
     defaultWorkspacePath,
     sessionScope,
-    multiUserMode: useMultiUser && usersConfig && usersConfig.users.length > 0,
   });
 
   // Load Casterly config and providers
@@ -739,17 +781,6 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   const actionableHandler: ActionableHandler = async (recipient, instruction, jobId) => {
     safeLogger.info('Actionable job: creating synthetic message', { jobId, recipient: recipient.substring(0, 4) + '***' });
 
-    // Resolve user for this recipient
-    let user: UserProfile | undefined;
-    let userWorkspacePath = defaultWorkspacePath;
-
-    if (useMultiUser && usersConfig) {
-      user = findUserByPhone(recipient, usersConfig);
-      if (user) {
-        userWorkspacePath = user.workspacePath;
-      }
-    }
-
     // Build a synthetic Message that looks like a user message
     const syntheticMessage: Message = {
       rowid: -1,  // Negative rowid signals synthetic origin
@@ -769,8 +800,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     await processMessage(syntheticMessage, providers.local, skillRegistry, sessionManager, {
       enableTools,
       maxToolIterations,
-      workspacePath: userWorkspacePath,
-      user,
+      workspacePath: defaultWorkspacePath,
       jobStore,
       approvalBridge,
       taskManager,
@@ -818,19 +848,14 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           continue;
         }
 
-        let user: UserProfile | undefined;
-        let userWorkspacePath = defaultWorkspacePath;
-
-        if (useMultiUser && usersConfig) {
-          user = findUserByPhone(sender, usersConfig);
-          if (user) {
-            userWorkspacePath = user.workspacePath;
-            safeLogger.info('Matched user', { userId: user.id, workspace: userWorkspacePath });
-          } else {
-            safeLogger.warn('No user found for allowed sender', {
-              sender: sender.substring(0, 4) + '***',
-            });
-          }
+        // ─── Admin Commands (contacts management) ──────────────────
+        const adminReply = handleAdminCommand(message.text, sender, addressBook);
+        if (adminReply !== null) {
+          // Reload address book after mutations
+          addressBook = loadAddressBook();
+          allowedSenders = getAllowedPhones(addressBook);
+          sendMessage(sender, adminReply);
+          continue;
         }
 
         // ─── Input Guard (physical pre-LLM filtering) ─────────────────
@@ -871,8 +896,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         await processMessage(message, providers.local, skillRegistry, sessionManager, {
           enableTools,
           maxToolIterations,
-          workspacePath: userWorkspacePath,
-          user,
+          workspacePath: defaultWorkspacePath,
           jobStore,
           approvalBridge,
           taskManager,

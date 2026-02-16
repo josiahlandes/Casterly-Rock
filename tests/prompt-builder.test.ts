@@ -43,7 +43,7 @@ describe('buildSystemPrompt — mode: none', () => {
       channel: 'cli',
     });
     expect(result.systemPrompt).toContain('Tyrion');
-    expect(result.systemPrompt).toContain('helpful');
+    expect(result.systemPrompt).toContain('Casterly Rock');
   });
 
   it('has empty sections except identity', () => {
@@ -117,7 +117,7 @@ describe('buildSystemPrompt — mode: full', () => {
     });
     expect(result.sections.context).toContain('Current Context');
     expect(result.sections.context).toContain('Date');
-    expect(result.sections.context).toContain('macOS');
+    expect(result.sections.context).toContain('Casterly Rock');
   });
 
   it('includes iMessage guidelines for imessage channel', () => {

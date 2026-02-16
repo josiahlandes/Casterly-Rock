@@ -34,8 +34,6 @@ export interface ContextAssemblyOptions {
   workspacePath?: string | undefined;
   /** Context config overrides */
   contextConfig?: Partial<ContextConfig> | undefined;
-  /** Current user ID — passed through to prompt builder for contacts roster */
-  currentUserId?: string | undefined;
 }
 
 export interface AssembledContext {
@@ -129,7 +127,6 @@ export function assembleContext(options: ContextAssemblyOptions): AssembledConte
     mode = 'full',
     workspacePath,
     contextConfig = {},
-    currentUserId,
   } = options;
 
   const config: ContextConfig = { ...DEFAULT_CONTEXT_CONFIG, ...contextConfig };
@@ -140,7 +137,6 @@ export function assembleContext(options: ContextAssemblyOptions): AssembledConte
     skills,
     channel,
     workspacePath,
-    currentUserId,
   };
   const { systemPrompt } = buildSystemPrompt(promptOptions);
   const systemTokens = estimateTokens(systemPrompt);
