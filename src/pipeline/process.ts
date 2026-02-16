@@ -256,16 +256,33 @@ export async function processChatMessage(
         // instead of robotic "Done. [goal]. Results: [data]" text.
         let taskResponse: string;
         try {
+          const personalityPrompt = [
+            `The user asked: "${input.text}"`,
+            '',
+            'Here are the results from running the task:',
+            handleResult.response,
+            '',
+            'Using the task results above, write a short, natural reply to the user.',
+            'Include the key data they asked for.',
+            'If any steps FAILED or had ISSUES, be honest about what did not work.',
+            'Do NOT claim something succeeded if the results say it failed.',
+            'Do NOT mention that a "task" was run — just answer them directly.',
+            'Do NOT call any tools — respond with text only.',
+          ].join('\n');
+
           const personalityPass = await provider.generateWithTools(
             {
-              prompt: `The user asked: "${input.text}"\n\nHere are the results from running the task:\n${handleResult.response}\n\nUsing the task results above, write a short, natural reply to the user. Include the key data they asked for. Do NOT mention that a "task" was run — just answer them directly.`,
+              prompt: personalityPrompt,
               systemPrompt: enrichedSystemPrompt,
-              maxTokens: 512,
+              maxTokens: 1024,
               temperature: 0.7,
             },
-            [], // no tools — just generate text
+            [], // no tools — text generation only
           );
-          taskResponse = personalityPass.text.trim();
+
+          // Use text from the personality pass; if model produced tool calls
+          // instead of text (hallucination), fall back to raw task response
+          taskResponse = personalityPass.text.trim() || handleResult.response;
         } catch (passError) {
           const passMsg = passError instanceof Error ? passError.message : String(passError);
           safeLogger.warn('Personality pass failed, using raw task response', { error: passMsg });
@@ -310,11 +327,10 @@ export async function processChatMessage(
 
   const { temperature: genTemp, num_predict: genNumPredict, ...providerSpecificOptions } = genOverrides as Record<string, unknown>;
 
-  // Dedup: prevent LLM from calling same state-changing tool with identical params
+  // Dedup: prevent LLM from repeating any tool call with identical params.
+  // Without this, the model tends to loop on read-only tools (bash, read_file)
+  // re-executing the same command every iteration instead of generating a response.
   const completedToolCalls = new Set<string>();
-  const STATE_CHANGING_TOOLS = new Set([
-    'schedule_reminder', 'cancel_reminder', 'write_file', 'send_message', 'reminder_create',
-  ]);
 
   while (iteration < maxToolIterations) {
     iteration++;
@@ -365,12 +381,10 @@ export async function processChatMessage(
     const dupCalls: typeof filteredCalls = [];
 
     for (const call of filteredCalls) {
-      if (STATE_CHANGING_TOOLS.has(call.name)) {
-        const key = `${call.name}:${JSON.stringify(call.input)}`;
-        if (completedToolCalls.has(key)) {
-          dupCalls.push(call);
-          continue;
-        }
+      const key = `${call.name}:${JSON.stringify(call.input)}`;
+      if (completedToolCalls.has(key)) {
+        dupCalls.push(call);
+        continue;
       }
       newCalls.push(call);
     }
@@ -380,6 +394,14 @@ export async function processChatMessage(
         duplicates: dupCalls.length,
         tools: dupCalls.map((c) => c.name),
       });
+
+      // If ALL calls in this iteration are duplicates, the model is looping.
+      // Use whatever text it generated (if any) and break.
+      if (newCalls.length === 0 && blockedCalls.length === 0) {
+        safeLogger.warn('All tool calls are duplicates — forcing response', { iteration });
+        finalResponse = response.text || '(I already gathered the information — let me summarize.)';
+        break;
+      }
     }
 
     // Log tool calls
@@ -399,11 +421,11 @@ export async function processChatMessage(
       const executedResults = await orchestrator.executeAll(newCalls);
       results.push(...executedResults);
 
-      // Track successful state-changing calls for dedup
+      // Track all successful calls for dedup (prevents infinite loops)
       for (let i = 0; i < newCalls.length; i++) {
         const call = newCalls[i]!;
         const result = executedResults[i];
-        if (result?.success && STATE_CHANGING_TOOLS.has(call.name)) {
+        if (result?.success) {
           const key = `${call.name}:${JSON.stringify(call.input)}`;
           completedToolCalls.add(key);
         }
