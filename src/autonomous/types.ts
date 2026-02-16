@@ -12,7 +12,8 @@ export type ObservationType =
   | 'capability_gap'
   | 'resource_concern'
   | 'test_failure'
-  | 'code_smell';
+  | 'code_smell'
+  | 'feature_request';
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 
@@ -24,7 +25,7 @@ export interface Observation {
   context: Record<string, unknown>;
   suggestedArea: string;
   timestamp: string;
-  source: 'error_logs' | 'performance_metrics' | 'test_results' | 'static_analysis';
+  source: 'error_logs' | 'performance_metrics' | 'test_results' | 'static_analysis' | 'backlog';
 }
 
 // ============================================================================
@@ -38,7 +39,8 @@ export type HypothesisApproach =
   | 'add_test'
   | 'refactor'
   | 'update_config'
-  | 'improve_docs';
+  | 'improve_docs'
+  | 'add_feature';
 
 export type Complexity = 'trivial' | 'simple' | 'moderate' | 'complex';
 
@@ -100,7 +102,7 @@ export interface ValidationResult {
 // INTEGRATION
 // ============================================================================
 
-export type IntegrationMode = 'direct' | 'pull_request';
+export type IntegrationMode = 'direct' | 'pull_request' | 'approval_required';
 
 export interface IntegrationResult {
   success: boolean;
@@ -116,7 +118,7 @@ export interface IntegrationResult {
 // REFLECTION
 // ============================================================================
 
-export type CycleOutcome = 'success' | 'failure' | 'partial' | 'skipped';
+export type CycleOutcome = 'success' | 'failure' | 'partial' | 'skipped' | 'pending_review';
 
 export interface Reflection {
   cycleId: string;
@@ -130,6 +132,34 @@ export interface Reflection {
   learnings: string;
   tokensUsed?: { input: number; output: number } | undefined;
   durationMs: number;
+}
+
+// ============================================================================
+// HANDOFF STATE
+// ============================================================================
+
+export interface PendingBranch {
+  branch: string;
+  hypothesisId: string;
+  proposal: string;
+  approach: string;
+  confidence: number;
+  impact: string;
+  filesChanged: { path: string; type: string }[];
+  validatedAt: string;
+  commitHash: string;
+}
+
+export interface HandoffState {
+  timestamp: string;
+  pendingBranches: PendingBranch[];
+  lastCycleId: string | null;
+  nightSummary: {
+    cyclesCompleted: number;
+    hypothesesAttempted: number;
+    hypothesesValidated: number;
+    tokenUsage: { input: number; output: number };
+  };
 }
 
 // ============================================================================
@@ -180,6 +210,12 @@ export interface AutonomousConfig {
   autoIntegrateThreshold: number;
   attemptThreshold: number;
 
+  // Approval (for integration_mode: approval_required)
+  approvalTimeoutMinutes: number;
+
+  // Backlog
+  backlogPath?: string | undefined;
+
   // Resource limits (Mac Studio - generous defaults)
   maxBranchAgeHours: number;
   maxConcurrentBranches: number;
@@ -217,6 +253,27 @@ export interface AnalysisContext {
   performanceMetrics: PerformanceMetric[];
   recentReflections: Reflection[];
   codebaseStats: CodebaseStats;
+  backlogItems: BacklogItem[];
+}
+
+// ============================================================================
+// BACKLOG
+// ============================================================================
+
+export type BacklogStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface BacklogItem {
+  id: string;
+  title: string;
+  description: string;
+  priority: number; // 1 (highest) to 5 (lowest)
+  approach: HypothesisApproach;
+  affectedAreas: string[];
+  acceptanceCriteria: string[];
+  status: BacklogStatus;
+  completedAt?: string | undefined;
+  completedBranch?: string | undefined;
+  failureReason?: string | undefined;
 }
 
 export interface ErrorLogEntry {

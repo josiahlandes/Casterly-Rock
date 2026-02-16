@@ -292,7 +292,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   const {
     pollIntervalMs,
     enableTools = true,
-    maxToolIterations = 5,
+    maxToolIterations = 8,
     workspacePath,
     sessionScope = 'per-peer',
   } = daemonConfig;
@@ -395,7 +395,15 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
     const autonomousConfig = await loadAutonomousConfig(autonomousConfigPath);
     const autonomousProvider = await createAutonomousProvider(autonomousConfig);
-    const autonomousLoop = new AutonomousLoop(autonomousConfig, process.cwd(), autonomousProvider);
+    const autonomousLoop = new AutonomousLoop(
+      autonomousConfig,
+      process.cwd(),
+      autonomousProvider,
+      {
+        approvalBridge,
+        approvalRecipient: allowedSenders?.[0],
+      },
+    );
 
     autonomousController = createAutonomousController({
       loop: autonomousLoop,
@@ -407,7 +415,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       interval: autonomousConfig.cycleIntervalMinutes,
     });
 
-    // Schedule daily 8am report if not already present
+    // Schedule daily 8am morning summary if not already present
     const reportJobId = 'daily-autonomous-report';
     const existingReport = jobStore.getById(reportJobId);
     if (!existingReport) {
@@ -418,15 +426,15 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         cronExpression: '0 8 * * *',
         nextFireTime: getNextReportTime(),
         recipient: allowedSenders?.[0] ?? '',
-        message: 'Generate and send the daily autonomous progress report',
-        description: 'Daily autonomous report (8am)',
+        message: 'Morning autonomous summary',
+        description: 'Morning summary of overnight autonomous work (8am)',
         createdAt: Date.now(),
         fireCount: 0,
         source: 'system',
-        label: 'autonomous-daily-report',
-        actionable: true,
+        label: 'autonomous-morning-summary',
+        actionable: true, // Short-circuited in handler — bypasses LLM
       });
-      safeLogger.info('Scheduled daily autonomous report at 8am');
+      safeLogger.info('Scheduled daily morning summary at 8am');
     }
   } catch (error) {
     safeLogger.warn('Autonomous controller not available', {
@@ -440,6 +448,23 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   // so the LLM actually executes the task (check weather, summarize emails, etc.)
   // instead of sending a static reminder string.
   const actionableHandler: ActionableHandler = async (recipient, instruction, jobId) => {
+    // Morning summary: bypass LLM, send directly from controller
+    if (jobId === 'daily-autonomous-report' && autonomousController) {
+      safeLogger.info('Morning summary: generating from handoff + reflector');
+      try {
+        const summary = await autonomousController.getMorningSummary();
+        const result = sendMessage(recipient, summary);
+        if (!result.success) {
+          safeLogger.error('Failed to send morning summary', { error: result.error });
+        }
+      } catch (error) {
+        safeLogger.error('Error generating morning summary', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return;
+    }
+
     safeLogger.info('Actionable job: creating synthetic message', { jobId, recipient: recipient.substring(0, 4) + '***' });
 
     // Build a synthetic Message that looks like a user message

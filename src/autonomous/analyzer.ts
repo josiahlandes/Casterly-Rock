@@ -9,8 +9,11 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as yaml from 'yaml';
 import type {
   AnalysisContext,
+  BacklogItem,
+  BacklogStatus,
   CodebaseStats,
   ErrorLogEntry,
   PerformanceMetric,
@@ -32,24 +35,29 @@ export class Analyzer {
   private readonly projectRoot: string;
   private readonly logsDir: string;
   private readonly reflectionsDir: string;
+  private readonly backlogPath: string;
 
-  constructor(projectRoot: string, options?: { logsDir?: string; reflectionsDir?: string }) {
+  constructor(projectRoot: string, options?: { logsDir?: string; reflectionsDir?: string; backlogPath?: string }) {
     this.projectRoot = projectRoot;
     this.logsDir = options?.logsDir || path.join(projectRoot, 'logs');
     this.reflectionsDir =
       options?.reflectionsDir ||
       path.join(process.env['HOME'] || '~', '.casterly', 'autonomous', 'reflections');
+    this.backlogPath = options?.backlogPath
+      ? (path.isAbsolute(options.backlogPath) ? options.backlogPath : path.join(projectRoot, options.backlogPath))
+      : path.join(projectRoot, 'config', 'backlog.yaml');
   }
 
   /**
    * Gather all context needed for analysis phase.
    */
   async gatherContext(): Promise<AnalysisContext> {
-    const [errorLogs, performanceMetrics, recentReflections, codebaseStats] = await Promise.all([
+    const [errorLogs, performanceMetrics, recentReflections, codebaseStats, backlogItems] = await Promise.all([
       this.parseErrorLogs(),
       this.gatherPerformanceMetrics(),
       this.loadRecentReflections(),
       this.gatherCodebaseStats(),
+      this.loadBacklog(),
     ]);
 
     return {
@@ -57,6 +65,7 @@ export class Analyzer {
       performanceMetrics,
       recentReflections,
       codebaseStats,
+      backlogItems,
     };
   }
 
@@ -96,32 +105,48 @@ export class Analyzer {
   private async parseDaemonLogs(): Promise<ErrorLogEntry[]> {
     const entries: ErrorLogEntry[] = [];
 
-    // Find today's daemon log
-    const todayParts = new Date().toISOString().split('T');
-    const today = (todayParts[0] ?? '').replace(/-/g, '');
-    const logFile = path.join(this.logsDir, `daemon-${today}.log`);
+    // Use local date (not UTC) to match how the daemon writes logs
+    const now = new Date();
+    const localYear = now.getFullYear();
+    const localMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const localDay = String(now.getDate()).padStart(2, '0');
+    const today = `${localYear}${localMonth}${localDay}`;
 
-    try {
-      const content = await fs.readFile(logFile, 'utf-8');
-      const lines = content.split('\n');
+    // Also check yesterday's log (in case of timezone edge cases)
+    const yesterday = new Date(now.getTime() - 86_400_000);
+    const yYear = yesterday.getFullYear();
+    const yMonth = String(yesterday.getMonth() + 1).padStart(2, '0');
+    const yDay = String(yesterday.getDate()).padStart(2, '0');
+    const yesterdayStr = `${yYear}${yMonth}${yDay}`;
 
-      // Pattern: [ERROR] E1001: Provider timeout
-      const errorPattern = /\[ERROR\]\s*([A-Z]\d+):\s*(.+)/;
+    const logFiles = [
+      path.join(this.logsDir, `daemon-${today}.log`),
+      path.join(this.logsDir, `daemon-${yesterdayStr}.log`),
+    ];
 
-      for (const line of lines) {
-        const match = line.match(errorPattern);
-        if (match && match[1] && match[2]) {
-          entries.push({
-            timestamp: new Date().toISOString(),
-            code: match[1],
-            message: match[2],
-            frequency: 1,
-            lastOccurrence: new Date().toISOString(),
-          });
+    // Pattern: [ERROR] E1001: Provider timeout
+    const errorPattern = /\[ERROR\]\s*([A-Z]\d+):\s*(.+)/;
+
+    for (const logFile of logFiles) {
+      try {
+        const content = await fs.readFile(logFile, 'utf-8');
+        const lines = content.split('\n');
+
+        for (const line of lines) {
+          const match = line.match(errorPattern);
+          if (match && match[1] && match[2]) {
+            entries.push({
+              timestamp: new Date().toISOString(),
+              code: match[1],
+              message: match[2],
+              frequency: 1,
+              lastOccurrence: new Date().toISOString(),
+            });
+          }
         }
+      } catch {
+        // File doesn't exist, that's fine
       }
-    } catch {
-      // File doesn't exist, that's fine
     }
 
     return entries;
@@ -320,6 +345,60 @@ export class Analyzer {
     }
 
     return stats;
+  }
+
+  // --------------------------------------------------------------------------
+  // BACKLOG
+  // --------------------------------------------------------------------------
+
+  /**
+   * Load pending backlog items, sorted by priority (1 = highest).
+   */
+  async loadBacklog(): Promise<BacklogItem[]> {
+    try {
+      const content = await fs.readFile(this.backlogPath, 'utf-8');
+      const parsed = yaml.parse(content) as { backlog?: BacklogItem[] } | null;
+      const items = parsed?.backlog ?? [];
+
+      return items
+        .filter((item) => item.status === 'pending')
+        .sort((a, b) => a.priority - b.priority);
+    } catch {
+      // File doesn't exist or is invalid — that's fine
+      return [];
+    }
+  }
+
+  /**
+   * Update the status of a backlog item in the YAML file.
+   */
+  async updateBacklogStatus(
+    itemId: string,
+    status: BacklogStatus,
+    metadata?: { branch?: string; reason?: string },
+  ): Promise<void> {
+    try {
+      const content = await fs.readFile(this.backlogPath, 'utf-8');
+      const parsed = yaml.parse(content) as { backlog?: BacklogItem[] } | null;
+      const items = parsed?.backlog ?? [];
+
+      const item = items.find((i) => i.id === itemId);
+      if (!item) return;
+
+      item.status = status;
+      if (status === 'completed') {
+        item.completedAt = new Date().toISOString();
+        item.completedBranch = metadata?.branch;
+      }
+      if (status === 'failed') {
+        item.failureReason = metadata?.reason;
+      }
+
+      const output = yaml.stringify({ backlog: items });
+      await fs.writeFile(this.backlogPath, output, 'utf-8');
+    } catch {
+      // Best-effort update — file may not exist
+    }
   }
 
   // --------------------------------------------------------------------------

@@ -31,6 +31,7 @@ import {
 } from '../interface/index.js';
 import type { Channel } from '../interface/prompt-builder.js';
 import { filterToolCalls } from '../imessage/tool-filter.js';
+import { sanitizeToolOutput } from '../security/tool-output-sanitizer.js';
 import { isAcknowledgementMessage } from '../imessage/message-utils.js';
 import {
   getSchedulerToolSchemas,
@@ -234,6 +235,11 @@ export async function processChatMessage(
   const genOverrides = getGenerationOverrides(modelProfile);
 
   // ─── Task Pipeline Gate ───────────────────────────────────────────────
+  // Task types that should use the flat tool loop instead of the static
+  // plan→run pipeline. Coding/file tasks need interactive read-then-edit
+  // flow — the planner can't populate edit_file parameters at planning time.
+  const FLAT_LOOP_TASK_TYPES = new Set(['coding', 'file_operation']);
+
   if (taskManager && enableTools) {
     try {
       const recentHistory = session.getHistory(6).map((m) => {
@@ -241,78 +247,100 @@ export async function processChatMessage(
         return `${m.role}: ${text.substring(0, 200)}`;
       });
 
-      const handleResult = await taskManager.handle(input.text, recentHistory, provider);
+      // Classify first to decide routing (cheap — single LLM call)
+      const { classifyMessage } = await import('../tasks/classifier.js');
+      const classification = await classifyMessage(input.text, recentHistory, provider);
 
-      if (handleResult.classification.taskClass !== 'conversation') {
-        safeLogger.info('Task pipeline handled message', {
-          taskClass: handleResult.classification.taskClass,
-          confidence: handleResult.classification.confidence,
-          taskType: handleResult.classification.taskType ?? 'none',
-          hasResult: !!handleResult.taskResult,
+      const taskType = classification.taskType ?? '';
+      const shouldUseFlat = FLAT_LOOP_TASK_TYPES.has(taskType);
+
+      if (classification.taskClass === 'conversation') {
+        safeLogger.info('Task classifier: conversation, using flat tool loop', {
+          confidence: classification.confidence,
         });
+        // Fall through to flat tool loop
+      } else if (shouldUseFlat) {
+        safeLogger.info('Coding/file task — routing to flat tool loop for interactive handling', {
+          taskClass: classification.taskClass,
+          taskType,
+          confidence: classification.confidence,
+        });
+        // Fall through to flat tool loop
+      } else {
+        // Non-coding task — use the full plan→execute pipeline
+        const handleResult = await taskManager.handle(input.text, recentHistory, provider);
 
-        // Pass the raw task output through the LLM with the personality
-        // system prompt so the user gets a natural, in-character response
-        // instead of robotic "Done. [goal]. Results: [data]" text.
-        let taskResponse: string;
-        try {
-          const personalityPrompt = [
-            `The user asked: "${input.text}"`,
-            '',
-            'Here are the results from running the task:',
-            handleResult.response,
-            '',
-            'Using the task results above, write a short, natural reply to the user.',
-            'Include the key data they asked for.',
-            'If any steps FAILED or had ISSUES, be honest about what did not work.',
-            'Do NOT claim something succeeded if the results say it failed.',
-            'Do NOT mention that a "task" was run — just answer them directly.',
-            'Do NOT call any tools — respond with text only.',
-          ].join('\n');
+        if (handleResult.classification.taskClass !== 'conversation') {
+          safeLogger.info('Task pipeline handled message', {
+            taskClass: handleResult.classification.taskClass,
+            confidence: handleResult.classification.confidence,
+            taskType: handleResult.classification.taskType ?? 'none',
+            hasResult: !!handleResult.taskResult,
+          });
 
-          const personalityPass = await provider.generateWithTools(
-            {
-              prompt: personalityPrompt,
-              systemPrompt: enrichedSystemPrompt,
-              maxTokens: 1024,
-              temperature: 0.7,
-            },
-            [], // no tools — text generation only
-          );
+          // Pass the raw task output through the LLM with the personality
+          // system prompt so the user gets a natural, in-character response
+          // instead of robotic "Done. [goal]. Results: [data]" text.
+          let taskResponse: string;
+          try {
+            const personalityPrompt = [
+              `The user asked: "${input.text}"`,
+              '',
+              'Here are the results from running the task:',
+              handleResult.response,
+              '',
+              'Using the task results above, write a short, natural reply to the user.',
+              'Include the key data they asked for.',
+              'If any steps FAILED or had ISSUES, be honest about what did not work.',
+              'Do NOT claim something succeeded if the results say it failed.',
+              'Do NOT mention that a "task" was run — just answer them directly.',
+              'Do NOT call any tools — respond with text only.',
+            ].join('\n');
 
-          // Use text from the personality pass; if model produced tool calls
-          // instead of text (hallucination), fall back to raw task response
-          taskResponse = personalityPass.text.trim() || handleResult.response;
-        } catch (passError) {
-          const passMsg = passError instanceof Error ? passError.message : String(passError);
-          safeLogger.warn('Personality pass failed, using raw task response', { error: passMsg });
-          taskResponse = handleResult.response;
+            const personalityPass = await provider.generateWithTools(
+              {
+                prompt: personalityPrompt,
+                systemPrompt: enrichedSystemPrompt,
+                maxTokens: 1024,
+                temperature: 0.7,
+              },
+              [], // no tools — text generation only
+            );
+
+            // Use text from the personality pass; if model produced tool calls
+            // instead of text (hallucination), fall back to raw task response
+            taskResponse = personalityPass.text.trim() || handleResult.response;
+          } catch (passError) {
+            const passMsg = passError instanceof Error ? passError.message : String(passError);
+            safeLogger.warn('Personality pass failed, using raw task response', { error: passMsg });
+            taskResponse = handleResult.response;
+          }
+
+          taskResponse = applyResponseHints(taskResponse, modelProfile);
+          taskResponse = taskResponse
+            .replace(/```bash[\s\S]*?```/g, '')
+            .replace(/```sh[\s\S]*?```/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
+          const finalTaskResponse = taskResponse || 'Done!';
+          session.addMessage({ role: 'assistant', content: finalTaskResponse });
+
+          return {
+            response: finalTaskResponse,
+            iterations: 0,
+            toolCallsMade: [],
+            taskPipelineUsed: true,
+            taskClass: handleResult.classification.taskClass,
+            modelProfile: modelProfile.modelId,
+            estimatedTokens: assembled.estimatedTokens,
+          };
         }
 
-        taskResponse = applyResponseHints(taskResponse, modelProfile);
-        taskResponse = taskResponse
-          .replace(/```bash[\s\S]*?```/g, '')
-          .replace(/```sh[\s\S]*?```/g, '')
-          .replace(/\n{3,}/g, '\n\n')
-          .trim();
-
-        const finalTaskResponse = taskResponse || 'Done!';
-        session.addMessage({ role: 'assistant', content: finalTaskResponse });
-
-        return {
-          response: finalTaskResponse,
-          iterations: 0,
-          toolCallsMade: [],
-          taskPipelineUsed: true,
-          taskClass: handleResult.classification.taskClass,
-          modelProfile: modelProfile.modelId,
-          estimatedTokens: assembled.estimatedTokens,
-        };
+        safeLogger.info('Task classifier (via handle): conversation, using flat tool loop', {
+          confidence: handleResult.classification.confidence,
+        });
       }
-
-      safeLogger.info('Task classifier: conversation, using flat tool loop', {
-        confidence: handleResult.classification.confidence,
-      });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       safeLogger.warn('Task pipeline error, falling back to flat tool loop', { error: errorMsg });
@@ -331,6 +359,7 @@ export async function processChatMessage(
   // Without this, the model tends to loop on read-only tools (bash, read_file)
   // re-executing the same command every iteration instead of generating a response.
   const completedToolCalls = new Set<string>();
+  let allDupLastIteration = false;
 
   while (iteration < maxToolIterations) {
     iteration++;
@@ -396,11 +425,19 @@ export async function processChatMessage(
       });
 
       // If ALL calls in this iteration are duplicates, the model is looping.
-      // Use whatever text it generated (if any) and break.
+      // Give it one more chance: send back error messages telling it to respond.
+      // If it loops again on the next iteration, then hard-break.
       if (newCalls.length === 0 && blockedCalls.length === 0) {
-        safeLogger.warn('All tool calls are duplicates — forcing response', { iteration });
-        finalResponse = response.text || '(I already gathered the information — let me summarize.)';
-        break;
+        if (allDupLastIteration) {
+          // Two consecutive all-dup iterations — hard break
+          safeLogger.warn('Consecutive all-duplicate iterations — forcing response', { iteration });
+          finalResponse = response.text || '';
+          break;
+        }
+        allDupLastIteration = true;
+        safeLogger.warn('All tool calls are duplicates — nudging model to respond', { iteration });
+      } else {
+        allDupLastIteration = false;
       }
     }
 
@@ -448,7 +485,7 @@ export async function processChatMessage(
       results.push({
         toolCallId: dupCall.id,
         success: false,
-        error: 'Already completed — this action was already performed successfully. Compose your final text response to the user.',
+        error: 'STOP: This exact tool call was already completed successfully. Do NOT call any more tools. Write your final text response to the user NOW.',
       });
     }
 
@@ -481,12 +518,31 @@ export async function processChatMessage(
       })),
     });
 
-    // Set up for next iteration
-    previousResults = results.map((r) => ({
-      callId: r.toolCallId,
-      result: r.success ? (r.output ?? 'Success') : `Error: ${r.error}`,
-      isError: !r.success,
-    }));
+    // Set up for next iteration — sanitize tool outputs before they re-enter the LLM context
+    previousResults = results.map((r) => {
+      if (!r.success) {
+        return {
+          callId: r.toolCallId,
+          result: `Error: ${r.error}`,
+          isError: true,
+        };
+      }
+
+      // Find the tool name for this result so we can apply appropriate sanitization
+      const matchingCall = [...newCalls, ...dupCalls, ...blockedCalls]
+        .find((c) => c.id === r.toolCallId);
+      const toolName = matchingCall?.name ?? 'unknown';
+      const rawOutput = r.output ?? 'Success';
+
+      // Sanitize: fences web content, strips injection patterns, flags suspicious output
+      const sanitized = sanitizeToolOutput(toolName, rawOutput);
+
+      return {
+        callId: r.toolCallId,
+        result: sanitized.output,
+        isError: false,
+      };
+    });
 
     // Include any text from response
     if (response.text) {
@@ -496,7 +552,47 @@ export async function processChatMessage(
 
   if (iteration >= maxToolIterations) {
     safeLogger.warn('Max tool iterations reached', { maxToolIterations });
-    finalResponse += '\n\n(Reached maximum tool execution limit)';
+  }
+
+  // ─── Summary Pass ────────────────────────────────────────────────────
+  // If the model completed tool calls but never generated text, synthesize
+  // a response from the tool history. Common with local models that don't
+  // reliably transition from tool-calling to text generation.
+  if (!finalResponse.trim() && toolCallsMade.length > 0) {
+    try {
+      const toolSummary = toolCallsMade
+        .map((tc) => `- ${tc.name}: ${tc.success ? 'success' : 'failed'} — ${tc.inputPreview.substring(0, 100)}`)
+        .join('\n');
+
+      const summaryPrompt = [
+        `The user asked: "${input.text}"`,
+        '',
+        'You used these tools to handle the request:',
+        toolSummary,
+        '',
+        'Write a short, natural reply summarizing what you did.',
+        'Do NOT call any tools — respond with text only.',
+      ].join('\n');
+
+      const summaryPass = await provider.generateWithTools(
+        {
+          prompt: summaryPrompt,
+          systemPrompt: enrichedSystemPrompt,
+          maxTokens: 512,
+          temperature: 0.7,
+        },
+        [], // no tools — text only
+      );
+
+      finalResponse = summaryPass.text.trim();
+      safeLogger.info('Summary pass generated response', {
+        length: finalResponse.length,
+        toolCallsCompleted: toolCallsMade.length,
+      });
+    } catch (summaryError) {
+      const msg = summaryError instanceof Error ? summaryError.message : String(summaryError);
+      safeLogger.warn('Summary pass failed', { error: msg });
+    }
   }
 
   // ─── Response Cleanup ─────────────────────────────────────────────────

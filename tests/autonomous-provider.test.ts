@@ -106,7 +106,7 @@ describe('BaseAutonomousProvider — token tracking', () => {
 
   it('accumulates token usage across calls', async () => {
     const provider = new TestProvider(makeConfig() as never);
-    await provider.analyze({ errorLogs: [], performanceMetrics: [], recentReflections: [], codebaseStats: { totalFiles: 0, totalLines: 0, lintErrors: 0, typeErrors: 0, lastCommit: '' } });
+    await provider.analyze({ errorLogs: [], performanceMetrics: [], recentReflections: [], codebaseStats: { totalFiles: 0, totalLines: 0, lintErrors: 0, typeErrors: 0, lastCommit: '' }, backlogItems: [] });
     await provider.hypothesize([]);
 
     const usage = provider.getTokenUsage();
@@ -116,7 +116,7 @@ describe('BaseAutonomousProvider — token tracking', () => {
 
   it('resets token usage', async () => {
     const provider = new TestProvider(makeConfig() as never);
-    await provider.analyze({ errorLogs: [], performanceMetrics: [], recentReflections: [], codebaseStats: { totalFiles: 0, totalLines: 0, lintErrors: 0, typeErrors: 0, lastCommit: '' } });
+    await provider.analyze({ errorLogs: [], performanceMetrics: [], recentReflections: [], codebaseStats: { totalFiles: 0, totalLines: 0, lintErrors: 0, typeErrors: 0, lastCommit: '' }, backlogItems: [] });
     provider.resetTokenUsage();
     const usage = provider.getTokenUsage();
     expect(usage.input).toBe(0);

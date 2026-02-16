@@ -214,12 +214,17 @@ Review the following context and identify observations (issues, patterns, or opp
 ## Codebase Stats
 {{codebaseStats}}
 
+## Feature Backlog (owner-requested work)
+{{backlog}}
+
 For each observation, provide:
-1. type: error_pattern | performance_issue | capability_gap | resource_concern | test_failure | code_smell
+1. type: error_pattern | performance_issue | capability_gap | resource_concern | test_failure | code_smell | feature_request
 2. severity: low | medium | high | critical
 3. frequency: how often this occurs
 4. context: relevant details
 5. suggestedArea: which part of the codebase to look at
+
+Backlog items with high priority (1-2) represent deliberate owner requests. Generate feature_request observations for them with source: 'backlog' and include the backlog item id in the context field as backlogId.
 
 Return observations as JSON array. Focus on actionable issues that can be fixed programmatically.`,
 
@@ -230,7 +235,7 @@ Based on these observations:
 
 Generate hypotheses for how to address them. For each hypothesis:
 1. proposal: clear description of what to change
-2. approach: fix_bug | optimize_performance | add_tool | add_test | refactor | update_config | improve_docs
+2. approach: fix_bug | optimize_performance | add_tool | add_test | refactor | update_config | improve_docs | add_feature
 3. expectedImpact: low | medium | high
 4. confidence: 0-1 (how confident you are this will work)
 5. affectedFiles: list of files that would need changes

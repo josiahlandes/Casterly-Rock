@@ -14,6 +14,7 @@ import { Analyzer } from './analyzer.js';
 import { GitOperations } from './git.js';
 import { Validator, buildInvariants } from './validator.js';
 import { Reflector, type MemoryEntry } from './reflector.js';
+import type { ApprovalBridge } from '../approval/index.js';
 import type {
   AutonomousConfig,
   CycleMetrics,
@@ -21,6 +22,7 @@ import type {
   Hypothesis,
   Implementation,
   Observation,
+  PendingBranch,
 } from './types.js';
 
 // ============================================================================
@@ -34,6 +36,14 @@ const CYCLE_ID_PREFIX = 'cycle';
 // AUTONOMOUS LOOP
 // ============================================================================
 
+/** Options for wiring the loop into the daemon */
+export interface LoopOptions {
+  /** Approval bridge for integration_mode: approval_required */
+  approvalBridge?: ApprovalBridge | undefined;
+  /** iMessage recipient for approval requests (owner's phone or Apple ID) */
+  approvalRecipient?: string | undefined;
+}
+
 export class AutonomousLoop {
   private readonly config: AutonomousConfig;
   private readonly projectRoot: string;
@@ -42,27 +52,36 @@ export class AutonomousLoop {
   private readonly git: GitOperations;
   private readonly validator: Validator;
   private readonly reflector: Reflector;
+  private readonly approvalBridge?: ApprovalBridge | undefined;
+  private readonly approvalRecipient?: string | undefined;
 
   private cycleCount: number = 0;
   private dailyCycleCount: number = 0;
   private lastResetDate: string = '';
   private running: boolean = false;
+  private readonly _pendingBranches: PendingBranch[] = [];
 
   /** Exposed for daemon-controlled mode (controller.ts) */
   get reflectorInstance(): Reflector { return this.reflector; }
   get configInstance(): AutonomousConfig { return this.config; }
   get gitInstance(): GitOperations { return this.git; }
+  get pendingBranchList(): PendingBranch[] { return [...this._pendingBranches]; }
 
   constructor(
     config: AutonomousConfig,
     projectRoot: string,
-    provider: AutonomousProvider
+    provider: AutonomousProvider,
+    options?: LoopOptions,
   ) {
     this.config = config;
     this.projectRoot = projectRoot;
     this.provider = provider;
+    this.approvalBridge = options?.approvalBridge;
+    this.approvalRecipient = options?.approvalRecipient;
 
-    this.analyzer = new Analyzer(projectRoot);
+    this.analyzer = new Analyzer(projectRoot, config.backlogPath ? {
+      backlogPath: config.backlogPath,
+    } : undefined);
     this.git = new GitOperations(projectRoot, config.git);
     this.validator = new Validator(projectRoot, {
       invariants: buildInvariants(config),
@@ -221,6 +240,25 @@ export class AutonomousLoop {
         return;
       }
 
+      // Priority sort: backlog P1-P2 items first, then by confidence * impact
+      const impactScore: Record<string, number> = { low: 1, medium: 2, high: 3 };
+      viableHypotheses.sort((a, b) => {
+        const aIsBacklogHighPri =
+          a.observation.source === 'backlog' &&
+          ((a.observation.context['priority'] as number) ?? 5) <= 2;
+        const bIsBacklogHighPri =
+          b.observation.source === 'backlog' &&
+          ((b.observation.context['priority'] as number) ?? 5) <= 2;
+
+        if (aIsBacklogHighPri && !bIsBacklogHighPri) return -1;
+        if (!aIsBacklogHighPri && bIsBacklogHighPri) return 1;
+
+        return (
+          b.confidence * (impactScore[b.expectedImpact] ?? 1) -
+          a.confidence * (impactScore[a.expectedImpact] ?? 1)
+        );
+      });
+
       // 3. ATTEMPT HYPOTHESES
       const maxAttempts = Math.min(viableHypotheses.length, this.config.maxAttemptsPerCycle);
 
@@ -352,12 +390,58 @@ export class AutonomousLoop {
 
         // Reflect on failure
         await this.reflectAndSave(cycleId, hypothesis, implementation, validation.errors, outcome, false);
+
+        // Mark backlog item as failed if applicable
+        if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
+          await this.analyzer.updateBacklogStatus(
+            hypothesis.observation.context['backlogId'] as string,
+            'failed',
+            { reason: validation.errors.join('; ') },
+          );
+        }
         return false;
       }
 
       this.log('Validation passed!', 'INFO');
 
-      // Integrate
+      // Pending review (for integration_mode: approval_required)
+      // Branch stays alive for owner to review at their leisure.
+      // No blocking wait, no timeout, no auto-revert.
+      if (this.config.git.integrationMode === 'approval_required') {
+        outcome = 'pending_review';
+        this.log(`Branch ${branch} validated and pushed — awaiting owner review`, 'INFO');
+
+        // Record pending branch for handoff
+        this._pendingBranches.push({
+          branch,
+          hypothesisId: hypothesis.id,
+          proposal: hypothesis.proposal,
+          approach: hypothesis.approach,
+          confidence: hypothesis.confidence,
+          impact: hypothesis.expectedImpact,
+          filesChanged: implementation.changes.map((c) => ({ path: c.path, type: c.type })),
+          validatedAt: new Date().toISOString(),
+          commitHash: implementation.commitHash ?? '',
+        });
+
+        // Reflect on pending_review
+        await this.reflectAndSave(cycleId, hypothesis, implementation, [], outcome, false);
+
+        // Mark backlog item as completed if applicable
+        if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
+          await this.analyzer.updateBacklogStatus(
+            hypothesis.observation.context['backlogId'] as string,
+            'completed',
+            { branch },
+          );
+        }
+
+        // Return to base branch for next hypothesis
+        await this.git.checkoutBase();
+        return true; // Counted as success (validation passed)
+      }
+
+      // Integrate (for direct or pull_request modes)
       this.log('Integrating changes...', 'INFO');
       const integrationResult = await this.git.integrate(branch);
 
@@ -385,6 +469,15 @@ export class AutonomousLoop {
 
       // Reflect on success
       await this.reflectAndSave(cycleId, hypothesis, implementation, [], outcome, true);
+
+      // Mark backlog item as completed if applicable
+      if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
+        await this.analyzer.updateBacklogStatus(
+          hypothesis.observation.context['backlogId'] as string,
+          'completed',
+          { branch: branch ?? undefined },
+        );
+      }
 
       // Add to MEMORY.md if significant
       if (hypothesis.expectedImpact === 'high' || hypothesis.confidence >= 0.9) {
@@ -422,6 +515,57 @@ export class AutonomousLoop {
   }
 
   /**
+   * Request owner approval via iMessage before merging.
+   * Returns true if approved, false if denied or timed out.
+   *
+   * If no approval bridge is configured, logs a warning and returns false
+   * (safety: never auto-merge when approval_required but bridge is missing).
+   */
+  private async requestApproval(
+    hypothesis: Hypothesis,
+    implementation: Implementation,
+    branch: string,
+  ): Promise<boolean> {
+    if (!this.approvalBridge || !this.approvalRecipient) {
+      this.log(
+        'integration_mode is approval_required but no approval bridge or recipient configured — denying by default',
+        'WARN'
+      );
+      return false;
+    }
+
+    // Build human-readable summary
+    const filesChanged = implementation.changes
+      .map((c) => `  - ${c.path} (${c.type})`)
+      .join('\n');
+
+    const summary = [
+      'Autonomous improvement ready for review:',
+      '',
+      `Hypothesis: ${hypothesis.proposal}`,
+      `Approach: ${hypothesis.approach}`,
+      `Confidence: ${hypothesis.confidence.toFixed(2)} | Impact: ${hypothesis.expectedImpact}`,
+      `Branch: ${branch}`,
+      '',
+      'Files changed:',
+      filesChanged,
+      '',
+      'Validation: All quality gates passed',
+      '',
+      `Reply "yes" to merge to main, or "no" to discard.`,
+      `(Auto-denied in ${this.config.approvalTimeoutMinutes} minutes)`,
+    ].join('\n');
+
+    this.log('Sending approval request to owner...', 'INFO');
+
+    // Use the approval bridge to request + wait
+    const request = this.approvalBridge.requestApproval(summary, this.approvalRecipient);
+    const approved = await this.approvalBridge.waitForApproval(request.id);
+
+    return approved;
+  }
+
+  /**
    * Reflect on a hypothesis attempt and save the reflection.
    */
   private async reflectAndSave(
@@ -438,7 +582,7 @@ export class AutonomousLoop {
         observation: hypothesis.observation,
         hypothesis,
         implementation,
-        validationPassed: outcome === 'success',
+        validationPassed: outcome === 'success' || outcome === 'pending_review',
         validationErrors: errors,
         integrated,
         outcome,
@@ -514,6 +658,8 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
     forbiddenPatterns: raw.autonomous?.forbidden_patterns ?? ['**/*.env*', '**/secrets*'],
     autoIntegrateThreshold: raw.autonomous?.auto_integrate_threshold ?? 0.9,
     attemptThreshold: raw.autonomous?.attempt_threshold ?? 0.5,
+    approvalTimeoutMinutes: raw.git?.approval_timeout_minutes ?? 10,
+    backlogPath: raw.autonomous?.backlog_path ?? 'config/backlog.yaml',
     maxBranchAgeHours: raw.autonomous?.max_branch_age_hours ?? 24,
     maxConcurrentBranches: raw.autonomous?.max_concurrent_branches ?? 3,
     sandboxTimeoutSeconds: raw.autonomous?.sandbox_timeout_seconds ?? 300,
@@ -522,7 +668,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
       remote: raw.git?.remote ?? 'origin',
       baseBranch: raw.git?.base_branch ?? 'main',
       branchPrefix: raw.git?.branch_prefix ?? 'auto/',
-      integrationMode: raw.git?.integration_mode ?? 'direct',
+      integrationMode: raw.git?.integration_mode ?? 'approval_required',
       pullRequest: raw.git?.pull_request
         ? {
             autoMerge: raw.git.pull_request.auto_merge ?? true,

@@ -7,12 +7,28 @@
  * Key design: we never call AutonomousLoop.start() (blocking). Instead the
  * daemon calls tick() every poll interval, which calls runCycle() once when
  * the cycle interval has elapsed and the loop is enabled.
+ *
+ * Handoff: when the work window closes (6am) or a cycle completes with
+ * pending branches, a handoff file is written to persist overnight state.
+ * The 8am morning summary reads this handoff to report pending work.
  */
 
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import { safeLogger } from '../logging/safe-logger.js';
 import { AutonomousLoop, AbortError } from './loop.js';
 import type { Reflector } from './reflector.js';
-import { formatDailyReport } from './report.js';
+import { formatDailyReport, formatMorningSummary } from './report.js';
+import type { AutonomousConfig, HandoffState } from './types.js';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const HANDOFF_PATH = path.join(
+  process.env['HOME'] || '~',
+  '.casterly', 'autonomous', 'handoff.json'
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PUBLIC TYPES
@@ -40,6 +56,12 @@ export interface AutonomousController {
   getStatus(): AutonomousStatus;
   /** Generate a formatted daily report string. */
   getDailyReport(): Promise<string>;
+  /** Generate an 8am morning summary with handoff state. */
+  getMorningSummary(): Promise<string>;
+  /** Write the handoff file (pending branches + night summary). */
+  writeHandoff(): Promise<void>;
+  /** Read the current handoff file, or null if none exists. */
+  getHandoff(): Promise<HandoffState | null>;
   /** Whether autonomous mode is enabled. */
   readonly enabled: boolean;
   /** Whether a cycle is currently executing. */
@@ -73,6 +95,7 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
   let totalCycles = 0;
   let successfulCycles = 0;
   let lastCycleAt: string | null = null;
+  let wasInWorkWindow = false;
 
   // Access the reflector through the loop's public getter
   const reflector: Reflector = loop.reflectorInstance;
@@ -83,6 +106,7 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
   function start(): void {
     if (enabled) return;
     enabled = true;
+    wasInWorkWindow = isInWorkWindow(loop.configInstance);
     safeLogger.info('Autonomous mode enabled');
   }
 
@@ -120,7 +144,23 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
   // ─── tick ───────────────────────────────────────────────────────────────
 
   async function tick(): Promise<void> {
-    if (!enabled || busy) return;
+    if (!enabled) return;
+
+    // Detect work-window transition (night → day) and write handoff
+    const inWorkWindow = isInWorkWindow(loop.configInstance);
+    if (wasInWorkWindow && !inWorkWindow) {
+      safeLogger.info('Work window closed — writing handoff');
+      try {
+        await writeHandoff();
+      } catch (error) {
+        safeLogger.error('Failed to write handoff on window close', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    wasInWorkWindow = inWorkWindow;
+
+    if (busy) return;
 
     // Respect the cycle interval
     const timeSinceLast = Date.now() - lastCycleEnd;
@@ -137,6 +177,11 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
       successfulCycles++;
       lastCycleAt = new Date().toISOString();
       safeLogger.info('Autonomous: cycle completed');
+
+      // Write handoff after each cycle if there are pending branches
+      if (loop.pendingBranchList.length > 0) {
+        await writeHandoff();
+      }
     } catch (error) {
       totalCycles++;
 
@@ -188,6 +233,49 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     return formatDailyReport(stats, reflections);
   }
 
+  // ─── getMorningSummary ──────────────────────────────────────────────────
+
+  async function getMorningSummary(): Promise<string> {
+    const handoff = await getHandoff();
+    const stats = await reflector.getStatistics(1);
+    const reflections = await reflector.loadRecentReflections(20);
+    return formatMorningSummary(stats, reflections, handoff);
+  }
+
+  // ─── writeHandoff ──────────────────────────────────────────────────────
+
+  async function writeHandoff(): Promise<void> {
+    const pending = loop.pendingBranchList;
+    const stats = await reflector.getStatistics(1);
+
+    const handoff: HandoffState = {
+      timestamp: new Date().toISOString(),
+      pendingBranches: pending,
+      lastCycleId: lastCycleAt,
+      nightSummary: {
+        cyclesCompleted: totalCycles,
+        hypothesesAttempted: stats.totalCycles > 0 ? stats.totalCycles : 0,
+        hypothesesValidated: pending.length,
+        tokenUsage: stats.totalTokensUsed,
+      },
+    };
+
+    await fs.mkdir(path.dirname(HANDOFF_PATH), { recursive: true });
+    await fs.writeFile(HANDOFF_PATH, JSON.stringify(handoff, null, 2), 'utf-8');
+    safeLogger.info('Handoff file written', { pendingBranches: pending.length });
+  }
+
+  // ─── getHandoff ─────────────────────────────────────────────────────────
+
+  async function getHandoff(): Promise<HandoffState | null> {
+    try {
+      const content = await fs.readFile(HANDOFF_PATH, 'utf-8');
+      return JSON.parse(content) as HandoffState;
+    } catch {
+      return null;
+    }
+  }
+
   // ─── controller object ──────────────────────────────────────────────────
 
   return {
@@ -197,12 +285,40 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     tick,
     getStatus,
     getDailyReport,
+    getMorningSummary,
+    writeHandoff,
+    getHandoff,
     get enabled() { return enabled; },
     get busy() { return busy; },
   };
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Check if the current time is within the work window (outside quiet hours).
+ * Returns true if the loop should be working, false if in quiet hours.
+ */
+export function isInWorkWindow(config: AutonomousConfig): boolean {
+  if (!config.quietHours?.enabled) return true;
+
+  const now = new Date();
+  const currentTime = now.getHours() * 60 + now.getMinutes();
+
+  const startParts = config.quietHours.start.split(':').map(Number);
+  const endParts = config.quietHours.end.split(':').map(Number);
+  const startTime = (startParts[0] ?? 0) * 60 + (startParts[1] ?? 0);
+  const endTime = (endParts[0] ?? 0) * 60 + (endParts[1] ?? 0);
+
+  // Quiet hours: startTime <= currentTime < endTime
+  // Work window = NOT in quiet hours
+  if (currentTime >= startTime && currentTime < endTime) {
+    return false; // In quiet hours = not working
+  }
+  return true;
+}
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.round(ms / 1000);
