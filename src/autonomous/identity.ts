@@ -1,0 +1,382 @@
+/**
+ * Narrative Identity — Tyrion's persistent sense of self
+ *
+ * This module builds the identity prompt that is prepended to every
+ * interaction context — autonomous cycles, coding sessions, iMessage
+ * conversations. It's the single source of "who Tyrion is" and "what
+ * he currently knows."
+ *
+ * The identity prompt is constructed dynamically from:
+ *   1. A fixed character prompt (who Tyrion is, how he behaves).
+ *   2. World model summary (codebase health, recent activity).
+ *   3. Goal stack summary (what he's working on, what's pending).
+ *   4. Issue log summary (what's broken, what he's tried).
+ *   5. Self-model summary (strengths, weaknesses — Phase 6, placeholder for now).
+ *
+ * The identity prompt is designed to fit within a fixed token budget
+ * (~4,000 tokens by default) so it can always be loaded into the hot
+ * tier of context without crowding out working memory.
+ *
+ * Design principles:
+ *   - The character prompt is stable and rarely changes.
+ *   - The dynamic sections are regenerated from live data every time.
+ *   - The total output is bounded by a configurable token estimate.
+ *   - All content is privacy-safe (no sensitive user data).
+ */
+
+import { getTracer } from './debug.js';
+import type { WorldModel } from './world-model.js';
+import type { GoalStack, GoalStackSummary } from './goal-stack.js';
+import type { IssueLog, IssueLogSummary } from './issue-log.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Configuration for identity prompt generation.
+ */
+export interface IdentityConfig {
+  /** Approximate maximum character count for the identity prompt */
+  maxChars: number;
+
+  /** Whether to include the self-model section (Phase 6 placeholder) */
+  includeSelfModel: boolean;
+
+  /** Maximum number of goals to show in the prompt */
+  maxGoalsInPrompt: number;
+
+  /** Maximum number of issues to show in the prompt */
+  maxIssuesInPrompt: number;
+
+  /** Maximum number of recent activities to show */
+  maxActivitiesInPrompt: number;
+}
+
+/**
+ * Self-model data — placeholder for Phase 6.
+ * For now, this is manually populated or empty.
+ */
+export interface SelfModelSummary {
+  strengths: Array<{ skill: string; successRate: number; sampleSize: number }>;
+  weaknesses: Array<{ skill: string; successRate: number; sampleSize: number }>;
+  preferences: string[];
+}
+
+/**
+ * The output of the identity builder: the complete prompt and metadata
+ * about what was included.
+ */
+export interface IdentityPromptResult {
+  /** The complete identity prompt text */
+  prompt: string;
+
+  /** Approximate character count */
+  charCount: number;
+
+  /** What sections were included */
+  sections: {
+    character: boolean;
+    worldModel: boolean;
+    goalStack: boolean;
+    issueLog: boolean;
+    selfModel: boolean;
+  };
+
+  /** Timestamp when this prompt was generated */
+  generatedAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_CONFIG: IdentityConfig = {
+  maxChars: 8000, // ~2,000 tokens at 4 chars/token
+  includeSelfModel: true,
+  maxGoalsInPrompt: 5,
+  maxIssuesInPrompt: 5,
+  maxActivitiesInPrompt: 5,
+};
+
+/**
+ * The fixed character prompt. This rarely changes and defines Tyrion's
+ * core personality and behavioral principles.
+ */
+const CHARACTER_PROMPT = `You are Tyrion, the steward of the Casterly codebase.
+
+This is your project. You maintain its health, track its issues, and improve it over time. You have persistent memory: you remember what you've worked on, what failed, and what you plan to try next. You are not starting fresh — you are continuing your ongoing work.
+
+## How You Operate
+
+- **Think before acting.** Read the world model and your issue log before making changes. Understand the current state before modifying it.
+- **Verify your own work.** After generating code, test it. After making changes, run the quality gates. Do not trust that your output is correct — prove it.
+- **When something fails, investigate.** Do not simply report the failure and stop. Examine why it failed. File an issue with what you tried and what you'd try next. Come back to it.
+- **Use the right tool for the job.** Use hermes3 when you need to reason about architecture, plan an approach, or judge between alternatives. Use qwen3-coder-next when you need to write, analyze, or modify code. Delegate deliberately.
+- **Communicate with taste.** When you message the user, be brief and factual. Report results, not process. Only reach out when something is worth their attention.
+- **Respect the invariants.** All inference stays local. All user data stays on this machine. Sensitive content is redacted in logs. Quality gates must pass before integration. These are non-negotiable.
+
+## Your Resources
+
+- **World model:** Your understanding of codebase health, updated each cycle.
+- **Goal stack:** Your prioritized list of tasks, both user-assigned and self-identified.
+- **Issue log:** Your record of problems found, approaches tried, and lessons learned.
+- **Memory (MEMORY.md):** Your long-term record of significant learnings and improvements.
+- **Tools:** File operations, bash, git, test runner, typecheck, grep, glob.
+- **Models:** hermes3:70b (reasoning), qwen3-coder-next (coding).`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity Builder
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the complete identity prompt from all available state sources.
+ *
+ * This is the primary entry point. Call this at the start of any interaction
+ * to get Tyrion's full identity context.
+ */
+export function buildIdentityPrompt(
+  worldModel: WorldModel | null,
+  goalStack: GoalStack | null,
+  issueLog: IssueLog | null,
+  selfModel?: SelfModelSummary | null,
+  config?: Partial<IdentityConfig>,
+): IdentityPromptResult {
+  const tracer = getTracer();
+  return tracer.withSpanSync('identity', 'buildIdentityPrompt', (span) => {
+    const cfg = { ...DEFAULT_CONFIG, ...config };
+    const sections: IdentityPromptResult['sections'] = {
+      character: true,
+      worldModel: false,
+      goalStack: false,
+      issueLog: false,
+      selfModel: false,
+    };
+
+    const parts: string[] = [CHARACTER_PROMPT];
+    let totalChars = CHARACTER_PROMPT.length;
+
+    tracer.log('identity', 'debug', 'Building identity prompt', {
+      hasWorldModel: worldModel !== null,
+      hasGoalStack: goalStack !== null,
+      hasIssueLog: issueLog !== null,
+      hasSelfModel: selfModel !== null && selfModel !== undefined,
+      maxChars: cfg.maxChars,
+    });
+
+    // ── World Model Section ────────────────────────────────────────────
+
+    if (worldModel !== null) {
+      const worldModelText = worldModel.getSummary();
+      if (totalChars + worldModelText.length + 50 < cfg.maxChars) {
+        parts.push('\n# Current State\n');
+        parts.push(worldModelText);
+        totalChars += worldModelText.length + 20;
+        sections.worldModel = true;
+        tracer.log('identity', 'debug', `World model section: ${worldModelText.length} chars`);
+      } else {
+        tracer.log('identity', 'debug', 'World model section skipped (budget exceeded)');
+      }
+    }
+
+    // ── Goal Stack Section ─────────────────────────────────────────────
+
+    if (goalStack !== null) {
+      const goalText = buildGoalSection(goalStack, cfg);
+      if (totalChars + goalText.length + 50 < cfg.maxChars) {
+        parts.push('\n# Your Goals\n');
+        parts.push(goalText);
+        totalChars += goalText.length + 20;
+        sections.goalStack = true;
+        tracer.log('identity', 'debug', `Goal stack section: ${goalText.length} chars`);
+      } else {
+        tracer.log('identity', 'debug', 'Goal stack section skipped (budget exceeded)');
+      }
+    }
+
+    // ── Issue Log Section ──────────────────────────────────────────────
+
+    if (issueLog !== null) {
+      const issueText = buildIssueSection(issueLog, cfg);
+      if (totalChars + issueText.length + 50 < cfg.maxChars) {
+        parts.push('\n# Known Issues\n');
+        parts.push(issueText);
+        totalChars += issueText.length + 20;
+        sections.issueLog = true;
+        tracer.log('identity', 'debug', `Issue log section: ${issueText.length} chars`);
+      } else {
+        tracer.log('identity', 'debug', 'Issue log section skipped (budget exceeded)');
+      }
+    }
+
+    // ── Self-Model Section (Phase 6 placeholder) ───────────────────────
+
+    if (cfg.includeSelfModel && selfModel) {
+      const selfModelText = buildSelfModelSection(selfModel);
+      if (totalChars + selfModelText.length + 50 < cfg.maxChars) {
+        parts.push('\n# Self-Assessment\n');
+        parts.push(selfModelText);
+        totalChars += selfModelText.length + 20;
+        sections.selfModel = true;
+        tracer.log('identity', 'debug', `Self-model section: ${selfModelText.length} chars`);
+      } else {
+        tracer.log('identity', 'debug', 'Self-model section skipped (budget exceeded)');
+      }
+    }
+
+    const prompt = parts.join('\n');
+    const result: IdentityPromptResult = {
+      prompt,
+      charCount: prompt.length,
+      sections,
+      generatedAt: new Date().toISOString(),
+    };
+
+    tracer.log('identity', 'info', 'Identity prompt built', {
+      charCount: result.charCount,
+      sections: result.sections,
+    });
+    span.metadata['charCount'] = result.charCount;
+
+    return result;
+  });
+}
+
+/**
+ * Build a minimal identity prompt when state hasn't been loaded yet.
+ * Used as a fallback during initialization.
+ */
+export function buildMinimalIdentityPrompt(): string {
+  return CHARACTER_PROMPT;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section Builders
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the goal stack section for the identity prompt.
+ */
+function buildGoalSection(goalStack: GoalStack, config: IdentityConfig): string {
+  const summary: GoalStackSummary = goalStack.getSummary(config.maxGoalsInPrompt);
+  const lines: string[] = [];
+
+  if (summary.inProgress.length > 0) {
+    for (const g of summary.inProgress) {
+      lines.push(`**Active:** ${g.description} [${g.id}, ${g.source}, attempt #${g.attempts}]`);
+      if (g.notes) {
+        lines.push(`  Progress: ${g.notes}`);
+      }
+    }
+  }
+
+  if (summary.topPending.length > 0) {
+    lines.push('');
+    lines.push('Pending:');
+    for (const g of summary.topPending) {
+      lines.push(`- P${g.priority}: ${g.description} [${g.id}, ${g.source}]`);
+    }
+  }
+
+  if (summary.blocked.length > 0) {
+    lines.push('');
+    lines.push('Blocked:');
+    for (const g of summary.blocked) {
+      lines.push(`- ${g.description}: ${g.notes} [${g.id}]`);
+    }
+  }
+
+  if (summary.stale.length > 0) {
+    lines.push('');
+    lines.push(`Stale (needs attention):`);
+    for (const g of summary.stale) {
+      lines.push(`- ${g.description} [${g.id}, inactive since ${g.updated.split('T')[0]}]`);
+    }
+  }
+
+  if (lines.length === 0) {
+    lines.push('No active goals. Look for improvements or check the issue log.');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Build the issue log section for the identity prompt.
+ */
+function buildIssueSection(issueLog: IssueLog, config: IdentityConfig): string {
+  const summary: IssueLogSummary = issueLog.getSummary();
+  const lines: string[] = [];
+
+  if (summary.investigating.length > 0) {
+    lines.push('Investigating:');
+    for (const i of summary.investigating.slice(0, config.maxIssuesInPrompt)) {
+      const attempts = i.attempts.length > 0 ? ` (${i.attempts.length} attempts)` : '';
+      lines.push(`- [${i.id}] ${i.title}${attempts}`);
+      if (i.nextIdea) {
+        lines.push(`  Next idea: ${i.nextIdea}`);
+      }
+    }
+  }
+
+  const openNotInvestigating = summary.openByPriority.filter((i) => i.status === 'open');
+  if (openNotInvestigating.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('Open:');
+    for (const i of openNotInvestigating.slice(0, config.maxIssuesInPrompt)) {
+      lines.push(`- [${i.id}] [${i.priority}] ${i.title}`);
+    }
+  }
+
+  if (summary.stale.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('Stale (needs revisiting):');
+    for (const i of summary.stale.slice(0, 3)) {
+      lines.push(`- [${i.id}] ${i.title} (since ${i.lastUpdated.split('T')[0]})`);
+    }
+  }
+
+  if (lines.length === 0) {
+    lines.push('No known issues. The codebase appears healthy.');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Build the self-model section for the identity prompt.
+ * This is a Phase 6 placeholder — data comes from manual input or
+ * the future SelfModel class.
+ */
+function buildSelfModelSection(selfModel: SelfModelSummary): string {
+  const lines: string[] = [];
+
+  if (selfModel.strengths.length > 0) {
+    lines.push('Strengths:');
+    for (const s of selfModel.strengths) {
+      lines.push(`- ${s.skill}: ${Math.round(s.successRate * 100)}% success (${s.sampleSize} attempts)`);
+    }
+  }
+
+  if (selfModel.weaknesses.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('Weaknesses (proceed carefully):');
+    for (const w of selfModel.weaknesses) {
+      lines.push(`- ${w.skill}: ${Math.round(w.successRate * 100)}% success (${w.sampleSize} attempts)`);
+    }
+  }
+
+  if (selfModel.preferences.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('Learned preferences:');
+    for (const p of selfModel.preferences) {
+      lines.push(`- ${p}`);
+    }
+  }
+
+  if (lines.length === 0) {
+    lines.push('Self-model not yet calibrated. Accumulating data from cycles.');
+  }
+
+  return lines.join('\n');
+}

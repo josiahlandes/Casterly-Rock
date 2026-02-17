@@ -10,7 +10,8 @@ const ALLOWED_CONSOLE_LOG_FILES = new Set([
   'src/autonomous/loop.ts',  // Daemon needs to log output
   'src/benchmark-cli.ts',    // Benchmark CLI needs console output
   'src/terminal-repl.ts',    // Terminal REPL needs console output
-  'tests/validation-parser.test.ts'  // Test fixtures contain console.log in code strings
+  'tests/validation-parser.test.ts',  // Test fixtures contain console.log in code strings
+  'src/autonomous/debug.ts'  // Debug tracer applies redaction before console output
 ]);
 
 function walk(dir) {
