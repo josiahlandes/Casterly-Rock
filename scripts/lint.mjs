@@ -7,7 +7,8 @@ const ALLOWED_CONSOLE_LOG_FILES = new Set([
   'src/interfaces/cli.ts',
   'src/index.ts',
   'src/test-cli.ts',
-  'src/autonomous/loop.ts'  // Daemon needs to log output
+  'src/autonomous/loop.ts',  // Daemon needs to log output
+  'src/autonomous/debug.ts'  // Debug tracer applies redaction before console output
 ]);
 
 function walk(dir) {
