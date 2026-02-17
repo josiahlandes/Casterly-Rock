@@ -268,7 +268,7 @@ describe('Phase 1: Persistent Identity System', () => {
         il.fileIssue({ title: `Issue ${i}: ${'y'.repeat(100)}`, description: 'Test', priority: 'medium', discoveredBy: 'autonomous' });
       }
 
-      const result = buildIdentityPrompt(wm, gs, il, null, { maxChars: 8000 });
+      const result = buildIdentityPrompt(wm, gs, il, null, null, null, { maxChars: 8000 });
       expect(result.charCount).toBeLessThanOrEqual(8500); // Small overflow OK
     });
 

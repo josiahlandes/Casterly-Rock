@@ -28,6 +28,8 @@ import { getTracer } from './debug.js';
 import type { WorldModel } from './world-model.js';
 import type { GoalStack, GoalStackSummary } from './goal-stack.js';
 import type { IssueLog, IssueLogSummary } from './issue-log.js';
+import type { JournalEntry } from './journal.js';
+import type { UserModel } from './world-model.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -51,6 +53,12 @@ export interface IdentityConfig {
 
   /** Maximum number of recent activities to show */
   maxActivitiesInPrompt: number;
+
+  /** Whether to include the handoff note from journal */
+  includeHandoff: boolean;
+
+  /** Whether to include user model in the prompt */
+  includeUserModel: boolean;
 }
 
 /**
@@ -81,6 +89,8 @@ export interface IdentityPromptResult {
     goalStack: boolean;
     issueLog: boolean;
     selfModel: boolean;
+    handoff: boolean;
+    userModel: boolean;
   };
 
   /** Timestamp when this prompt was generated */
@@ -97,6 +107,8 @@ const DEFAULT_CONFIG: IdentityConfig = {
   maxGoalsInPrompt: 5,
   maxIssuesInPrompt: 5,
   maxActivitiesInPrompt: 5,
+  includeHandoff: true,
+  includeUserModel: true,
 };
 
 /**
@@ -140,6 +152,8 @@ export function buildIdentityPrompt(
   goalStack: GoalStack | null,
   issueLog: IssueLog | null,
   selfModel?: SelfModelSummary | null,
+  handoffNote?: JournalEntry | null,
+  userModel?: UserModel | null,
   config?: Partial<IdentityConfig>,
 ): IdentityPromptResult {
   const tracer = getTracer();
@@ -151,6 +165,8 @@ export function buildIdentityPrompt(
       goalStack: false,
       issueLog: false,
       selfModel: false,
+      handoff: false,
+      userModel: false,
     };
 
     const parts: string[] = [CHARACTER_PROMPT];
@@ -221,6 +237,32 @@ export function buildIdentityPrompt(
         tracer.log('identity', 'debug', `Self-model section: ${selfModelText.length} chars`);
       } else {
         tracer.log('identity', 'debug', 'Self-model section skipped (budget exceeded)');
+      }
+    }
+
+    // ── Handoff Note (from journal) ──────────────────────────────────────
+
+    if (cfg.includeHandoff && handoffNote) {
+      const handoffText = buildHandoffSection(handoffNote);
+      if (totalChars + handoffText.length + 50 < cfg.maxChars) {
+        parts.push('\n# Last Session Handoff\n');
+        parts.push(handoffText);
+        totalChars += handoffText.length + 20;
+        sections.handoff = true;
+        tracer.log('identity', 'debug', `Handoff section: ${handoffText.length} chars`);
+      }
+    }
+
+    // ── User Model Section ──────────────────────────────────────────────
+
+    if (cfg.includeUserModel && userModel) {
+      const userModelText = buildUserModelSection(userModel);
+      if (totalChars + userModelText.length + 50 < cfg.maxChars) {
+        parts.push('\n# User Understanding\n');
+        parts.push(userModelText);
+        totalChars += userModelText.length + 20;
+        sections.userModel = true;
+        tracer.log('identity', 'debug', `User model section: ${userModelText.length} chars`);
       }
     }
 
@@ -376,6 +418,52 @@ function buildSelfModelSection(selfModel: SelfModelSummary): string {
 
   if (lines.length === 0) {
     lines.push('Self-model not yet calibrated. Accumulating data from cycles.');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Build the handoff note section for the identity prompt.
+ * This gives Tyrion continuity between sessions.
+ */
+function buildHandoffSection(handoff: JournalEntry): string {
+  const dateStr = handoff.timestamp.split('T')[0];
+  const tags = handoff.tags.length > 0 ? ` [${handoff.tags.join(', ')}]` : '';
+  return `From ${dateStr}${tags}:\n\n${handoff.content}`;
+}
+
+/**
+ * Build the user model section for the identity prompt.
+ * Gives Tyrion awareness of user preferences and context.
+ */
+function buildUserModelSection(userModel: UserModel): string {
+  const lines: string[] = [];
+
+  if (userModel.communicationStyle) {
+    lines.push(`Communication style: ${userModel.communicationStyle}`);
+  }
+
+  if (userModel.priorities.length > 0) {
+    lines.push(`\nCurrent priorities:`);
+    for (const p of userModel.priorities) {
+      lines.push(`- ${p}`);
+    }
+  }
+
+  if (userModel.recentTopics.length > 0) {
+    lines.push(`\nRecent topics: ${userModel.recentTopics.join(', ')}`);
+  }
+
+  if (userModel.preferences.length > 0) {
+    lines.push(`\nPreferences:`);
+    for (const p of userModel.preferences) {
+      lines.push(`- ${p}`);
+    }
+  }
+
+  if (lines.length === 0) {
+    lines.push('User model not yet populated. Observe interactions to build understanding.');
   }
 
   return lines.join('\n');

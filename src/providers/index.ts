@@ -37,6 +37,12 @@ export interface ProviderRegistry {
    * everything else to the primary model.
    */
   forTask(taskType?: string): LlmProvider;
+
+  /**
+   * Get a provider by name. Supports 'local', 'coding', and model names.
+   * Falls back to the local provider if the name isn't recognized.
+   */
+  get(name: string): LlmProvider;
 }
 
 /** Task types that should use the coding model */
@@ -70,6 +76,23 @@ export function buildProviders(config: AppConfig): ProviderRegistry {
         return coding;
       }
       return local;
+    },
+    /**
+     * Get a provider by name. Supports 'local', 'coding', and model names.
+     * Falls back to the local provider if the name isn't recognized.
+     */
+    get(name: string): LlmProvider {
+      if (name === 'coding' && this.coding) {
+        return this.coding;
+      }
+      if (name === 'local' || name === 'default') {
+        return this.local;
+      }
+      // Try matching by model name
+      if (this.coding && name.includes('coder')) {
+        return this.coding;
+      }
+      return this.local;
     },
   };
 }

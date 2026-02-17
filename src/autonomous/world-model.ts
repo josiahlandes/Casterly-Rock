@@ -114,6 +114,27 @@ export interface ActivityEntry {
 }
 
 /**
+ * User model — Tyrion's understanding of the user derived from interactions.
+ * Never stores verbatim user content; only derived summaries.
+ */
+export interface UserModel {
+  /** How the user prefers to communicate (e.g., brief, technical, casual) */
+  communicationStyle: string;
+
+  /** User's current priorities and interests */
+  priorities: string[];
+
+  /** Recent topics discussed */
+  recentTopics: string[];
+
+  /** Observed preferences (e.g., "prefers TypeScript over JavaScript") */
+  preferences: string[];
+
+  /** Last updated timestamp */
+  lastUpdated: string;
+}
+
+/**
  * The complete world model — everything Tyrion knows about the codebase state.
  */
 export interface WorldModelData {
@@ -143,6 +164,9 @@ export interface WorldModelData {
     lastCommitMessage: string;
     branchName: string;
   };
+
+  /** User model — understanding of the user derived from interactions */
+  userModel?: UserModel;
 }
 
 /**
@@ -198,6 +222,13 @@ function createEmptyWorldModel(): WorldModelData {
       lastCommitHash: '',
       lastCommitMessage: '',
       branchName: '',
+    },
+    userModel: {
+      communicationStyle: '',
+      priorities: [],
+      recentTopics: [],
+      preferences: [],
+      lastUpdated: new Date().toISOString(),
     },
   };
 }
@@ -658,6 +689,59 @@ export class WorldModel {
     if (before.healthy !== this.data.health.healthy) {
       tracer.logStateChange('world-model', 'health.healthy', before.healthy, this.data.health.healthy);
     }
+  }
+
+  /**
+   * Get the current user model.
+   */
+  getUserModel(): UserModel | undefined {
+    return this.data.userModel;
+  }
+
+  /**
+   * Update the user model with new observations.
+   */
+  updateUserModel(updates: Partial<UserModel>): void {
+    const tracer = getTracer();
+    if (!this.data.userModel) {
+      this.data.userModel = {
+        communicationStyle: '',
+        priorities: [],
+        recentTopics: [],
+        preferences: [],
+        lastUpdated: new Date().toISOString(),
+      };
+    }
+
+    if (updates.communicationStyle) {
+      this.data.userModel.communicationStyle = updates.communicationStyle;
+    }
+    if (updates.priorities) {
+      this.data.userModel.priorities = updates.priorities;
+    }
+    if (updates.recentTopics) {
+      // Keep last 10 topics
+      this.data.userModel.recentTopics = [
+        ...updates.recentTopics,
+        ...this.data.userModel.recentTopics,
+      ].slice(0, 10);
+    }
+    if (updates.preferences) {
+      // Merge, deduplicate
+      const existing = new Set(this.data.userModel.preferences);
+      for (const p of updates.preferences) {
+        existing.add(p);
+      }
+      this.data.userModel.preferences = Array.from(existing);
+    }
+
+    this.data.userModel.lastUpdated = new Date().toISOString();
+    this.dirty = true;
+    tracer.log('world-model', 'debug', 'User model updated', {
+      communicationStyle: this.data.userModel.communicationStyle,
+      priorities: this.data.userModel.priorities.length,
+      preferences: this.data.userModel.preferences.length,
+    });
   }
 
   // ── Shell Commands ───────────────────────────────────────────────────────

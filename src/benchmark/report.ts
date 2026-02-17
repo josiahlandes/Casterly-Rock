@@ -2,6 +2,7 @@
  * Benchmark Report (ISSUE-008)
  *
  * Formatted output for benchmark runs and comparisons.
+ * v2 adds agent-oriented dimension display (tool selection, reasoning, delegation).
  */
 
 import type { BenchmarkRun } from './types.js';
@@ -30,6 +31,34 @@ export function formatRunSummary(run: BenchmarkRun): string {
   lines.push(`  Avg Total:        ${run.aggregate.avgTotalMs.toFixed(0)}ms`);
   lines.push(`  Eval Rate:        ${run.aggregate.avgEvalRate.toFixed(1)} tok/s`);
 
+  // v2 agent dimensions
+  if (run.aggregate.toolSelectionAvg !== undefined) {
+    lines.push('');
+    lines.push('  Agent Dimensions:');
+    lines.push(`    Tool Selection:    ${run.aggregate.toolSelectionAvg.toFixed(3)}`);
+    if (run.aggregate.reasoningAvg !== undefined) {
+      lines.push(`    Reasoning:         ${run.aggregate.reasoningAvg.toFixed(3)}`);
+    }
+    if (run.aggregate.delegationAvg !== undefined) {
+      lines.push(`    Delegation:        ${run.aggregate.delegationAvg.toFixed(3)}`);
+    }
+    if (run.aggregate.argCorrectnessAvg !== undefined) {
+      lines.push(`    Arg Correctness:   ${run.aggregate.argCorrectnessAvg.toFixed(3)}`);
+    }
+    if (run.aggregate.qualityAvg !== undefined) {
+      lines.push(`    Quality (judge):   ${run.aggregate.qualityAvg.toFixed(1)}/10`);
+    }
+  }
+
+  // Memory and warmth info
+  if (run.aggregate.vramBytes !== undefined) {
+    const gb = (run.aggregate.vramBytes / (1024 * 1024 * 1024)).toFixed(1);
+    lines.push(`  VRAM Footprint:   ${gb} GB`);
+  }
+  if (run.aggregate.warmStart !== undefined) {
+    lines.push(`  Start Type:       ${run.aggregate.warmStart ? 'warm' : 'cold'}`);
+  }
+
   // Difficulty breakdown
   const diffs = Object.entries(run.aggregate.byDifficulty);
   if (diffs.length > 0) {
@@ -46,7 +75,7 @@ export function formatRunSummary(run: BenchmarkRun): string {
     lines.push('');
     lines.push('  By Category:');
     for (const [cat, stats] of cats) {
-      lines.push(`    ${cat.padEnd(14)} ${stats.passed}/${stats.total} passed  avg ${stats.avgScore.toFixed(2)}`);
+      lines.push(`    ${cat.padEnd(16)} ${stats.passed}/${stats.total} passed  avg ${stats.avgScore.toFixed(2)}`);
     }
   }
 
@@ -57,7 +86,26 @@ export function formatRunSummary(run: BenchmarkRun): string {
     lines.push('  Cases:');
     for (const c of run.cases) {
       const status = c.passed ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m';
-      lines.push(`    ${status} [${c.caseId}] score=${c.structuralScore.toFixed(2)} eff=${c.toolEfficiency.toFixed(2)} ${c.totalMs.toFixed(0)}ms`);
+      let detail = `score=${c.structuralScore.toFixed(2)} eff=${c.toolEfficiency.toFixed(2)} ${c.totalMs.toFixed(0)}ms`;
+
+      // v2 dimension details
+      if (c.toolSelectionScore !== undefined) {
+        detail += ` sel=${c.toolSelectionScore.toFixed(2)}`;
+      }
+      if (c.reasoningScore !== undefined) {
+        detail += ` rsn=${c.reasoningScore.toFixed(0)}`;
+      }
+      if (c.delegationScore !== undefined) {
+        detail += ` dlg=${c.delegationScore.toFixed(0)}`;
+      }
+      if (c.argCorrectnessScore !== undefined) {
+        detail += ` arg=${c.argCorrectnessScore.toFixed(2)}`;
+      }
+      if (c.qualityScore !== undefined) {
+        detail += ` q=${c.qualityScore.toFixed(1)}`;
+      }
+
+      lines.push(`    ${status} [${c.caseId}] ${detail}`);
       for (const f of c.failures) {
         lines.push(`         - ${f}`);
       }
@@ -102,7 +150,7 @@ export function formatComparison(comparison: Comparison): string {
     lines.push('By Category:');
     for (const [cat, rankings] of cats) {
       const ranked = rankings.map((r) => r.modelId).join(' > ');
-      lines.push(`  ${cat.padEnd(14)} ${ranked}`);
+      lines.push(`  ${cat.padEnd(16)} ${ranked}`);
     }
   }
 

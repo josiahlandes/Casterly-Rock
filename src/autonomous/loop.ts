@@ -34,6 +34,8 @@ import { WorldModel } from './world-model.js';
 import { GoalStack } from './goal-stack.js';
 import { IssueLog } from './issue-log.js';
 import { getTracer } from './debug.js';
+import { Journal, createJournal } from './journal.js';
+import { triggerFromEvent, triggerFromSchedule, triggerFromGoal } from './trigger-router.js';
 
 // Phase 3: Event-Driven Awareness imports
 import { ContextManager, createContextManager } from './context-manager.js';
@@ -154,6 +156,9 @@ export class AutonomousLoop {
   private lastDreamCycleDate: string = '';
   private selfModelSummary: SelfModelSummary | null = null;
 
+  // Journal system (Phase 1)
+  private journal: Journal;
+
   // Phase 3: Event-driven awareness
   private eventBus: EventBus;
   private fileWatcher: FileWatcher | null = null;
@@ -213,6 +218,9 @@ export class AutonomousLoop {
     this.dreamCycleRunner = new DreamCycleRunner({
       projectRoot,
     });
+
+    // Phase 1: Initialize journal
+    this.journal = createJournal();
   }
 
   /**
@@ -456,6 +464,7 @@ export class AutonomousLoop {
       this.worldModel.load(),
       this.goalStack.load(),
       this.issueLog.load(),
+      this.journal.load(),
     ]);
   }
 
@@ -481,9 +490,9 @@ export class AutonomousLoop {
   private determineTrigger(): AgentTrigger {
     const nextGoal = this.goalStack.getNextGoal();
     if (nextGoal) {
-      return { type: 'goal', goal: nextGoal };
+      return triggerFromGoal(nextGoal);
     }
-    return { type: 'scheduled' };
+    return triggerFromSchedule();
   }
 
   /**
@@ -499,11 +508,12 @@ export class AutonomousLoop {
   /**
    * Get references to the persistent state (for external access).
    */
-  getState(): { worldModel: WorldModel; goalStack: GoalStack; issueLog: IssueLog } {
+  getState(): { worldModel: WorldModel; goalStack: GoalStack; issueLog: IssueLog; journal: Journal } {
     return {
       worldModel: this.worldModel,
       goalStack: this.goalStack,
       issueLog: this.issueLog,
+      journal: this.journal,
     };
   }
 
@@ -673,49 +683,10 @@ export class AutonomousLoop {
    * Convert a SystemEvent into an AgentTrigger for the agent loop.
    */
   private buildTriggerFromEvent(event: SystemEvent): AgentTrigger {
-    switch (event.type) {
-      case 'user_message':
-        return { type: 'user', message: event.message, sender: event.sender };
-
-      case 'test_failed':
-      case 'build_error':
-      case 'file_changed':
-      case 'git_push':
-      case 'issue_stale':
-        return {
-          type: 'event',
-          event: {
-            kind: event.type,
-            description: this.describeEvent(event),
-            timestamp: event.timestamp,
-          },
-        };
-
-      case 'scheduled':
-        return { type: 'scheduled' };
+    if (event.type === 'user_message') {
+      return { type: 'user', message: event.message, sender: event.sender };
     }
-  }
-
-  /**
-   * Generate a human-readable description of an event.
-   */
-  private describeEvent(event: SystemEvent): string {
-    switch (event.type) {
-      case 'file_changed':
-        return `${event.paths.length} files ${event.changeKind}: ${event.paths.slice(0, 3).join(', ')}${event.paths.length > 3 ? '...' : ''}`;
-      case 'test_failed':
-        return `Test failed: ${event.testName}`;
-      case 'git_push':
-        return `Push to ${event.branch}: ${event.commits.length} commits`;
-      case 'build_error':
-        return `Build error: ${event.error.slice(0, 100)}`;
-      case 'issue_stale':
-        return `Issue ${event.issueId} stale for ${event.daysSinceActivity} days`;
-      case 'user_message':
-        return `Message from ${event.sender}`;
-      case 'scheduled':
-        return event.reason;
-    }
+    return triggerFromEvent(event);
   }
 
   /**
@@ -757,6 +728,7 @@ export class AutonomousLoop {
         goalStack: this.goalStack,
         issueLog: this.issueLog,
         contextManager: this.contextManager,
+        journal: this.journal,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -800,11 +772,12 @@ export class AutonomousLoop {
       const llmProvider = this.provider as unknown as import('../providers/base.js').LlmProvider;
 
       this.activeAgentLoop = createAgentLoop(
-        { ...this.agentConfig, maxTurns: scaledMaxTurns },
+        { ...this.agentConfig, maxTurns: scaledMaxTurns, cycleId },
         llmProvider,
         this.agentToolkit,
         agentState,
         this.selfModelSummary,
+        this.journal,
       );
 
       let outcome: AgentOutcome;

@@ -39,7 +39,13 @@ export type DebugSubsystem =
   | 'validator'
   | 'git'
   | 'reflector'
-  | 'analyzer';
+  | 'analyzer'
+  | 'journal'
+  | 'delegation'
+  | 'context-budget'
+  | 'state-diff'
+  | 'trigger'
+  | 'session';
 
 export type DebugLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 

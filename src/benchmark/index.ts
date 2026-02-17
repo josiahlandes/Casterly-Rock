@@ -10,14 +10,37 @@ export type {
   AggregateScore,
   BenchmarkRun,
   BenchmarkStoreData,
+  ScoringProfile,
+  MultiTurnMeta,
 } from './types.js';
 
+export {
+  V1_SCORING_PROFILE,
+  V2_SCORING_PROFILE,
+} from './types.js';
+
+// v1 suite
 export {
   BENCHMARK_SUITE_ID,
   BENCHMARK_SUITE,
   getBenchmarkCasesByCategory,
   getBenchmarkCasesByDifficulty,
 } from './suite.js';
+
+// v2 agent suite
+export {
+  AGENT_BENCHMARK_SUITE_ID,
+  AGENT_BENCHMARK_SUITE,
+  getAgentBenchmarkCasesByCategory,
+  getAgentBenchmarkCasesByDifficulty,
+} from './agent-suite.js';
+
+// v2 tool schemas
+export {
+  AGENT_TOOL_SCHEMAS,
+  getAgentToolNames,
+  type BenchmarkToolSchema,
+} from './agent-suite-tools.js';
 
 export {
   ollamaBenchmarkChat,
@@ -32,6 +55,10 @@ export {
   aggregateScores,
   countChecks,
   normalizeEvalRate,
+  scoreToolSelection,
+  scoreReasoning,
+  scoreDelegation,
+  scoreArgCorrectness,
 } from './scorer.js';
 
 export {
@@ -51,3 +78,25 @@ export {
   formatComparison,
   formatRunAsJson,
 } from './report.js';
+
+// v2: LLM-as-judge quality scoring
+export {
+  judgeResponse,
+  normalizeJudgeScore,
+  DEFAULT_RUBRIC,
+  type JudgeRubric,
+  type JudgeDimensionScore,
+  type JudgeResult,
+  type JudgeConfig,
+} from './judge.js';
+
+// v2: Ollama health check, memory footprint, warmth detection
+export {
+  runHealthCheck,
+  formatHealthReport,
+  type OllamaHealthStatus,
+  type ModelAvailability,
+  type MemoryFootprint,
+  type WarmthStatus,
+  type HealthReport,
+} from './health.js';

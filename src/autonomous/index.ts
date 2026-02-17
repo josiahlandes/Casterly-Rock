@@ -111,6 +111,33 @@ export type {
   IdentityPromptResult,
 } from './identity.js';
 
+// Journal system
+export { Journal, createJournal } from './journal.js';
+export type { JournalEntry, JournalConfig } from './journal.js';
+
+// Trigger router
+export {
+  triggerFromMessage,
+  triggerFromEvent,
+  triggerFromSchedule,
+  triggerFromGoal,
+  getTriggerPriority,
+} from './trigger-router.js';
+
+// State inspector
+export {
+  takeStateSnapshot,
+  computeStateDiff,
+  inspectState,
+  inspectJournal,
+  formatStateDiff,
+  runInspector,
+} from '../debug/inspector.js';
+export type { InspectOptions, StateSnapshot, StateDiff } from '../debug/inspector.js';
+
+// User model (from world-model)
+export type { UserModel } from './world-model.js';
+
 // Memory configuration
 export {
   loadPhase1Config,

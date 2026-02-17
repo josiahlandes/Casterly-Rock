@@ -44,6 +44,7 @@ import type { WorldModel } from './world-model.js';
 import type { GoalStack, Goal } from './goal-stack.js';
 import type { IssueLog } from './issue-log.js';
 import type { SelfModelSummary } from './identity.js';
+import type { Journal } from './journal.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -98,6 +99,9 @@ export interface AgentLoopConfig {
 
   /** Maximum tokens per individual LLM response */
   maxResponseTokens: number;
+
+  /** Cycle ID for journal entries */
+  cycleId?: string;
 }
 
 /**
@@ -269,6 +273,7 @@ export class AgentLoop {
   private readonly toolkit: AgentToolkit;
   private readonly state: AgentState;
   private readonly selfModel: SelfModelSummary | null;
+  private readonly journal: Journal | null;
 
   /** Signal to abort the loop (set externally for interrupts) */
   private aborted: boolean = false;
@@ -279,12 +284,14 @@ export class AgentLoop {
     toolkit: AgentToolkit,
     state: AgentState,
     selfModel?: SelfModelSummary | null,
+    journal?: Journal | null,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.provider = provider;
     this.toolkit = toolkit;
     this.state = state;
     this.selfModel = selfModel ?? null;
+    this.journal = journal ?? null;
   }
 
   /**
@@ -370,6 +377,18 @@ export class AgentLoop {
           charCount: identityResult.charCount,
           sections: identityResult.sections,
         });
+      }
+
+      // ── Include handoff note from journal ────────────────────────────
+      if (this.journal) {
+        const handoff = this.journal.getHandoffNote();
+        if (handoff) {
+          identityPrompt += `\n\n## Last Session Handoff (${handoff.timestamp.split('T')[0]})\n${handoff.content}`;
+          tracer.log('journal', 'debug', 'Handoff note included in context', {
+            timestamp: handoff.timestamp,
+            contentLength: handoff.content.length,
+          });
+        }
       }
 
       // Record goal attempt when working on a goal
@@ -603,6 +622,28 @@ export class AgentLoop {
         estimatedTokens: outcome.totalTokensEstimate,
       });
 
+      // ── Write handoff note to journal ────────────────────────────────
+      if (this.journal && outcome.summary) {
+        try {
+          await this.journal.append({
+            type: 'handoff' as const,
+            content: outcome.summary,
+            tags: [
+              outcome.stopReason,
+              trigger.type,
+              ...(outcome.filesModified.length > 0 ? ['files-modified'] : []),
+            ],
+            ...(this.config.cycleId !== undefined ? { cycleId: this.config.cycleId } : {}),
+            triggerType: trigger.type,
+          });
+          tracer.log('journal', 'debug', 'Handoff note written to journal');
+        } catch (journalErr) {
+          tracer.log('journal', 'error', 'Failed to write handoff note', {
+            error: journalErr instanceof Error ? journalErr.message : String(journalErr),
+          });
+        }
+      }
+
       return outcome;
     });
   }
@@ -731,6 +772,7 @@ export function createAgentLoop(
   toolkit: AgentToolkit,
   state: AgentState,
   selfModel?: SelfModelSummary | null,
+  journal?: Journal | null,
 ): AgentLoop {
-  return new AgentLoop(config, provider, toolkit, state, selfModel);
+  return new AgentLoop(config, provider, toolkit, state, selfModel, journal);
 }
