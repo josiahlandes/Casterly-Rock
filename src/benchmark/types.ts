@@ -3,6 +3,9 @@
  *
  * Foundation types for the model benchmarking framework.
  * BenchmarkCase extends TestCase with difficulty, category, and scoring metadata.
+ *
+ * v2 adds agent-oriented categories and scoring dimensions for the
+ * unified agent loop architecture (reasoning, delegation, tool selection).
  */
 
 import type { TestCase } from '../testing/test-cases.js';
@@ -11,6 +14,7 @@ import type { TestCase } from '../testing/test-cases.js';
 
 export type BenchmarkDifficulty = 'trivial' | 'simple' | 'moderate' | 'complex' | 'expert';
 
+/** v1 + v2 categories. v2 adds reasoning, delegation, tool_selection. */
 export type BenchmarkCategory =
   | 'conversation'
   | 'tool_use'
@@ -18,7 +22,11 @@ export type BenchmarkCategory =
   | 'coding'
   | 'safety'
   | 'knowledge'
-  | 'multi_step';
+  | 'multi_step'
+  // v2: Agent architecture categories
+  | 'reasoning'
+  | 'delegation'
+  | 'tool_selection';
 
 // ─── Benchmark Case ──────────────────────────────────────────────────────────
 
@@ -31,6 +39,14 @@ export interface BenchmarkCase extends TestCase {
   qualityRubric?: string | undefined;
   /** Relative importance, default 1.0 */
   weight?: number | undefined;
+  /** v2: Expected tool names the model should prefer (for tool selection scoring) */
+  preferredTools?: string[] | undefined;
+  /** v2: Tools the model should avoid for this case */
+  avoidTools?: string[] | undefined;
+  /** v2: Whether the model should reason (think tool) before acting */
+  shouldReason?: boolean | undefined;
+  /** v2: Whether the model should delegate to another model */
+  shouldDelegate?: boolean | undefined;
 }
 
 // ─── Per-Case Result ─────────────────────────────────────────────────────────
@@ -51,6 +67,12 @@ export interface CaseResult {
   /** Tokens per second (eval_count / eval_duration) */
   evalRate: number;
   failures: string[];
+  /** v2: Did the model use the preferred tools? (0-1) */
+  toolSelectionScore?: number | undefined;
+  /** v2: Did the model reason before acting? (0 or 1) */
+  reasoningScore?: number | undefined;
+  /** v2: Did the model correctly decide whether to delegate? (0 or 1) */
+  delegationScore?: number | undefined;
 }
 
 // ─── Aggregate Score ─────────────────────────────────────────────────────────
@@ -67,7 +89,45 @@ export interface AggregateScore {
   passRate: number;
   byDifficulty: Record<string, { passed: number; total: number; avgScore: number }>;
   byCategory: Record<string, { passed: number; total: number; avgScore: number }>;
+  /** v2: Agent-oriented dimension averages (only present for v2 suites) */
+  toolSelectionAvg?: number | undefined;
+  reasoningAvg?: number | undefined;
+  delegationAvg?: number | undefined;
 }
+
+// ─── Scoring Profiles ────────────────────────────────────────────────────────
+
+/**
+ * Scoring weights that can be tuned per suite. v1 uses the original weights,
+ * v2 shifts weight toward reasoning and tool selection.
+ */
+export interface ScoringProfile {
+  structural: number;
+  toolEfficiency: number;
+  performance: number;
+  /** v2 dimensions — ignored when not present in results */
+  toolSelection: number;
+  reasoning: number;
+  delegation: number;
+}
+
+export const V1_SCORING_PROFILE: ScoringProfile = {
+  structural: 0.40,
+  toolEfficiency: 0.30,
+  performance: 0.30,
+  toolSelection: 0,
+  reasoning: 0,
+  delegation: 0,
+};
+
+export const V2_SCORING_PROFILE: ScoringProfile = {
+  structural: 0.25,
+  toolEfficiency: 0.15,
+  performance: 0.10,
+  toolSelection: 0.20,
+  reasoning: 0.20,
+  delegation: 0.10,
+};
 
 // ─── Benchmark Run ───────────────────────────────────────────────────────────
 

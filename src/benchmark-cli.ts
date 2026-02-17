@@ -17,6 +17,10 @@ import {
   BENCHMARK_SUITE_ID,
   getBenchmarkCasesByCategory,
   getBenchmarkCasesByDifficulty,
+  AGENT_BENCHMARK_SUITE,
+  AGENT_BENCHMARK_SUITE_ID,
+  getAgentBenchmarkCasesByCategory,
+  getAgentBenchmarkCasesByDifficulty,
   ollamaBenchmarkChat,
   extractMetrics,
   scoreCase,
@@ -31,6 +35,8 @@ import {
   type CaseResult,
   type OllamaChatMessage,
 } from './benchmark/index.js';
+import { V1_SCORING_PROFILE, V2_SCORING_PROFILE } from './benchmark/types.js';
+import { AGENT_TOOL_SCHEMAS } from './benchmark/agent-suite-tools.js';
 import { evaluateResult } from './testing/test-runner.js';
 import { createTraceCollector } from './testing/trace.js';
 import type { BenchmarkCategory, BenchmarkDifficulty } from './benchmark/types.js';
@@ -50,6 +56,7 @@ const { values, positionals } = parseArgs({
     model: { type: 'string' },
     category: { type: 'string', short: 'c' },
     difficulty: { type: 'string', short: 'd' },
+    suite: { type: 'string', short: 's' },
     timeout: { type: 'string', short: 't' },
     json: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -79,7 +86,8 @@ Commands:
 Options:
   --models, -m     Comma-separated model IDs (required for run/compare)
   --model          Single model ID (for history filtering)
-  --category, -c   Filter by category (conversation, tool_use, etc.)
+  --suite, -s      Benchmark suite: v1 (basic) or v2 (agent) (default: v1)
+  --category, -c   Filter by category (conversation, tool_use, reasoning, delegation, etc.)
   --difficulty, -d Filter by difficulty (trivial, simple, moderate, complex, expert)
   --timeout, -t    Request timeout in seconds (default: 120)
   --json           Output results as JSON
@@ -87,17 +95,36 @@ Options:
 `);
 }
 
+/** Resolve which suite to use based on --suite flag */
+function isV2(): boolean {
+  return values.suite === 'v2' || values.suite === 'agent';
+}
+
+function getActiveSuiteId(): string {
+  return isV2() ? AGENT_BENCHMARK_SUITE_ID : BENCHMARK_SUITE_ID;
+}
+
+function getActiveSuite(): BenchmarkCase[] {
+  return isV2() ? AGENT_BENCHMARK_SUITE : BENCHMARK_SUITE;
+}
+
 function filterCases(
   categoryFilter?: string,
   difficultyFilter?: string,
 ): BenchmarkCase[] {
-  let cases = BENCHMARK_SUITE;
+  const useV2 = isV2();
+
+  let cases: BenchmarkCase[] = useV2 ? AGENT_BENCHMARK_SUITE : BENCHMARK_SUITE;
 
   if (categoryFilter) {
-    cases = getBenchmarkCasesByCategory(categoryFilter as BenchmarkCategory);
+    cases = useV2
+      ? getAgentBenchmarkCasesByCategory(categoryFilter as BenchmarkCategory)
+      : getBenchmarkCasesByCategory(categoryFilter as BenchmarkCategory);
   }
   if (difficultyFilter) {
-    const diffFiltered = getBenchmarkCasesByDifficulty(difficultyFilter as BenchmarkDifficulty);
+    const diffFiltered = useV2
+      ? getAgentBenchmarkCasesByDifficulty(difficultyFilter as BenchmarkDifficulty)
+      : getBenchmarkCasesByDifficulty(difficultyFilter as BenchmarkDifficulty);
     if (categoryFilter) {
       // Intersect
       const diffIds = new Set(diffFiltered.map((c) => c.id));
@@ -129,8 +156,15 @@ async function runBenchmarks(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`Running benchmark suite "${BENCHMARK_SUITE_ID}" (${cases.length} cases)`);
+  const suiteId = getActiveSuiteId();
+  const useV2 = isV2();
+  const scoringProfile = useV2 ? V2_SCORING_PROFILE : V1_SCORING_PROFILE;
+
+  console.log(`Running benchmark suite "${suiteId}" (${cases.length} cases)`);
   console.log(`Models: ${modelList.join(', ')}`);
+  if (useV2) {
+    console.log('Mode: Agent (v2) — full toolkit, agent-oriented scoring');
+  }
   console.log('');
 
   const runs: BenchmarkRun[] = [];
@@ -140,18 +174,22 @@ async function runBenchmarks(): Promise<void> {
     modelIndex++;
     console.log(`Model ${modelIndex}/${modelList.length}: ${modelId}`);
 
-    // Resolve model profile for per-model tool enrichment
-    const profile = resolveModelProfile(modelId);
-    const enrichedTools = enrichToolDescriptions([BASH_TOOL], profile);
-    const benchmarkTools = enrichedTools.map((tool) => ({
-      type: 'function' as const,
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.inputSchema,
-      },
-    }));
-    const genOverrides = getGenerationOverrides(profile);
+    // Resolve tools: v2 uses full agent toolkit, v1 uses bash only
+    let benchmarkTools: { type: 'function'; function: { name: string; description: string; parameters: unknown } }[];
+    if (useV2) {
+      benchmarkTools = AGENT_TOOL_SCHEMAS;
+    } else {
+      const profile = resolveModelProfile(modelId);
+      const enrichedTools = enrichToolDescriptions([BASH_TOOL], profile);
+      benchmarkTools = enrichedTools.map((tool) => ({
+        type: 'function' as const,
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.inputSchema,
+        },
+      }));
+    }
 
     const caseResults: CaseResult[] = [];
     let caseIndex = 0;
@@ -199,8 +237,11 @@ async function runBenchmarks(): Promise<void> {
         // Evaluate structural checks
         const testResult = evaluateResult(benchCase, trace, responseText, null);
 
-        // Score
-        const caseResult = scoreCase(benchCase, testResult, metrics);
+        // Extract tool names for v2 scoring
+        const toolsCalled = toolCalls.map((tc) => tc.function?.name ?? 'unknown');
+
+        // Score (v2 passes toolsCalled for agent dimension scoring)
+        const caseResult = scoreCase(benchCase, testResult, metrics, useV2 ? toolsCalled : undefined);
         caseResults.push(caseResult);
 
         const status = caseResult.passed ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m';
@@ -222,13 +263,13 @@ async function runBenchmarks(): Promise<void> {
       }
     }
 
-    // Aggregate
-    const aggregate = aggregateScores(caseResults, cases);
+    // Aggregate with appropriate scoring profile
+    const aggregate = aggregateScores(caseResults, cases, scoringProfile);
     const run: BenchmarkRun = {
       id: `run-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
       modelId,
       timestamp: Date.now(),
-      suiteId: BENCHMARK_SUITE_ID,
+      suiteId: suiteId,
       cases: caseResults,
       aggregate,
     };
@@ -302,15 +343,27 @@ function runHistory(): void {
 // ─── List Command ────────────────────────────────────────────────────────────
 
 function runList(): void {
-  console.log(`\nBenchmark Suite: ${BENCHMARK_SUITE_ID} (${BENCHMARK_SUITE.length} cases)`);
+  const suite = getActiveSuite();
+  const suiteId = getActiveSuiteId();
+
+  console.log(`\nBenchmark Suite: ${suiteId} (${suite.length} cases)`);
   console.log('═'.repeat(60));
 
-  for (const c of BENCHMARK_SUITE) {
+  for (const c of suite) {
     console.log(`  [${c.id}]`);
     console.log(`    ${c.name}`);
     console.log(`    Difficulty: ${c.difficulty}  |  Category: ${c.category}`);
     if (c.optimalToolCalls !== undefined) {
       console.log(`    Optimal tool calls: ${c.optimalToolCalls}`);
+    }
+    if (c.preferredTools) {
+      console.log(`    Preferred tools: ${c.preferredTools.join(', ')}`);
+    }
+    if (c.shouldReason !== undefined) {
+      console.log(`    Should reason: ${c.shouldReason}`);
+    }
+    if (c.shouldDelegate !== undefined) {
+      console.log(`    Should delegate: ${c.shouldDelegate}`);
     }
     console.log('');
   }
