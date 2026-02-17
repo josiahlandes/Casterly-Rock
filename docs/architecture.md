@@ -128,6 +128,14 @@ src/
 │   ├── validation/          # Parse, lint, typecheck, test
 │   └── modes/               # Code, Architect, Ask, Review
 │
+├── agent/                   # Unified agent architecture
+│   ├── loop.ts              # AgentLoop.run() — single entry point
+│   ├── trigger-router.ts    # Normalize all inputs to Trigger shape
+│   ├── journal.ts           # Append-only JSONL journal
+│   ├── world-model.ts       # World state and user model
+│   ├── state.ts             # State inspection and snapshots
+│   └── types.ts             # Trigger, JournalEntry, WorldModel types
+│
 ├── autonomous/              # Self-improvement system
 │   ├── loop.ts              # Improvement cycle
 │   ├── analyzer.ts          # Codebase analysis
@@ -259,6 +267,56 @@ OpenClaw-compatible skill system with native tool support:
 - Automatic discovery and tool registration
 - Safety gates for command execution
 
+---
+
+## Unified Agent Architecture (Phase 6)
+
+The agent architecture refactor (Phases 0-5) replaced the original per-channel processing pipelines with a single unified agent loop. All interaction channels now converge through one entry point with journal-based state continuity.
+
+### Unified Agent Loop
+
+All interactions flow through a single `AgentLoop.run()` entry point regardless of source:
+
+- **Single entry point**: `AgentLoop.run()` handles every interaction — iMessage, CLI, scheduled events, goal-driven actions, and file/git events.
+- **Trigger Router**: Normalizes all input sources (iMessage, CLI, events, schedule, goals) into a uniform `Trigger` shape before the agent loop processes them. Each trigger carries its source, payload, and any associated context.
+- **Journal-based state continuity**: Instead of relying on structured state objects passed between pipeline stages, the agent reads and writes an append-only journal. Handoff notes, reflections, opinions, and observations persist across interactions and restarts.
+- **Provider registry with metacognitive delegation**: The provider registry supports multiple models with metacognitive routing — the agent can delegate subtasks to different models based on task characteristics, using self-assessment to choose the right provider for each step.
+
+### Journal System
+
+The journal is the primary continuity mechanism, replacing structured state as the source of truth for the agent's ongoing context.
+
+- **Format**: Append-only JSONL stored at `~/.casterly/journal.jsonl`
+- **Entry types**:
+  - `handoff` — Notes written at the end of an interaction to brief the next invocation
+  - `reflection` — The agent's self-assessment of how an interaction or task went
+  - `opinion` — Formed views on tools, approaches, or user preferences
+  - `observation` — Facts noticed during execution (e.g., "user prefers short replies")
+  - `user_interaction` — Records of meaningful user exchanges for user model building
+- **Replaces structured state**: Rather than passing a state object through a pipeline, the agent loads relevant journal entries at the start of each run and writes new entries at the end.
+- **Search via `recall_journal` tool**: The agent can search its own journal using natural-language queries, surfacing relevant past context without loading the entire history.
+
+### Data Flow Diagram
+
+```
+Event Sources (iMessage, CLI, File, Git, Cron)
+         |
+    Trigger Router
+         |
+    Agent Loop (unified)
+    |-- Load state (journal, world, goals)
+    |-- Build identity prompt (+ handoff note + user model)
+    |-- Reason -> Act -> Observe
+    |-- Write journal entry
+    \-- Save state
+         |
+    Tools | Delegate | State Mutation
+```
+
+All event sources are normalized by the Trigger Router into a common shape. The Agent Loop loads its state from the journal and world model, builds an identity-aware prompt that includes the most recent handoff note and user model, then enters the reason-act-observe cycle. After completing work, it writes a journal entry (handoff, reflection, or observation) and saves any state mutations. Output flows to tools, delegated subtasks, or state updates.
+
+---
+
 ## Configuration
 
 Configuration loaded from `config/default.yaml` and `config/models.yaml`:
@@ -314,10 +372,12 @@ Changes to these paths require extra caution:
 │   ├── IDENTITY.md
 │   ├── TOOLS.md
 │   └── USER.md
+├── journal.jsonl        # Append-only agent journal (handoffs, reflections, opinions)
 ├── sessions/            # Conversation history
 │   └── imessage/
 │       └── <chat-id>.jsonl
 ├── memory/              # Long-term memory
+├── state/               # World model and snapshots
 └── users.json           # Multi-user config
 ```
 

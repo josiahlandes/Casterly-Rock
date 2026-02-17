@@ -822,4 +822,42 @@ Future enhancement: the model selection router could use benchmark scores dynami
 
 ---
 
-*Add new issues below using the next sequential ID (ISSUE-009, etc.).*
+## ISSUE-009: Agent Architecture Refactor — Unified Agent Loop
+
+**Status:** Implemented (Phases 0-6 complete)
+**Priority:** Critical
+**Opened:** 2026-02-15
+**Completed:** 2026-02-17
+**Category:** Architecture — Core Agent
+
+### Summary
+
+The agent architecture refactor replaced the original per-channel processing pipelines (separate iMessage daemon loop, CLI handler, etc.) with a single unified agent loop. All interaction channels now converge through `AgentLoop.run()` with journal-based state continuity and a trigger router that normalizes all input sources.
+
+### Phases Completed
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 0 | Foundation — Trigger, Journal, WorldModel types and interfaces | Implemented |
+| Phase 1 | Trigger Router — Normalize iMessage, CLI, events, schedule, goals into Trigger shape | Implemented |
+| Phase 2 | Journal System — Append-only JSONL journal with handoff, reflection, opinion, observation, user_interaction entries | Implemented |
+| Phase 3 | Agent Loop — Unified `AgentLoop.run()` entry point replacing per-channel pipelines | Implemented |
+| Phase 4 | State & Inspection — `inspectState()`, `inspectJournal()`, `takeStateSnapshot()`, `recall_journal` and `consolidate` tools | Implemented |
+| Phase 5 | Integration — Wire unified loop into iMessage daemon and CLI, deprecate legacy pipeline | Implemented |
+| Phase 6 | Documentation — Update architecture, API reference, and open issues docs | Implemented |
+
+### Remaining Work (Future Phases)
+
+The following items were identified during the refactor but deferred for future work:
+
+1. **Dream cycle consolidation from journal** — The `consolidate` tool and dream cycle integration are currently stubs. Real implementation needs pattern analysis across journal entries to produce meaningful consolidated summaries rather than simple truncation. This requires identifying recurring themes, extracting durable insights, and compacting episodic entries into semantic summaries.
+
+2. **Self-knowledge rebuild from journal analysis** — The agent should be able to rebuild its self-knowledge (opinions, preferences, working style) entirely from journal history. Currently the journal stores these entries but there is no pipeline to analyze them holistically and produce an updated self-model. This would allow the agent to "re-derive" its personality evolution from the ground truth of its journal.
+
+3. **User model population from `user_interaction` journal entries** — `WorldModel.updateUserModel()` exists but is not yet driven by automated analysis of `user_interaction` journal entries. The pipeline to extract user preferences, communication style, and known facts from interaction history needs to be built. Currently, user model updates happen only through explicit observation during active interactions.
+
+4. **Full legacy pipeline removal** — The original per-channel processing pipelines (the flat daemon tool loop, direct CLI handler) are deprecated but not deleted. They remain as fallback paths. Once the unified agent loop has been validated in production for a sufficient period, the legacy code paths should be fully removed to reduce maintenance surface area.
+
+---
+
+*Add new issues below using the next sequential ID (ISSUE-010, etc.).*

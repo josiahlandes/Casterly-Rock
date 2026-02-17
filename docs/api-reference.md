@@ -9,6 +9,7 @@ This document provides detailed API reference for Casterly's core modules.
 - [Security](#security)
 - [Interface Layer](#interface-layer)
 - [Skills](#skills)
+- [Agent Architecture](#agent-architecture)
 - [Configuration](#configuration)
 
 > **Note**: This is the Mac Studio M4 Max Edition. All inference runs locally via Ollama.
@@ -728,6 +729,278 @@ interface SkillRegistry {
   reload(): Promise<void>;
 }
 ```
+
+---
+
+## Agent Architecture
+
+### `src/agent/journal.ts`
+
+#### `Journal` Class
+
+```typescript
+class Journal {
+  constructor(journalPath?: string)  // Default: ~/.casterly/journal.jsonl
+
+  load(): JournalEntry[]
+  append(entry: Omit<JournalEntry, 'id' | 'timestamp'>): JournalEntry
+  getRecent(count?: number): JournalEntry[]
+  search(query: string): JournalEntry[]
+  getHandoffNote(): JournalEntry | undefined
+  summarize(options?: SummarizeOptions): string
+}
+```
+
+| Method | Description |
+|--------|-------------|
+| `load()` | Reads and parses all entries from the JSONL file |
+| `append(entry)` | Appends a new entry with auto-generated id and timestamp |
+| `getRecent(count)` | Returns the most recent `count` entries (default: 10) |
+| `search(query)` | Natural-language search across journal entries |
+| `getHandoffNote()` | Returns the most recent `handoff` entry, used to brief the next agent invocation |
+| `summarize(options)` | Produces a compressed summary of recent journal activity |
+
+#### `JournalEntry`
+
+```typescript
+interface JournalEntry {
+  id: string;
+  timestamp: string;              // ISO 8601
+  type: JournalEntryType;
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
+type JournalEntryType =
+  | 'handoff'
+  | 'reflection'
+  | 'opinion'
+  | 'observation'
+  | 'user_interaction';
+```
+
+| Type | Purpose |
+|------|---------|
+| `handoff` | Briefing note for the next agent invocation |
+| `reflection` | Self-assessment of how a task or interaction went |
+| `opinion` | Formed view on a tool, approach, or user preference |
+| `observation` | Fact noticed during execution |
+| `user_interaction` | Record of a meaningful user exchange |
+
+#### `SummarizeOptions`
+
+```typescript
+interface SummarizeOptions {
+  maxEntries?: number;           // Default: 50
+  types?: JournalEntryType[];    // Filter by entry type
+  since?: string;                // ISO 8601 timestamp
+}
+```
+
+---
+
+### `src/agent/trigger-router.ts`
+
+#### `triggerFromMessage()`
+
+```typescript
+function triggerFromMessage(
+  message: IncomingMessage,
+  channel: 'imessage' | 'cli'
+): Trigger
+```
+
+Converts an incoming user message (from iMessage or CLI) into a normalized `Trigger`.
+
+#### `triggerFromEvent()`
+
+```typescript
+function triggerFromEvent(
+  event: SystemEvent
+): Trigger
+```
+
+Converts a system event (file change, git hook, etc.) into a normalized `Trigger`.
+
+#### `triggerFromSchedule()`
+
+```typescript
+function triggerFromSchedule(
+  job: ScheduledJob
+): Trigger
+```
+
+Converts a scheduled job firing into a normalized `Trigger`.
+
+#### `triggerFromGoal()`
+
+```typescript
+function triggerFromGoal(
+  goal: Goal
+): Trigger
+```
+
+Converts a goal-driven action (from the autonomous goal system) into a normalized `Trigger`.
+
+#### `Trigger`
+
+```typescript
+interface Trigger {
+  id: string;
+  source: TriggerSource;
+  payload: string;
+  context?: Record<string, unknown>;
+  priority?: 'low' | 'normal' | 'high';
+  timestamp: string;
+}
+
+type TriggerSource =
+  | 'imessage'
+  | 'cli'
+  | 'file_event'
+  | 'git_event'
+  | 'schedule'
+  | 'goal';
+```
+
+---
+
+### `src/agent/state.ts`
+
+#### `inspectState()`
+
+```typescript
+function inspectState(): StateSnapshot
+```
+
+Returns a read-only snapshot of the current world model, goals, and journal summary. Useful for debugging and introspection.
+
+#### `inspectJournal()`
+
+```typescript
+function inspectJournal(
+  options?: { types?: JournalEntryType[]; count?: number }
+): JournalEntry[]
+```
+
+Returns filtered journal entries for inspection. Does not mutate state.
+
+#### `takeStateSnapshot()`
+
+```typescript
+function takeStateSnapshot(
+  label?: string
+): StateSnapshot
+```
+
+Saves a labeled snapshot of the current agent state to `~/.casterly/state/snapshots/`. Useful for before/after comparisons during debugging or development.
+
+#### `StateSnapshot`
+
+```typescript
+interface StateSnapshot {
+  timestamp: string;
+  label?: string;
+  worldModel: WorldModel;
+  recentJournal: JournalEntry[];
+  activeGoals: Goal[];
+  pendingTriggers: Trigger[];
+}
+```
+
+---
+
+### `src/agent/world-model.ts`
+
+#### `UserModel`
+
+```typescript
+interface UserModel {
+  preferences: Record<string, string>;
+  communicationStyle?: string;
+  knownFacts: string[];
+  interactionCount: number;
+  lastInteraction?: string;       // ISO 8601
+}
+```
+
+| Property | Description |
+|----------|-------------|
+| `preferences` | Key-value pairs of known user preferences (e.g., `{ "reply_length": "short" }`) |
+| `communicationStyle` | Observed communication style (e.g., "direct", "casual") |
+| `knownFacts` | Facts the user has shared or the agent has observed |
+| `interactionCount` | Total number of interactions with this user |
+| `lastInteraction` | Timestamp of the most recent interaction |
+
+#### `WorldModel.updateUserModel()`
+
+```typescript
+class WorldModel {
+  updateUserModel(update: Partial<UserModel>): void
+}
+```
+
+Merges partial user model updates into the current world model. Called after processing `user_interaction` journal entries or when the agent observes new user preferences.
+
+---
+
+### New Tools
+
+#### `recall_journal` Tool
+
+```typescript
+const RECALL_JOURNAL_TOOL: ToolSchema = {
+  name: 'recall_journal',
+  description: 'Search the agent journal for past context using natural language.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Natural-language search query (e.g., "what did the user say about calendar preferences?")'
+      },
+      types: {
+        type: 'array',
+        description: 'Optional filter by entry type',
+        items: { type: 'string', enum: ['handoff', 'reflection', 'opinion', 'observation', 'user_interaction'] }
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum number of results to return (default: 5)'
+      }
+    },
+    required: ['query']
+  }
+};
+```
+
+Returns matching journal entries ranked by relevance to the query. The agent uses this to recall past decisions, user preferences, and operational context without loading the full journal into the prompt.
+
+#### `consolidate` Tool
+
+```typescript
+const CONSOLIDATE_TOOL: ToolSchema = {
+  name: 'consolidate',
+  description: 'Consolidate recent journal entries into a summary, compacting operational memory.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      since: {
+        type: 'string',
+        description: 'ISO 8601 timestamp — consolidate entries since this time'
+      },
+      types: {
+        type: 'array',
+        description: 'Entry types to consolidate',
+        items: { type: 'string', enum: ['handoff', 'reflection', 'opinion', 'observation', 'user_interaction'] }
+      }
+    },
+    required: []
+  }
+};
+```
+
+Summarizes recent journal entries and appends a consolidated summary entry. Used during dream cycles or when the journal grows large, to keep operational memory compact without losing important context.
 
 ---
 

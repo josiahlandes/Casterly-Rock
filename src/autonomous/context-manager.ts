@@ -159,6 +159,8 @@ export class ContextManager {
         goalStack,
         issueLog,
         selfModel,
+        null,
+        null,
         this.config.identityConfig,
       );
 

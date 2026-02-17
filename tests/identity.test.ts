@@ -183,7 +183,7 @@ describe('Identity Prompt', () => {
       }
 
       // Set a very tight budget
-      const result = buildIdentityPrompt(null, goalStack, issueLog, null, {
+      const result = buildIdentityPrompt(null, goalStack, issueLog, null, null, null, {
         maxChars: 2000,
       });
 

@@ -41,6 +41,7 @@ import type { IssueLog, IssuePriority, Issue } from './issue-log.js';
 import type { WorldModel } from './world-model.js';
 import type { ToolSchema, NativeToolCall, NativeToolResult } from '../tools/schemas/types.js';
 import type { ContextManager } from './context-manager.js';
+import type { Journal } from './journal.js';
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
 import { AdversarialTester } from './reasoning/adversarial.js';
 
@@ -111,6 +112,8 @@ export interface AgentState {
   worldModel: WorldModel;
   /** Phase 4: Tiered memory context manager (optional for backwards compat) */
   contextManager?: ContextManager;
+  /** Journal for narrative memory (Phase 1) */
+  journal?: Journal;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -728,6 +731,62 @@ Use this after writing or modifying any non-trivial function.`,
       },
     },
     required: ['code', 'function_signature', 'target_file'],
+  },
+};
+
+const RECALL_JOURNAL_SCHEMA: ToolSchema = {
+  name: 'recall_journal',
+  description: `Search your journal for past observations, reflections, opinions, and handoff notes.
+
+Use this when you need continuity from previous sessions:
+- "What was I working on last time?"
+- "Any reflections about the provider interface?"
+- "What opinions have I formed about testing patterns?"
+
+Results include entry type, tags, and content. Handoff notes are especially useful for picking up where you left off.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Keywords to search for in journal entries.',
+      },
+      type: {
+        type: 'string',
+        description: 'Filter by entry type.',
+        enum: ['handoff', 'reflection', 'opinion', 'observation', 'user_interaction'],
+      },
+      limit: {
+        type: 'integer',
+        description: 'Maximum results to return. Defaults to 5.',
+      },
+    },
+    required: ['query'],
+  },
+};
+
+const CONSOLIDATE_SCHEMA: ToolSchema = {
+  name: 'consolidate',
+  description: `Consolidate your context by summarizing recent work and dropping details you no longer need.
+
+Use this when you notice your context is getting large or when you're switching between tasks.
+The consolidation writes a summary to your journal and clears warm tier working memory.
+
+This is a deliberate act of memory management — choose what to remember and what to let go.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      summary: {
+        type: 'string',
+        description: 'Your summary of what you learned and accomplished. This will be saved as a journal reflection.',
+      },
+      tags: {
+        type: 'array',
+        description: 'Tags for later recall.',
+        items: { type: 'string', description: 'A tag.' },
+      },
+    },
+    required: ['summary'],
   },
 };
 
@@ -1685,6 +1744,83 @@ function buildExecutors(
     });
   });
 
+  // ── recall_journal ──────────────────────────────────────────────────
+
+  executors.set('recall_journal', async (call) => {
+    if (!state.journal) {
+      return failureResult(call.id, 'Journal is not yet initialized. recall_journal is unavailable.');
+    }
+
+    const queryResult = requireString(call, 'query');
+    if ('error' in queryResult) return queryResult.error;
+
+    const entryType = optionalString(call, 'type');
+    const limit = optionalNumber(call, 'limit') ?? 5;
+
+    return tracer.withSpan('agent-loop', `recall_journal:${queryResult.value.slice(0, 30)}`, async () => {
+      let results = state.journal!.search(queryResult.value);
+
+      // Filter by type if specified
+      if (entryType) {
+        results = results.filter((e) => e.type === entryType);
+      }
+
+      // Limit results
+      results = results.slice(0, limit);
+
+      if (results.length === 0) {
+        return successResult(
+          call.id,
+          `No journal entries found for: "${queryResult.value}"${entryType ? ` (type: ${entryType})` : ''}`,
+          config.maxOutputChars,
+        );
+      }
+
+      const output = state.journal!.summarize(results);
+      return successResult(
+        call.id,
+        `Found ${results.length} journal entries:\n\n${output}`,
+        config.maxOutputChars,
+      );
+    });
+  });
+
+  // ── consolidate ─────────────────────────────────────────────────────
+
+  executors.set('consolidate', async (call) => {
+    const summaryResult = requireString(call, 'summary');
+    if ('error' in summaryResult) return summaryResult.error;
+
+    const tags = (call.input['tags'] as string[] | undefined) ?? ['consolidation'];
+
+    return tracer.withSpan('agent-loop', 'consolidate', async () => {
+      // Write a reflection to journal
+      if (state.journal) {
+        await state.journal.append({
+          type: 'reflection',
+          content: summaryResult.value,
+          tags,
+        });
+      }
+
+      // Clear warm tier if context manager is available
+      if (state.contextManager) {
+        state.contextManager.clearWarmTier();
+      }
+
+      tracer.log('context-budget', 'info', 'Context consolidated', {
+        summaryLength: summaryResult.value.length,
+        tags,
+      });
+
+      return successResult(
+        call.id,
+        `Context consolidated. Summary saved to journal with tags: ${tags.join(', ')}. Warm tier cleared.`,
+        config.maxOutputChars,
+      );
+    });
+  });
+
   return executors;
 }
 
@@ -1733,6 +1869,8 @@ export function buildAgentToolkit(
     ARCHIVE_SCHEMA,
     ADVERSARIAL_TEST_SCHEMA,
     UPDATE_WORLD_MODEL_SCHEMA,
+    RECALL_JOURNAL_SCHEMA,
+    CONSOLIDATE_SCHEMA,
   ];
 
   // Build all executors
@@ -1799,4 +1937,6 @@ export {
   UPDATE_GOAL_SCHEMA,
   DELEGATE_SCHEMA,
   MESSAGE_USER_SCHEMA,
+  RECALL_JOURNAL_SCHEMA,
+  CONSOLIDATE_SCHEMA,
 };

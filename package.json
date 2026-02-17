@@ -28,7 +28,8 @@
     "benchmark": "tsx src/benchmark-cli.ts run",
     "benchmark:compare": "tsx src/benchmark-cli.ts compare",
     "test:coverage": "vitest run --coverage",
-    "repl": "tsx src/terminal-repl.ts"
+    "repl": "tsx src/terminal-repl.ts",
+    "inspect": "tsx src/debug/inspector.ts"
   },
   "keywords": [],
   "author": "",
