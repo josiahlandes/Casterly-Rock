@@ -42,6 +42,7 @@ import type { WorldModel } from './world-model.js';
 import type { ToolSchema, NativeToolCall, NativeToolResult } from '../tools/schemas/types.js';
 import type { ContextManager } from './context-manager.js';
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
+import { AdversarialTester } from './reasoning/adversarial.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -695,6 +696,72 @@ Content is stored in the cool tier by default (searchable for 30 days, then prom
       },
     },
     required: ['title', 'content', 'tags'],
+  },
+};
+
+// ── ADVERSARIAL TESTING TOOL ─────────────────────────────────────────────────
+
+const ADVERSARIAL_TEST_SCHEMA: ToolSchema = {
+  name: 'adversarial_test',
+  description: `Generate adversarial test cases for a function you've just written or modified.
+This exercises the "skepticism of own output" trait — you write code, then immediately try to break it.
+
+The tool generates edge-case inputs (empty/null, boundary, unicode, injection, type coercion,
+malformed, concurrency) and creates a Vitest test file. You should then run the tests and fix
+any failures before committing.
+
+Use this after writing or modifying any non-trivial function.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      code: {
+        type: 'string',
+        description: 'The source code of the function to attack.',
+      },
+      function_signature: {
+        type: 'string',
+        description: 'The function signature (e.g., "detectSensitive(text: string): Match[]").',
+      },
+      target_file: {
+        type: 'string',
+        description: 'The file where the function lives (for the generated test import).',
+      },
+    },
+    required: ['code', 'function_signature', 'target_file'],
+  },
+};
+
+// ── UPDATE WORLD MODEL TOOL ──────────────────────────────────────────────────
+
+const UPDATE_WORLD_MODEL_SCHEMA: ToolSchema = {
+  name: 'update_world_model',
+  description: `Track or resolve a concern in the world model. Use 'add' to flag something
+you've observed (e.g., "flaky test in detector.test.ts"), or 'resolve' to clear
+a concern you've fixed. Concerns have severity levels: informational, worth-watching, needs-action.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['add', 'resolve'],
+        description: 'Whether to add a new concern or resolve an existing one.',
+      },
+      description: {
+        type: 'string',
+        description: 'Description of the concern.',
+      },
+      severity: {
+        type: 'string',
+        enum: ['informational', 'worth-watching', 'needs-action'],
+        description: 'Severity level (only for add).',
+      },
+      related_files: {
+        type: 'array',
+        items: { type: 'string', description: 'A file path.' },
+        description: 'Related file paths (only for add).',
+      },
+    },
+    required: ['action', 'description'],
   },
 };
 
@@ -1415,6 +1482,121 @@ function buildExecutors(
     );
   });
 
+  // ── update_world_model ──────────────────────────────────────────────────
+
+  executors.set('update_world_model', async (call) => {
+    const actionResult = requireString(call, 'action');
+    if ('error' in actionResult) return actionResult.error;
+    const descResult = requireString(call, 'description');
+    if ('error' in descResult) return descResult.error;
+
+    return tracer.withSpan('agent-loop', 'update_world_model', async () => {
+      const worldModel = state.worldModel;
+      if (!worldModel) {
+        return failureResult(call.id, 'World model not available.');
+      }
+
+      const action = actionResult.value;
+      const description = descResult.value;
+
+      if (action === 'add') {
+        const severityRaw = typeof call.input['severity'] === 'string'
+          ? call.input['severity']
+          : 'informational';
+        const severity = (['informational', 'worth-watching', 'needs-action'] as const)
+          .includes(severityRaw as 'informational')
+          ? (severityRaw as 'informational' | 'worth-watching' | 'needs-action')
+          : 'informational';
+
+        const relatedFiles = Array.isArray(call.input['related_files'])
+          ? (call.input['related_files'] as unknown[]).filter((f): f is string => typeof f === 'string')
+          : [];
+
+        worldModel.addConcern({ description, severity, relatedFiles });
+
+        return successResult(
+          call.id,
+          `Concern tracked: "${description}" [${severity}]`,
+          config.maxOutputChars,
+        );
+      } else if (action === 'resolve') {
+        const resolved = worldModel.removeConcern(description);
+
+        if (resolved) {
+          return successResult(call.id, `Concern resolved: "${description}"`, config.maxOutputChars);
+        } else {
+          return failureResult(call.id, `No concern found matching: "${description}"`);
+        }
+      } else {
+        return failureResult(call.id, `Unknown action: "${action}". Use "add" or "resolve".`);
+      }
+    });
+  });
+
+  // ── adversarial_test ────────────────────────────────────────────────────
+
+  executors.set('adversarial_test', async (call) => {
+    const codeResult = requireString(call, 'code');
+    if ('error' in codeResult) return codeResult.error;
+    const sigResult = requireString(call, 'function_signature');
+    if ('error' in sigResult) return sigResult.error;
+    const targetResult = requireString(call, 'target_file');
+    if ('error' in targetResult) return targetResult.error;
+
+    return tracer.withSpan('agent-loop', 'adversarial_test', async () => {
+      if (!delegateProvider) {
+        return failureResult(call.id, 'Adversarial testing requires an LLM provider for attack generation.');
+      }
+
+      try {
+        const tester = new AdversarialTester();
+        const report = await tester.buildReport(
+          codeResult.value,
+          sigResult.value,
+          targetResult.value,
+          delegateProvider,
+        );
+
+        if (report.testCases.length === 0) {
+          return successResult(call.id, 'No adversarial test cases generated.', config.maxOutputChars);
+        }
+
+        // Generate the test file content
+        const testFileContent = tester.generateTestFile(
+          report.testCases,
+          targetResult.value,
+          sigResult.value,
+        );
+
+        // Write the test file
+        const testFileName = targetResult.value
+          .replace(/\.[^.]+$/, '')
+          .replace(/\//g, '-');
+        const testPath = `tests/adversarial-${testFileName}.test.ts`;
+        const fullTestPath = `${config.projectRoot}/${testPath}`;
+
+        await mkdir(dirname(fullTestPath), { recursive: true });
+        await writeFile(fullTestPath, testFileContent, 'utf8');
+
+        tracer.log('agent-loop', 'info', `Adversarial: generated ${report.testCases.length} attacks → ${testPath}`);
+
+        const categories = [...new Set(report.testCases.map((tc) => tc.category))];
+        const output = [
+          `Generated ${report.testCases.length} adversarial test cases for ${sigResult.value}`,
+          `Categories: ${categories.join(', ')}`,
+          `Test file: ${testPath}`,
+          '',
+          'Run the tests with: run_tests tests/adversarial-' + testFileName,
+          'Fix any failures before committing.',
+        ].join('\n');
+
+        return successResult(call.id, output, config.maxOutputChars);
+      } catch (err) {
+        return failureResult(call.id, `Adversarial test generation failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+  });
+
   // ── recall ──────────────────────────────────────────────────────────────
 
   executors.set('recall', async (call) => {
@@ -1549,6 +1731,8 @@ export function buildAgentToolkit(
     MESSAGE_USER_SCHEMA,
     RECALL_SCHEMA,
     ARCHIVE_SCHEMA,
+    ADVERSARIAL_TEST_SCHEMA,
+    UPDATE_WORLD_MODEL_SCHEMA,
   ];
 
   // Build all executors

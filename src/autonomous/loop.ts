@@ -47,6 +47,13 @@ import type { FileWatcherConfig } from './watchers/file-watcher.js';
 import type { GitWatcherConfig } from './watchers/git-watcher.js';
 import type { IssueWatcherConfig } from './watchers/issue-watcher.js';
 
+// Phase 5: Reasoning scaling
+import { ReasoningScaler } from './reasoning/scaling.js';
+
+// Phase 6: Dream cycles and self-model
+import { DreamCycleRunner } from './dream/runner.js';
+import type { SelfModelSummary } from './identity.js';
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -124,6 +131,8 @@ export class AutonomousLoop {
   get configInstance(): AutonomousConfig { return this.config; }
   get gitInstance(): GitOperations { return this.git; }
   get pendingBranchList(): PendingBranch[] { return [...this._pendingBranches]; }
+  get dreamCycleRunnerInstance(): DreamCycleRunner { return this.dreamCycleRunner; }
+  get reasoningScalerInstance(): ReasoningScaler { return this.reasoningScaler; }
 
   // Phase 2: Agent loop state
   private worldModel: WorldModel;
@@ -136,6 +145,14 @@ export class AutonomousLoop {
 
   // Phase 4: Tiered memory
   private contextManager: ContextManager;
+
+  // Phase 5: Reasoning scaling
+  private reasoningScaler: ReasoningScaler;
+
+  // Phase 6: Dream cycles and self-model
+  private dreamCycleRunner: DreamCycleRunner;
+  private lastDreamCycleDate: string = '';
+  private selfModelSummary: SelfModelSummary | null = null;
 
   // Phase 3: Event-driven awareness
   private eventBus: EventBus;
@@ -185,6 +202,17 @@ export class AutonomousLoop {
 
     // Phase 4: Initialize tiered memory
     this.contextManager = createContextManager();
+
+    // Phase 5: Initialize reasoning scaler
+    const scalerOpts: Partial<{ codingModel: string; reasoningModel: string }> = {};
+    if (agentConfig?.codingModel) scalerOpts.codingModel = agentConfig.codingModel;
+    if (agentConfig?.reasoningModel) scalerOpts.reasoningModel = agentConfig.reasoningModel;
+    this.reasoningScaler = new ReasoningScaler(scalerOpts);
+
+    // Phase 6: Initialize dream cycle runner
+    this.dreamCycleRunner = new DreamCycleRunner({
+      projectRoot,
+    });
   }
 
   /**
@@ -205,6 +233,8 @@ export class AutonomousLoop {
       try {
         // Check if we should run
         if (!this.shouldRunCycle()) {
+          // During quiet hours, run dream cycle once per night
+          await this.runDreamCycleIfDue();
           await this.sleep(60_000); // Check again in 1 minute
           continue;
         }
@@ -738,18 +768,62 @@ export class AutonomousLoop {
         agentState,
       );
 
-      // 5. Build and run agent loop
+      // 4b. Phase 5: Assess difficulty and scale compute
+      const triggerDescription = effectiveTrigger.type === 'goal'
+        ? effectiveTrigger.goal.description
+        : effectiveTrigger.type === 'event'
+          ? effectiveTrigger.event.description
+          : 'scheduled cycle';
+
+      const difficulty = this.reasoningScaler.assessDifficulty(triggerDescription, {
+        fileCount: this.worldModel.getStats()?.totalFiles ?? 0,
+        totalLines: this.worldModel.getStats()?.totalLines ?? 0,
+        crossFile: effectiveTrigger.type === 'goal'
+          ? (effectiveTrigger.goal.notes ?? '').includes('cross-file')
+          : false,
+        hasFailingTests: (this.worldModel.getHealth()?.tests?.failing ?? 0) > 0,
+        previousAttempts: effectiveTrigger.type === 'goal'
+          ? effectiveTrigger.goal.attempts
+          : 0,
+        tags: [],
+      });
+
+      // Scale max turns by difficulty
+      const difficultyTurnMultiplier = { easy: 0.5, medium: 1.0, hard: 1.5 };
+      const scaledMaxTurns = Math.round(
+        (this.agentConfig.maxTurns ?? 20) * difficultyTurnMultiplier[difficulty]
+      );
+
+      tracer.log('agent-loop', 'info', `Difficulty: ${difficulty} → maxTurns: ${scaledMaxTurns}`);
+
+      // 5. Build and run agent loop (with self-model from Phase 6)
       const llmProvider = this.provider as unknown as import('../providers/base.js').LlmProvider;
 
       this.activeAgentLoop = createAgentLoop(
-        this.agentConfig,
+        { ...this.agentConfig, maxTurns: scaledMaxTurns },
         llmProvider,
         this.agentToolkit,
         agentState,
+        this.selfModelSummary,
       );
 
-      const outcome = await this.activeAgentLoop.run(effectiveTrigger);
-      this.activeAgentLoop = null;
+      let outcome: AgentOutcome;
+      try {
+        outcome = await this.activeAgentLoop.run(effectiveTrigger);
+      } finally {
+        this.activeAgentLoop = null;
+
+        // Always persist state — even if the cycle threw, partial
+        // progress (goal attempt counts, issue updates, world model
+        // concerns) should not be lost.
+        try {
+          await this.saveState();
+        } catch (saveErr) {
+          tracer.log('agent-loop', 'error', 'Failed to save state after cycle', {
+            error: saveErr instanceof Error ? saveErr.message : String(saveErr),
+          });
+        }
+      }
 
       // 6. Record activity
       this.worldModel.addActivity({
@@ -757,7 +831,7 @@ export class AutonomousLoop {
         source: 'tyrion',
       });
 
-      // 7. Save state
+      // 7. Save state (final — includes the activity record above)
       await this.saveState();
 
       // 8. Log outcome
@@ -1051,6 +1125,53 @@ export class AutonomousLoop {
   private generateCycleId(): string {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     return `${CYCLE_ID_PREFIX}-${timestamp}-${this.cycleCount}`;
+  }
+
+  // ── Phase 6: Dream Cycle ──────────────────────────────────────────────
+
+  /**
+   * Run a dream cycle during quiet hours, once per night.
+   * Dream cycles consolidate reflections, update the world model,
+   * explore code archaeology, rebuild the self-model, and write
+   * retrospectives.
+   */
+  private async runDreamCycleIfDue(): Promise<void> {
+    const today = new Date().toISOString().split('T')[0] ?? '';
+
+    // Only run once per calendar day
+    if (this.lastDreamCycleDate === today) return;
+
+    // Only during quiet hours
+    if (this.shouldRunCycle()) return;
+
+    const tracer = getTracer();
+    tracer.log('dream', 'info', 'Dream cycle starting (quiet hours)');
+
+    try {
+      const outcome = await this.dreamCycleRunner.run(
+        this.worldModel,
+        this.goalStack,
+        this.issueLog,
+        this.reflector,
+        this.contextManager,
+      );
+
+      this.lastDreamCycleDate = today;
+
+      // Cache the self-model summary for agent loop cycles
+      const sm = this.dreamCycleRunner.getSelfModel();
+      this.selfModelSummary = sm.getSummary();
+
+      tracer.log('dream', 'info', `Dream cycle complete`, {
+        phasesCompleted: outcome.phasesCompleted,
+        phasesSkipped: outcome.phasesSkipped,
+        fragileFilesFound: outcome.fragileFilesFound,
+        abandonedFilesFound: outcome.abandonedFilesFound,
+      });
+    } catch (error) {
+      tracer.log('dream', 'error', `Dream cycle failed: ${error instanceof Error ? error.message : String(error)}`);
+      // Don't block the loop on dream cycle failure
+    }
   }
 
   private log(message: string, level: string = 'INFO'): void {

@@ -20,6 +20,8 @@
  * only codebase metadata and Tyrion's own observations.
  */
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { getTracer } from '../debug.js';
 import type { WorldModel } from '../world-model.js';
 import type { GoalStack } from '../goal-stack.js';
@@ -117,6 +119,7 @@ export class DreamCycleRunner {
   private readonly config: DreamCycleConfig;
   private readonly selfModel: SelfModel;
   private readonly archaeologist: CodeArchaeologist;
+  private lastRetrospectiveDate: string = '';
 
   constructor(config?: Partial<DreamCycleConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -314,6 +317,29 @@ export class DreamCycleRunner {
       });
     }
 
+    // Ingest MEMORY.md into cold tier so recall() can search it.
+    // MEMORY.md is write-only from the reflector's perspective — this
+    // bridges it into the tiered memory system.
+    if (contextManager) {
+      try {
+        const memoryPath = join(this.config.projectRoot, 'MEMORY.md');
+        const memoryContent = await readFile(memoryPath, 'utf8');
+
+        if (memoryContent.length > 100) {
+          await contextManager.archive({
+            title: 'MEMORY.md snapshot',
+            content: memoryContent,
+            tags: ['memory-md', 'learnings', 'dream'],
+            tier: 'cold',
+            source: 'archive',
+          });
+          tracer.log('dream', 'info', `Ingested MEMORY.md (${memoryContent.length} chars) into cold tier`);
+        }
+      } catch {
+        // MEMORY.md doesn't exist yet — that's fine
+      }
+    }
+
     tracer.log('dream', 'info', `Consolidated ${reflections.length} reflections`, {
       successful: successful.length,
       failed: failed.length,
@@ -393,13 +419,25 @@ export class DreamCycleRunner {
 
   /**
    * Phase 6: Write a retrospective to MEMORY.md.
-   * Only writes if enough time has passed since the last one.
+   * Only writes if enough time has passed since the last one
+   * (respects retrospectiveIntervalDays config).
    */
   private async writeRetrospective(
     reflector: Reflector,
     outcome: DreamOutcome,
   ): Promise<boolean> {
     const tracer = getTracer();
+
+    // Time-guard: only write once per retrospectiveIntervalDays
+    const today = new Date().toISOString().split('T')[0] ?? '';
+    if (this.lastRetrospectiveDate) {
+      const lastDate = new Date(this.lastRetrospectiveDate).getTime();
+      const intervalMs = this.config.retrospectiveIntervalDays * 24 * 60 * 60 * 1000;
+      if (Date.now() - lastDate < intervalMs) {
+        tracer.log('dream', 'debug', `Retrospective skipped: last written ${this.lastRetrospectiveDate}, interval is ${this.config.retrospectiveIntervalDays}d`);
+        return false;
+      }
+    }
 
     // Build the narrative
     let narrative: string;
@@ -427,6 +465,7 @@ export class DreamCycleRunner {
       content: summary,
     });
 
+    this.lastRetrospectiveDate = today;
     tracer.log('dream', 'info', 'Retrospective written to MEMORY.md');
     return true;
   }

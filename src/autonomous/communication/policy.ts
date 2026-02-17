@@ -162,8 +162,14 @@ export class MessagePolicy {
       return { allowed: false, reason: 'Messaging is disabled' };
     }
 
-    // Quiet hours check
-    if (this.isQuietHours(now)) {
+    // Critical/high security concerns bypass quiet hours and throttle.
+    // A subtle bug doesn't warrant waking someone up, but a critical
+    // vulnerability always does.
+    const isCriticalSecurity = event.type === 'security_concern' &&
+      (event.severity === 'critical' || event.severity === 'high');
+
+    // Quiet hours check (bypassed for critical security)
+    if (!isCriticalSecurity && this.isQuietHours(now)) {
       tracer.log('agent-loop', 'debug', `Message blocked: quiet hours`);
       return { allowed: false, reason: 'Quiet hours are active' };
     }
@@ -174,11 +180,13 @@ export class MessagePolicy {
       return eventDecision;
     }
 
-    // Throttle check
-    const throttleDecision = this.checkThrottle(now);
-    if (!throttleDecision.allowed) {
-      tracer.log('agent-loop', 'debug', `Message throttled: ${throttleDecision.reason}`);
-      return throttleDecision;
+    // Throttle check (bypassed for critical security)
+    if (!isCriticalSecurity) {
+      const throttleDecision = this.checkThrottle(now);
+      if (!throttleDecision.allowed) {
+        tracer.log('agent-loop', 'debug', `Message throttled: ${throttleDecision.reason}`);
+        return throttleDecision;
+      }
     }
 
     // Format the message

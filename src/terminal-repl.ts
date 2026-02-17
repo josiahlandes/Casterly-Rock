@@ -235,6 +235,7 @@ async function main(): Promise<void> {
     modeManager,
     jobStore,
     taskManager,
+    providers,
     // No approvalBridge — auto-approve at terminal
   };
 
@@ -246,7 +247,10 @@ async function main(): Promise<void> {
 
   const availableSkills = skillRegistry.getAvailable();
 
-  console.log(`\x1b[90mModel: ${config.local.model}\x1b[0m`);
+  const modelInfo = config.local.codingModel && config.local.codingModel !== config.local.model
+    ? `${config.local.model} (primary) / ${config.local.codingModel} (coding)`
+    : config.local.model;
+  console.log(`\x1b[90mModel: ${modelInfo}\x1b[0m`);
   console.log(`\x1b[90mSkills: ${availableSkills.length} loaded\x1b[0m`);
   console.log(`\x1b[90mTools: ${enableTools ? 'enabled' : 'disabled'}\x1b[0m`);
   console.log(`\x1b[90mDebug: ${debugMode ? 'on' : 'off'}\x1b[0m`);

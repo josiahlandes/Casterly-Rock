@@ -372,6 +372,12 @@ export class AgentLoop {
         });
       }
 
+      // Record goal attempt when working on a goal
+      if (trigger.type === 'goal' && this.state.goalStack) {
+        this.state.goalStack.recordAttempt(trigger.goal.id);
+        tracer.log('agent-loop', 'debug', `Recorded attempt for goal ${trigger.goal.id}`);
+      }
+
       const systemPrompt = buildSystemPrompt(trigger, this.toolkit.schemas);
       const fullSystemPrompt = `${identityPrompt}\n\n${systemPrompt}`;
 
@@ -575,6 +581,14 @@ export class AgentLoop {
         ...(error !== undefined ? { error } : {}),
       };
 
+      // Update goal notes with outcome so next cycle has context
+      if (trigger.type === 'goal' && this.state.goalStack) {
+        const progressNote = outcome.success
+          ? `Completed in ${turns.length} turns. ${filesModified.size} files modified.`
+          : `${stopReason} after ${turns.length} turns. ${summary || ''}`.trim();
+        this.state.goalStack.updateNotes(trigger.goal.id, progressNote);
+      }
+
       rootSpan.metadata['totalTurns'] = outcome.totalTurns;
       rootSpan.metadata['stopReason'] = outcome.stopReason;
       rootSpan.metadata['success'] = outcome.success;
@@ -674,6 +688,30 @@ export class AgentLoop {
           }
         }
         break;
+    }
+
+    // Populate warm tier with significant tool results.
+    // This feeds the working memory so the agent can reference past results
+    // within the current cycle without re-running tools.
+    if (this.state.contextManager && _result.success && _result.output) {
+      const significantTools = new Set([
+        'read_file', 'search_code', 'run_tests', 'run_command',
+        'recall', 'adversarial_test',
+      ]);
+
+      if (significantTools.has(toolCall.name) && _result.output.length > 50) {
+        // Truncate large outputs to stay within warm tier budget
+        const maxChars = 4000;
+        const content = _result.output.length > maxChars
+          ? _result.output.slice(0, maxChars) + '\n... (truncated)'
+          : _result.output;
+
+        this.state.contextManager.addToWarmTier({
+          key: `${toolCall.name}:${toolCall.id}`,
+          kind: 'tool_result',
+          content: `[${toolCall.name}] ${content}`,
+        });
+      }
     }
   }
 }
