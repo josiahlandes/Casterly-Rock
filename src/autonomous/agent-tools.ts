@@ -42,6 +42,7 @@ import type { WorldModel } from './world-model.js';
 import type { ToolSchema, NativeToolCall, NativeToolResult } from '../tools/schemas/types.js';
 import type { ContextManager } from './context-manager.js';
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
+import { AdversarialTester } from './reasoning/adversarial.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -695,6 +696,38 @@ Content is stored in the cool tier by default (searchable for 30 days, then prom
       },
     },
     required: ['title', 'content', 'tags'],
+  },
+};
+
+// ── ADVERSARIAL TESTING TOOL ─────────────────────────────────────────────────
+
+const ADVERSARIAL_TEST_SCHEMA: ToolSchema = {
+  name: 'adversarial_test',
+  description: `Generate adversarial test cases for a function you've just written or modified.
+This exercises the "skepticism of own output" trait — you write code, then immediately try to break it.
+
+The tool generates edge-case inputs (empty/null, boundary, unicode, injection, type coercion,
+malformed, concurrency) and creates a Vitest test file. You should then run the tests and fix
+any failures before committing.
+
+Use this after writing or modifying any non-trivial function.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      code: {
+        type: 'string',
+        description: 'The source code of the function to attack.',
+      },
+      function_signature: {
+        type: 'string',
+        description: 'The function signature (e.g., "detectSensitive(text: string): Match[]").',
+      },
+      target_file: {
+        type: 'string',
+        description: 'The file where the function lives (for the generated test import).',
+      },
+    },
+    required: ['code', 'function_signature', 'target_file'],
   },
 };
 
@@ -1415,6 +1448,70 @@ function buildExecutors(
     );
   });
 
+  // ── adversarial_test ────────────────────────────────────────────────────
+
+  executors.set('adversarial_test', async (call) => {
+    const codeResult = requireString(call, 'code');
+    if ('error' in codeResult) return codeResult.error;
+    const sigResult = requireString(call, 'function_signature');
+    if ('error' in sigResult) return sigResult.error;
+    const targetResult = requireString(call, 'target_file');
+    if ('error' in targetResult) return targetResult.error;
+
+    return tracer.withSpan('agent-loop', 'adversarial_test', async () => {
+      if (!delegateProvider) {
+        return failureResult(call.id, 'Adversarial testing requires an LLM provider for attack generation.');
+      }
+
+      try {
+        const tester = new AdversarialTester();
+        const report = await tester.buildReport(
+          codeResult.value,
+          sigResult.value,
+          targetResult.value,
+          delegateProvider,
+        );
+
+        if (report.testCases.length === 0) {
+          return successResult(call.id, 'No adversarial test cases generated.', config.maxOutputChars);
+        }
+
+        // Generate the test file content
+        const testFileContent = tester.generateTestFile(
+          report.testCases,
+          targetResult.value,
+          sigResult.value,
+        );
+
+        // Write the test file
+        const testFileName = targetResult.value
+          .replace(/\.[^.]+$/, '')
+          .replace(/\//g, '-');
+        const testPath = `tests/adversarial-${testFileName}.test.ts`;
+        const fullTestPath = `${config.projectRoot}/${testPath}`;
+
+        await mkdir(dirname(fullTestPath), { recursive: true });
+        await writeFile(fullTestPath, testFileContent, 'utf8');
+
+        tracer.log('agent-loop', 'info', `Adversarial: generated ${report.testCases.length} attacks → ${testPath}`);
+
+        const categories = [...new Set(report.testCases.map((tc) => tc.category))];
+        const output = [
+          `Generated ${report.testCases.length} adversarial test cases for ${sigResult.value}`,
+          `Categories: ${categories.join(', ')}`,
+          `Test file: ${testPath}`,
+          '',
+          'Run the tests with: run_tests tests/adversarial-' + testFileName,
+          'Fix any failures before committing.',
+        ].join('\n');
+
+        return successResult(call.id, output, config.maxOutputChars);
+      } catch (err) {
+        return failureResult(call.id, `Adversarial test generation failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+  });
+
   // ── recall ──────────────────────────────────────────────────────────────
 
   executors.set('recall', async (call) => {
@@ -1549,6 +1646,7 @@ export function buildAgentToolkit(
     MESSAGE_USER_SCHEMA,
     RECALL_SCHEMA,
     ARCHIVE_SCHEMA,
+    ADVERSARIAL_TEST_SCHEMA,
   ];
 
   // Build all executors

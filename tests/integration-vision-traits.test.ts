@@ -1014,6 +1014,90 @@ describe('Proportional Judgment', () => {
       expect(decision.allowed).toBe(true);
     });
 
+    it('critical/high security concerns bypass throttle limits', async () => {
+      const { MessagePolicy } = await import(
+        '../src/autonomous/communication/policy.js'
+      );
+      const policy = new MessagePolicy({
+        enabled: true,
+        throttle: {
+          maxPerHour: 1,
+          maxPerDay: 1,
+          quietHours: false,
+          quietStart: '22:00',
+          quietEnd: '08:00',
+        },
+      });
+
+      // Exhaust the throttle
+      policy.recordSent({ type: 'fix_complete', description: 'test', branch: 'main' });
+      policy.recordSent({ type: 'fix_complete', description: 'test', branch: 'main' });
+
+      // Normal event should be throttled
+      const normalDecision = policy.shouldNotify({
+        type: 'fix_complete',
+        description: 'Fixed a typo',
+        branch: 'auto/typo',
+      });
+      expect(normalDecision.allowed).toBe(false);
+
+      // Critical security should bypass throttle
+      const criticalDecision = policy.shouldNotify({
+        type: 'security_concern',
+        description: 'API key exposed',
+        severity: 'critical',
+      });
+      expect(criticalDecision.allowed).toBe(true);
+
+      // High security should also bypass
+      const highDecision = policy.shouldNotify({
+        type: 'security_concern',
+        description: 'Weak encryption',
+        severity: 'high',
+      });
+      expect(highDecision.allowed).toBe(true);
+
+      // Low security should NOT bypass
+      const lowDecision = policy.shouldNotify({
+        type: 'security_concern',
+        description: 'Minor info disclosure',
+        severity: 'low',
+      });
+      expect(lowDecision.allowed).toBe(false);
+    });
+
+    it('critical security concerns bypass quiet hours', async () => {
+      const { MessagePolicy } = await import(
+        '../src/autonomous/communication/policy.js'
+      );
+      const policy = new MessagePolicy({
+        enabled: true,
+        throttle: {
+          maxPerHour: 100,
+          maxPerDay: 100,
+          quietHours: true,
+          quietStart: '00:00',
+          quietEnd: '23:59',
+        },
+      });
+
+      // It's always quiet hours with this config
+      const normalDecision = policy.shouldNotify({
+        type: 'fix_complete',
+        description: 'Fixed test',
+        branch: 'auto/fix',
+      });
+      expect(normalDecision.allowed).toBe(false);
+
+      // Critical security bypasses quiet hours
+      const criticalDecision = policy.shouldNotify({
+        type: 'security_concern',
+        description: 'Credentials exposed',
+        severity: 'critical',
+      });
+      expect(criticalDecision.allowed).toBe(true);
+    });
+
     it('test failures under investigation are suppressed', async () => {
       const { MessagePolicy } = await import(
         '../src/autonomous/communication/policy.js'
@@ -1425,46 +1509,49 @@ describe('Wiring Validation', () => {
     });
   });
 
-  describe('modules NOT yet wired (known integration gaps)', () => {
-    it('AdversarialTester is NOT called from agent-loop.ts', () => {
+  describe('modules NOW wired into the runtime (Phase 5/6 integration)', () => {
+    it('AdversarialTester is wired into agent-tools.ts', () => {
       const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/agent-loop.ts'),
+        resolve(PROJECT_ROOT, 'src/autonomous/agent-tools.ts'),
         'utf8',
       );
-      // This test documents the gap — when wired, flip the assertion
-      expect(source).not.toContain('AdversarialTester');
+      expect(source).toContain('AdversarialTester');
+      expect(source).toContain('adversarial_test');
     });
 
-    it('AdversarialTester is NOT called from loop.ts', () => {
+    it('ReasoningScaler is wired into loop.ts', () => {
       const source = readFileSync(
         resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
         'utf8',
       );
-      expect(source).not.toContain('AdversarialTester');
+      expect(source).toContain('ReasoningScaler');
+      expect(source).toContain('assessDifficulty');
     });
 
-    it('ReasoningScaler is NOT called from agent-loop.ts', () => {
-      const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/agent-loop.ts'),
-        'utf8',
-      );
-      expect(source).not.toContain('ReasoningScaler');
-    });
-
-    it('ReasoningScaler is NOT called from loop.ts', () => {
+    it('DreamCycleRunner is wired into loop.ts', () => {
       const source = readFileSync(
         resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
         'utf8',
       );
-      expect(source).not.toContain('ReasoningScaler');
+      expect(source).toContain('DreamCycleRunner');
+      expect(source).toContain('runDreamCycleIfDue');
     });
 
-    it('DreamCycleRunner is NOT called from loop.ts', () => {
+    it('self-model is passed from dream cycle to agent loop', () => {
       const source = readFileSync(
         resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
         'utf8',
       );
-      expect(source).not.toContain('DreamCycleRunner');
+      expect(source).toContain('selfModelSummary');
+    });
+
+    it('difficulty assessment scales agent loop turns', () => {
+      const source = readFileSync(
+        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
+        'utf8',
+      );
+      expect(source).toContain('difficultyTurnMultiplier');
+      expect(source).toContain('scaledMaxTurns');
     });
   });
 
