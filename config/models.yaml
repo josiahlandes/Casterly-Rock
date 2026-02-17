@@ -11,6 +11,7 @@ models:
     model: qwen3-coder-next:latest
     context_length: 32768
     temperature: 0.1  # Low for code accuracy
+    keep_alive: -1    # Never unload (Phase 5: always-hot)
     fallback: gpt-oss:120b
 
   # Primary/General: reasoning, planning, conversation
@@ -19,6 +20,7 @@ models:
     model: gpt-oss:120b
     context_length: 32768
     temperature: 0.6  # Balanced for tool use + reasoning
+    keep_alive: -1    # Never unload (Phase 5: always-hot)
     fallback: null  # No fallback - this is the fallback
 
   # Autonomous improvement cycles
@@ -27,7 +29,17 @@ models:
     model: qwen3-coder-next:latest
     context_length: 32768
     temperature: 0.2  # Slightly higher for exploration
+    keep_alive: -1    # Never unload (Phase 5: always-hot)
     fallback: gpt-oss:120b
+
+  # Future: specialist model from self-distillation (Phase 6)
+  specialist:
+    provider: ollama
+    model: tyrion-specialist:latest
+    context_length: 32768
+    temperature: 0.2
+    keep_alive: -1
+    enabled: false    # Enabled after first training run
 
 # Task-to-model routing
 routing:
@@ -44,11 +56,12 @@ routing:
   validate: coding
   reflect: primary
 
-# Hardware constraints
+# Hardware constraints (Phase 5: maximization)
 hardware:
   platform: mac-studio-m4-max
   memory_gb: 128
-  max_concurrent_models: 2  # Can run 2x 70B models at Q4
+  max_concurrent_models: 3  # Updated: can run 3 models with 128GB (Phase 5)
+  target_memory_usage_pct: 70  # Leave 30% headroom for OS and tools
 
 # Ollama settings
 ollama:

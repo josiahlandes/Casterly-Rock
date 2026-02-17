@@ -96,6 +96,200 @@ autonomous:
   # budget: null
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AGENT LOOP (Phase 2: ReAct)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+agent_loop:
+  # Master switch — when true, use the new ReAct agent loop instead of
+  # the legacy 4-phase pipeline
+  enabled: false
+
+  # Maximum reasoning turns per cycle (prevents infinite loops)
+  max_turns: 20
+
+  # Soft limit on estimated tokens per cycle (input + output)
+  max_tokens_per_cycle: 50000
+
+  # Model used for reasoning / planning / decision-making
+  reasoning_model: gpt-oss:120b
+
+  # Model used for code generation and analysis
+  coding_model: qwen3-coder-next:latest
+
+  # Enable the 'think' tool for explicit reasoning steps
+  think_tool_enabled: true
+
+  # Enable delegation to sub-models
+  delegation_enabled: true
+
+  # Enable user messaging (Phase 7 placeholder — keep false until Phase 7)
+  user_messaging_enabled: false
+
+  # Temperature for the reasoning model
+  temperature: 0.2
+
+  # Maximum tokens per individual LLM response
+  max_response_tokens: 4096
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EVENTS (Phase 3: Event-Driven Awareness)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+events:
+  # Master switch — when true, file/git/issue watchers emit events
+  # that trigger agent cycles instead of relying on a fixed timer
+  enabled: false
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # FILE WATCHER
+  # ─────────────────────────────────────────────────────────────────────────────
+  file_watcher:
+    enabled: true
+    # Directories to watch for file changes (relative to project root)
+    paths:
+      - src/
+      - tests/
+      - config/
+    # Glob patterns to ignore (never trigger on these)
+    ignore_patterns:
+      - "**/node_modules/**"
+      - "**/.git/**"
+      - "**/dist/**"
+      - "**/*.log"
+    # Debounce window in milliseconds (batch rapid changes)
+    debounce_ms: 500
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # GIT WATCHER
+  # ─────────────────────────────────────────────────────────────────────────────
+  git_watcher:
+    enabled: true
+    # How often to poll .git/refs for changes (milliseconds)
+    poll_interval_ms: 5000
+    # Debounce window for ref changes
+    debounce_ms: 1000
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ISSUE WATCHER
+  # ─────────────────────────────────────────────────────────────────────────────
+  issue_watcher:
+    enabled: true
+    # How often to check for stale issues (milliseconds)
+    # Default: 6 hours (21600000)
+    check_interval_ms: 21600000
+    # Days without activity before an issue is considered stale
+    stale_days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THROTTLING
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # Minimum seconds between event-triggered cycles (prevents thrashing)
+  cooldown_seconds: 120
+
+  # Maximum agent loop turns per day from event-triggered cycles
+  daily_budget_turns: 200
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TIERED MEMORY (Phase 4: MemGPT-style context management)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+memory_tiers:
+  # Hot tier: identity prompt, always in context (~4k tokens)
+  hot_tier_max_tokens: 2000
+
+  # Warm tier: working memory for current cycle (~20k tokens)
+  warm_tier_max_tokens: 10000
+
+  # Overall context window size in tokens
+  context_window_tokens: 32768
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # COOL/COLD STORAGE
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # Base path for persistent memory storage
+  store_base_path: ~/.casterly/memory
+
+  # Maximum entries in the cool tier before oldest are promoted to cold
+  max_cool_entries: 200
+
+  # Days before cool entries are promoted to cold tier
+  cool_retention_days: 30
+
+  # Default number of results from recall searches
+  default_search_limit: 10
+
+  # Path to existing reflections directory (cold tier integration)
+  reflections_path: ~/.casterly/autonomous/reflections
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HARDWARE MAXIMIZATION (Phase 5: concurrent inference + test-time scaling)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+hardware:
+  # Concurrent inference across multiple models
+  concurrent_inference: true
+  max_concurrent_requests: 3
+
+  # Test-time compute scaling (difficulty-adaptive reasoning)
+  test_time_scaling: true
+  max_parallel_generations: 4
+
+  # Adversarial self-testing after code generation
+  adversarial_testing: true
+  max_adversarial_test_cases: 10
+  adversarial_attack_temperature: 0.7
+
+  # Best-of-N judging model
+  bestofn_judge_model: gpt-oss:120b
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DREAM CYCLES (Phase 6: quiet-hours strategic consolidation)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dream_cycles:
+  # Master switch — enable dream cycles during quiet hours
+  enabled: false
+
+  # Hours between consolidation runs
+  consolidation_interval_hours: 24
+
+  # Maximum turns for the exploration phase
+  exploration_budget_turns: 50
+
+  # Hours between self-model rebuilds
+  self_model_rebuild_interval_hours: 48
+
+  # Days to look back for code archaeology
+  archaeology_lookback_days: 90
+
+  # Days between retrospective writes
+  retrospective_interval_days: 7
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMMUNICATION (Phase 7: proactive user messaging)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+communication:
+  # Master switch — enable proactive user messaging
+  enabled: false
+
+  # Throttle settings
+  throttle:
+    max_per_hour: 3
+    max_per_day: 10
+    quiet_hours: true
+    quiet_start: "22:00"
+    quiet_end: "08:00"
+
+  # Only notify about test failures Tyrion can't fix himself
+  test_failure_min_severity: unresolvable   # 'always' or 'unresolvable'
+
+  # Enable daily summary notifications
+  daily_summary_enabled: true
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -25,12 +25,70 @@ import type {
   PendingBranch,
 } from './types.js';
 
+// Phase 2: Agent Loop imports
+import { AgentLoop, createAgentLoop } from './agent-loop.js';
+import type { AgentTrigger, AgentLoopConfig, AgentOutcome } from './agent-loop.js';
+import { buildAgentToolkit } from './agent-tools.js';
+import type { AgentToolkit, AgentState } from './agent-tools.js';
+import { WorldModel } from './world-model.js';
+import { GoalStack } from './goal-stack.js';
+import { IssueLog } from './issue-log.js';
+import { getTracer } from './debug.js';
+
+// Phase 3: Event-Driven Awareness imports
+import { ContextManager, createContextManager } from './context-manager.js';
+import type { ContextManagerConfig } from './context-manager.js';
+import { EventBus, type SystemEvent } from './events.js';
+import type { EventBusConfig } from './events.js';
+import { FileWatcher } from './watchers/file-watcher.js';
+import { GitWatcher } from './watchers/git-watcher.js';
+import { IssueWatcher } from './watchers/issue-watcher.js';
+import type { FileWatcherConfig } from './watchers/file-watcher.js';
+import type { GitWatcherConfig } from './watchers/git-watcher.js';
+import type { IssueWatcherConfig } from './watchers/issue-watcher.js';
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 
 const DEFAULT_CONFIG_PATH = 'config/autonomous.yaml';
 const CYCLE_ID_PREFIX = 'cycle';
+
+// ============================================================================
+// PHASE 3: EVENTS CONFIGURATION
+// ============================================================================
+
+/**
+ * Configuration for the event-driven awareness system.
+ */
+export interface EventsConfig {
+  /** Whether the event system is enabled */
+  enabled: boolean;
+
+  /** File watcher config overrides */
+  fileWatcher: Partial<FileWatcherConfig> & { enabled: boolean };
+
+  /** Git watcher config overrides */
+  gitWatcher: Partial<GitWatcherConfig> & { enabled: boolean };
+
+  /** Issue watcher config overrides */
+  issueWatcher: Partial<IssueWatcherConfig> & { enabled: boolean };
+
+  /** Minimum seconds between agent cycles (cooldown) */
+  cooldownSeconds: number;
+
+  /** Maximum agent turns per day across all cycles */
+  dailyBudgetTurns: number;
+}
+
+const DEFAULT_EVENTS_CONFIG: EventsConfig = {
+  enabled: false,
+  fileWatcher: { enabled: true, debounceMs: 500 },
+  gitWatcher: { enabled: true, debounceMs: 1000 },
+  issueWatcher: { enabled: true, checkIntervalMs: 6 * 60 * 60 * 1000 },
+  cooldownSeconds: 30,
+  dailyBudgetTurns: 500,
+};
 
 // ============================================================================
 // AUTONOMOUS LOOP
@@ -67,11 +125,34 @@ export class AutonomousLoop {
   get gitInstance(): GitOperations { return this.git; }
   get pendingBranchList(): PendingBranch[] { return [...this._pendingBranches]; }
 
+  // Phase 2: Agent loop state
+  private worldModel: WorldModel;
+  private goalStack: GoalStack;
+  private issueLog: IssueLog;
+  private agentToolkit: AgentToolkit | null = null;
+  private activeAgentLoop: AgentLoop | null = null;
+  private agentConfig: Partial<AgentLoopConfig>;
+  private useAgentLoop: boolean = false;
+
+  // Phase 4: Tiered memory
+  private contextManager: ContextManager;
+
+  // Phase 3: Event-driven awareness
+  private eventBus: EventBus;
+  private fileWatcher: FileWatcher | null = null;
+  private gitWatcher: GitWatcher | null = null;
+  private issueWatcher: IssueWatcher | null = null;
+  private lastCycleEndMs: number = 0;
+  private dailyTurnCount: number = 0;
+  private eventsConfig: EventsConfig;
+
   constructor(
     config: AutonomousConfig,
     projectRoot: string,
     provider: AutonomousProvider,
     options?: LoopOptions,
+    agentConfig?: Partial<AgentLoopConfig> & { enabled?: boolean },
+    eventsConfig?: Partial<EventsConfig>,
   ) {
     this.config = config;
     this.projectRoot = projectRoot;
@@ -87,6 +168,23 @@ export class AutonomousLoop {
       invariants: buildInvariants(config),
     });
     this.reflector = new Reflector({ projectRoot });
+
+    // Phase 2: Initialize persistent state
+    this.worldModel = new WorldModel({ projectRoot });
+    this.goalStack = new GoalStack();
+    this.issueLog = new IssueLog();
+    this.agentConfig = agentConfig ?? {};
+    this.useAgentLoop = agentConfig?.enabled ?? false;
+
+    // Phase 3: Initialize event system
+    this.eventsConfig = { ...DEFAULT_EVENTS_CONFIG, ...eventsConfig };
+    this.eventBus = new EventBus({
+      maxQueueSize: 100,
+      logEvents: true,
+    });
+
+    // Phase 4: Initialize tiered memory
+    this.contextManager = createContextManager();
   }
 
   /**
@@ -315,6 +413,70 @@ export class AutonomousLoop {
     }
   }
 
+  // ── Phase 2: Agent Loop Cycle ─────────────────────────────────────────────
+
+  /**
+   * Load persistent state from disk. Called at the start of the loop
+   * and before each agent cycle.
+   */
+  async loadState(): Promise<void> {
+    const tracer = getTracer();
+    tracer.log('agent-loop', 'debug', 'Loading persistent state');
+    await Promise.all([
+      this.worldModel.load(),
+      this.goalStack.load(),
+      this.issueLog.load(),
+    ]);
+  }
+
+  /**
+   * Save persistent state to disk. Called after each agent cycle.
+   */
+  async saveState(): Promise<void> {
+    const tracer = getTracer();
+    tracer.log('agent-loop', 'debug', 'Saving persistent state');
+    await Promise.all([
+      this.worldModel.save(),
+      this.goalStack.save(),
+      this.issueLog.save(),
+    ]);
+  }
+
+  /**
+   * Determine the trigger for an agent cycle. Checks:
+   *   1. Is there a goal in progress? Continue it.
+   *   2. Is there a pending goal? Start it.
+   *   3. Default to scheduled.
+   */
+  private determineTrigger(): AgentTrigger {
+    const nextGoal = this.goalStack.getNextGoal();
+    if (nextGoal) {
+      return { type: 'goal', goal: nextGoal };
+    }
+    return { type: 'scheduled' };
+  }
+
+  /**
+   * Abort the currently running agent cycle. Used when a user message
+   * arrives and should preempt autonomous work.
+   */
+  abortAgentCycle(): void {
+    if (this.activeAgentLoop) {
+      this.activeAgentLoop.abort();
+    }
+  }
+
+  /**
+   * Get references to the persistent state (for external access).
+   */
+  getState(): { worldModel: WorldModel; goalStack: GoalStack; issueLog: IssueLog } {
+    return {
+      worldModel: this.worldModel,
+      goalStack: this.goalStack,
+      issueLog: this.issueLog,
+    };
+  }
+
   /**
    * Check if the abort signal has fired and throw if so.
    */
@@ -326,7 +488,295 @@ export class AutonomousLoop {
   }
 
   /**
+   * Get the event bus (for external event emission).
+   */
+  getEventBus(): EventBus {
+    return this.eventBus;
+  }
+
+  // ── Phase 3: Event-Driven Awareness ───────────────────────────────────
+
+  /**
+   * Start all watchers and the event-driven loop.
+   * Call this instead of (or alongside) start() when event mode is enabled.
+   */
+  async startEventDriven(): Promise<void> {
+    const tracer = getTracer();
+
+    if (!this.eventsConfig.enabled) {
+      tracer.log('events', 'info', 'Event-driven mode is disabled');
+      return;
+    }
+
+    tracer.log('events', 'info', 'Starting event-driven mode');
+
+    // Load persistent state first
+    await this.loadState();
+
+    // Start watchers
+    await this.startWatchers();
+
+    // Wire up the event bus to trigger agent cycles
+    this.eventBus.onAny((event) => {
+      this.handleEvent(event).catch((err) => {
+        tracer.log('events', 'error', 'Event handler error', {
+          eventType: event.type,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
+
+    tracer.log('events', 'info', 'Event-driven mode started');
+  }
+
+  /**
+   * Stop all watchers and the event-driven loop.
+   */
+  stopEventDriven(): void {
+    const tracer = getTracer();
+    this.stopWatchers();
+    this.eventBus.reset();
+    tracer.log('events', 'info', 'Event-driven mode stopped');
+  }
+
+  /**
+   * Start individual watchers based on config.
+   */
+  private async startWatchers(): Promise<void> {
+    const tracer = getTracer();
+
+    if (this.eventsConfig.fileWatcher.enabled) {
+      this.fileWatcher = new FileWatcher(this.eventBus, {
+        projectRoot: this.projectRoot,
+        ...this.eventsConfig.fileWatcher,
+      });
+      await this.fileWatcher.start();
+    }
+
+    if (this.eventsConfig.gitWatcher.enabled) {
+      this.gitWatcher = new GitWatcher(this.eventBus, {
+        projectRoot: this.projectRoot,
+        ...this.eventsConfig.gitWatcher,
+      });
+      await this.gitWatcher.start();
+    }
+
+    if (this.eventsConfig.issueWatcher.enabled) {
+      this.issueWatcher = new IssueWatcher(this.eventBus, this.issueLog, {
+        ...this.eventsConfig.issueWatcher,
+      });
+      this.issueWatcher.start();
+    }
+
+    tracer.log('events', 'info', 'Watchers started', {
+      fileWatcher: this.fileWatcher?.isRunning() ?? false,
+      gitWatcher: this.gitWatcher?.isRunning() ?? false,
+      issueWatcher: this.issueWatcher?.isRunning() ?? false,
+    });
+  }
+
+  /**
+   * Stop all watchers.
+   */
+  private stopWatchers(): void {
+    this.fileWatcher?.stop();
+    this.fileWatcher = null;
+    this.gitWatcher?.stop();
+    this.gitWatcher = null;
+    this.issueWatcher?.stop();
+    this.issueWatcher = null;
+  }
+
+  /**
+   * Handle an incoming event. Decides whether to trigger an agent cycle
+   * based on cooldown, budget, and whether a cycle is already running.
+   */
+  private async handleEvent(event: SystemEvent): Promise<void> {
+    const tracer = getTracer();
+
+    // Check if agent loop is enabled
+    if (!this.useAgentLoop) {
+      tracer.log('events', 'debug', `Event ${event.type} ignored (agent loop disabled)`);
+      return;
+    }
+
+    // Check if a cycle is already running
+    if (this.activeAgentLoop !== null) {
+      // User messages abort the current cycle
+      if (event.type === 'user_message') {
+        tracer.log('events', 'info', 'User message received — aborting current cycle');
+        this.abortAgentCycle();
+      } else {
+        tracer.log('events', 'debug', `Event ${event.type} queued (cycle in progress)`);
+      }
+      return;
+    }
+
+    // Check cooldown
+    const nowMs = Date.now();
+    const cooldownMs = this.eventsConfig.cooldownSeconds * 1000;
+    if (nowMs - this.lastCycleEndMs < cooldownMs) {
+      tracer.log('events', 'debug', `Event ${event.type} deferred (cooldown active)`);
+      return;
+    }
+
+    // Check daily turn budget
+    if (this.dailyTurnCount >= this.eventsConfig.dailyBudgetTurns) {
+      tracer.log('events', 'warn', `Daily turn budget exhausted (${this.dailyTurnCount}/${this.eventsConfig.dailyBudgetTurns})`);
+      return;
+    }
+
+    // Build trigger from event
+    const trigger = this.buildTriggerFromEvent(event);
+
+    tracer.log('events', 'info', `Triggering agent cycle from ${event.type}`);
+
+    // Run the agent cycle
+    const outcome = await this.runAgentCycle(trigger);
+
+    // Update budgets
+    this.lastCycleEndMs = Date.now();
+    this.dailyTurnCount += outcome.totalTurns;
+  }
+
+  /**
+   * Convert a SystemEvent into an AgentTrigger for the agent loop.
+   */
+  private buildTriggerFromEvent(event: SystemEvent): AgentTrigger {
+    switch (event.type) {
+      case 'user_message':
+        return { type: 'user', message: event.message, sender: event.sender };
+
+      case 'test_failed':
+      case 'build_error':
+      case 'file_changed':
+      case 'git_push':
+      case 'issue_stale':
+        return {
+          type: 'event',
+          event: {
+            kind: event.type,
+            description: this.describeEvent(event),
+            timestamp: event.timestamp,
+          },
+        };
+
+      case 'scheduled':
+        return { type: 'scheduled' };
+    }
+  }
+
+  /**
+   * Generate a human-readable description of an event.
+   */
+  private describeEvent(event: SystemEvent): string {
+    switch (event.type) {
+      case 'file_changed':
+        return `${event.paths.length} files ${event.changeKind}: ${event.paths.slice(0, 3).join(', ')}${event.paths.length > 3 ? '...' : ''}`;
+      case 'test_failed':
+        return `Test failed: ${event.testName}`;
+      case 'git_push':
+        return `Push to ${event.branch}: ${event.commits.length} commits`;
+      case 'build_error':
+        return `Build error: ${event.error.slice(0, 100)}`;
+      case 'issue_stale':
+        return `Issue ${event.issueId} stale for ${event.daysSinceActivity} days`;
+      case 'user_message':
+        return `Message from ${event.sender}`;
+      case 'scheduled':
+        return event.reason;
+    }
+  }
+
+  /**
+   * Run a single improvement cycle using the ReAct agent loop.
+   * Loads state, determines trigger, builds toolkit, runs the loop,
+   * saves state, and logs the outcome. If no trigger is provided,
+   * auto-detects from goal stack (Phase 2 behavior).
+   */
+  async runAgentCycle(trigger?: AgentTrigger): Promise<AgentOutcome> {
+    const tracer = getTracer();
+    return tracer.withSpan('agent-loop', 'runAgentCycle', async () => {
+      this.cycleCount++;
+      this.dailyCycleCount++;
+
+      const cycleId = this.generateCycleId();
+      tracer.log('agent-loop', 'info', `=== Agent cycle ${cycleId} ===`);
+
+      // 1. Load state
+      await this.loadState();
+
+      // 2. Update world model (quick refresh)
+      await this.worldModel.updateActivity();
+
+      // 3. Determine trigger (use provided or auto-detect)
+      const effectiveTrigger = trigger ?? this.determineTrigger();
+
+      tracer.log('agent-loop', 'info', `Trigger: ${effectiveTrigger.type}`, {
+        ...(effectiveTrigger.type === 'goal'
+          ? { goalId: effectiveTrigger.goal.id, description: effectiveTrigger.goal.description }
+          : {}),
+        ...(effectiveTrigger.type === 'event'
+          ? { eventKind: effectiveTrigger.event.kind }
+          : {}),
+      });
+
+      // 4. Build toolkit (with Phase 4 context manager)
+      const agentState: AgentState = {
+        worldModel: this.worldModel,
+        goalStack: this.goalStack,
+        issueLog: this.issueLog,
+        contextManager: this.contextManager,
+      };
+
+      this.agentToolkit = buildAgentToolkit(
+        {
+          projectRoot: this.projectRoot,
+          allowedDirectories: this.config.allowedDirectories,
+          forbiddenPatterns: this.config.forbiddenPatterns,
+        },
+        agentState,
+      );
+
+      // 5. Build and run agent loop
+      const llmProvider = this.provider as unknown as import('../providers/base.js').LlmProvider;
+
+      this.activeAgentLoop = createAgentLoop(
+        this.agentConfig,
+        llmProvider,
+        this.agentToolkit,
+        agentState,
+      );
+
+      const outcome = await this.activeAgentLoop.run(effectiveTrigger);
+      this.activeAgentLoop = null;
+
+      // 6. Record activity
+      this.worldModel.addActivity({
+        description: `Agent cycle ${cycleId}: ${outcome.stopReason} (${outcome.totalTurns} turns)`,
+        source: 'tyrion',
+      });
+
+      // 7. Save state
+      await this.saveState();
+
+      // 8. Log outcome
+      tracer.log('agent-loop', 'info', `=== Agent cycle ${cycleId} complete ===`, {
+        success: outcome.success,
+        stopReason: outcome.stopReason,
+        totalTurns: outcome.totalTurns,
+        durationMs: outcome.durationMs,
+        filesModified: outcome.filesModified.length,
+        issuesFiled: outcome.issuesFiled.length,
+      });
+
+      return outcome;
+    });
+  }
+
+  /**
    * Attempt a single hypothesis.
+   * @deprecated Use runAgentCycle() instead. Retained for fallback.
    */
   private async attemptHypothesis(
     cycleId: string,
