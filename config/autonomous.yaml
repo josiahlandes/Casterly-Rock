@@ -132,6 +132,65 @@ agent_loop:
   max_response_tokens: 4096
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# EVENTS (Phase 3: Event-Driven Awareness)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+events:
+  # Master switch — when true, file/git/issue watchers emit events
+  # that trigger agent cycles instead of relying on a fixed timer
+  enabled: false
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # FILE WATCHER
+  # ─────────────────────────────────────────────────────────────────────────────
+  file_watcher:
+    enabled: true
+    # Directories to watch for file changes (relative to project root)
+    paths:
+      - src/
+      - tests/
+      - config/
+    # Glob patterns to ignore (never trigger on these)
+    ignore_patterns:
+      - "**/node_modules/**"
+      - "**/.git/**"
+      - "**/dist/**"
+      - "**/*.log"
+    # Debounce window in milliseconds (batch rapid changes)
+    debounce_ms: 500
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # GIT WATCHER
+  # ─────────────────────────────────────────────────────────────────────────────
+  git_watcher:
+    enabled: true
+    # How often to poll .git/refs for changes (milliseconds)
+    poll_interval_ms: 5000
+    # Debounce window for ref changes
+    debounce_ms: 1000
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ISSUE WATCHER
+  # ─────────────────────────────────────────────────────────────────────────────
+  issue_watcher:
+    enabled: true
+    # How often to check for stale issues (milliseconds)
+    # Default: 6 hours (21600000)
+    check_interval_ms: 21600000
+    # Days without activity before an issue is considered stale
+    stale_days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THROTTLING
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # Minimum seconds between event-triggered cycles (prevents thrashing)
+  cooldown_seconds: 120
+
+  # Maximum agent loop turns per day from event-triggered cycles
+  daily_budget_turns: 200
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -146,3 +146,23 @@ export type {
   AgentTurn,
   AgentOutcome,
 } from './agent-loop.js';
+
+// ── Phase 3: Event-Driven Awareness ──────────────────────────────────────────
+
+// Event bus
+export { EventBus, getEventPriority, compareEventPriority } from './events.js';
+export type {
+  SystemEvent,
+  EventHandler,
+  EventBusConfig,
+} from './events.js';
+
+// Watchers
+export { FileWatcher } from './watchers/index.js';
+export type { FileWatcherConfig } from './watchers/index.js';
+
+export { GitWatcher } from './watchers/index.js';
+export type { GitWatcherConfig } from './watchers/index.js';
+
+export { IssueWatcher } from './watchers/index.js';
+export type { IssueWatcherConfig } from './watchers/index.js';
