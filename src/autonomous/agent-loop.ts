@@ -335,22 +335,47 @@ export class AgentLoop {
 
       // ── Build initial context ────────────────────────────────────────
 
-      const identityResult = buildIdentityPrompt(
-        this.state.worldModel,
-        this.state.goalStack,
-        this.state.issueLog,
-        this.selfModel,
-      );
+      // Phase 4: If context manager is available, use it for hot tier.
+      // Otherwise, fall back to direct identity prompt building.
+      let identityPrompt: string;
+
+      if (this.state.contextManager) {
+        identityPrompt = this.state.contextManager.buildHotTier(
+          this.state.worldModel,
+          this.state.goalStack,
+          this.state.issueLog,
+          this.selfModel,
+        );
+
+        // Include warm tier contents if any exist
+        const warmPrompt = this.state.contextManager.buildWarmTierPrompt();
+        if (warmPrompt) {
+          identityPrompt += '\n\n' + warmPrompt;
+        }
+
+        tracer.log('agent-loop', 'debug', 'Context manager built hot + warm tiers', {
+          hotTokens: this.state.contextManager.getHotTierTokens(),
+          warmTokens: this.state.contextManager.getWarmTierTokens(),
+        });
+      } else {
+        const identityResult = buildIdentityPrompt(
+          this.state.worldModel,
+          this.state.goalStack,
+          this.state.issueLog,
+          this.selfModel,
+        );
+        identityPrompt = identityResult.prompt;
+
+        tracer.log('agent-loop', 'debug', 'Identity prompt built (no context manager)', {
+          charCount: identityResult.charCount,
+          sections: identityResult.sections,
+        });
+      }
 
       const systemPrompt = buildSystemPrompt(trigger, this.toolkit.schemas);
-      const fullSystemPrompt = `${identityResult.prompt}\n\n${systemPrompt}`;
+      const fullSystemPrompt = `${identityPrompt}\n\n${systemPrompt}`;
 
       totalTokensEstimate += estimateTokens(fullSystemPrompt);
-
-      tracer.log('agent-loop', 'debug', 'Identity prompt built', {
-        charCount: identityResult.charCount,
-        sections: identityResult.sections,
-      });
 
       // ── Conversation history ─────────────────────────────────────────
 

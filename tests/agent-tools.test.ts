@@ -93,9 +93,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 19 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(19);
-    expect(toolkit.toolNames).toHaveLength(19);
+  it('exposes all 21 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(21);
+    expect(toolkit.toolNames).toHaveLength(21);
   });
 
   it('includes all expected tool names', () => {
@@ -107,6 +107,7 @@ describe('AgentToolkit — Schema Validation', () => {
       'git_status', 'git_diff', 'git_commit', 'git_log',
       'file_issue', 'close_issue', 'update_goal',
       'delegate', 'message_user',
+      'recall', 'archive',
     ];
     for (const name of expected) {
       expect(names).toContain(name);

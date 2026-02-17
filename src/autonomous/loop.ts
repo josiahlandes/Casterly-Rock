@@ -34,6 +34,8 @@ import { IssueLog } from './issue-log.js';
 import { getTracer } from './debug.js';
 
 // Phase 3: Event-Driven Awareness imports
+import { ContextManager, createContextManager } from './context-manager.js';
+import type { ContextManagerConfig } from './context-manager.js';
 import { EventBus, type SystemEvent } from './events.js';
 import type { EventBusConfig } from './events.js';
 import { FileWatcher } from './watchers/file-watcher.js';
@@ -113,6 +115,9 @@ export class AutonomousLoop {
   private agentConfig: Partial<AgentLoopConfig>;
   private useAgentLoop: boolean = false;
 
+  // Phase 4: Tiered memory
+  private contextManager: ContextManager;
+
   // Phase 3: Event-driven awareness
   private eventBus: EventBus;
   private fileWatcher: FileWatcher | null = null;
@@ -153,6 +158,9 @@ export class AutonomousLoop {
       maxQueueSize: 100,
       logEvents: true,
     });
+
+    // Phase 4: Initialize tiered memory
+    this.contextManager = createContextManager();
   }
 
   /**
@@ -648,11 +656,12 @@ export class AutonomousLoop {
           : {}),
       });
 
-      // 4. Build toolkit
+      // 4. Build toolkit (with Phase 4 context manager)
       const agentState: AgentState = {
         worldModel: this.worldModel,
         goalStack: this.goalStack,
         issueLog: this.issueLog,
+        contextManager: this.contextManager,
       };
 
       this.agentToolkit = buildAgentToolkit(

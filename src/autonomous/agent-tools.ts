@@ -40,6 +40,7 @@ import type { GoalStack, GoalStatus, GoalSource } from './goal-stack.js';
 import type { IssueLog, IssuePriority, Issue } from './issue-log.js';
 import type { WorldModel } from './world-model.js';
 import type { ToolSchema, NativeToolCall, NativeToolResult } from '../tools/schemas/types.js';
+import type { ContextManager } from './context-manager.js';
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
 
 const execFileAsync = promisify(execFile);
@@ -107,6 +108,8 @@ export interface AgentState {
   goalStack: GoalStack;
   issueLog: IssueLog;
   worldModel: WorldModel;
+  /** Phase 4: Tiered memory context manager (optional for backwards compat) */
+  contextManager?: ContextManager;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -622,6 +625,76 @@ Do NOT message for routine status updates or minor progress.`,
       },
     },
     required: ['message'],
+  },
+};
+
+// ── MEMORY TOOLS ─────────────────────────────────────────────────────────────
+
+const RECALL_SCHEMA: ToolSchema = {
+  name: 'recall',
+  description: `Search your memory (cool/cold tiers) for past observations, reflections, and archived notes relevant to a query.
+
+Use this when you need context from previous cycles:
+- "What did I try last time I worked on the detector?"
+- "Any notes about the tool orchestrator architecture?"
+- "Past reflections about regex issues"
+
+Results are ranked by relevance. Higher-priority matches appear first.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'What to search for. Use descriptive keywords.',
+      },
+      tier: {
+        type: 'string',
+        description: 'Which memory tier to search. "cool" = recent (30 days), "cold" = all history, "both" = search everywhere.',
+        enum: ['cool', 'cold', 'both'],
+      },
+      tags: {
+        type: 'array',
+        description: 'Optional tags to filter results (e.g., ["fix", "regex"]).',
+        items: { type: 'string', description: 'A tag string.' },
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum number of results to return (default 5).',
+      },
+    },
+    required: ['query'],
+  },
+};
+
+const ARCHIVE_SCHEMA: ToolSchema = {
+  name: 'archive',
+  description: `Save a note, observation, or partial analysis to your memory for future recall.
+
+Use this when you want to remember something for later:
+- Working notes about a problem you're investigating
+- Architecture observations
+- Partial analysis results you might need later
+- Lessons learned from a fix
+
+Content is stored in the cool tier by default (searchable for 30 days, then promoted to cold archive).`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title: {
+        type: 'string',
+        description: 'A short descriptive title for this memory entry.',
+      },
+      content: {
+        type: 'string',
+        description: 'The content to save. Be specific and include relevant details.',
+      },
+      tags: {
+        type: 'array',
+        description: 'Tags for later retrieval (e.g., ["regex", "detector", "fix"]).',
+        items: { type: 'string', description: 'A tag string.' },
+      },
+    },
+    required: ['title', 'content', 'tags'],
   },
 };
 
@@ -1342,6 +1415,94 @@ function buildExecutors(
     );
   });
 
+  // ── recall ──────────────────────────────────────────────────────────────
+
+  executors.set('recall', async (call) => {
+    if (!state.contextManager) {
+      return failureResult(call.id, 'Memory system is not yet initialized (Phase 4). Recall is unavailable.');
+    }
+
+    const queryResult = requireString(call, 'query');
+    if ('error' in queryResult) return queryResult.error;
+
+    const tier = (optionalString(call, 'tier') ?? 'both') as 'cool' | 'cold' | 'both';
+    const limit = optionalNumber(call, 'limit') ?? 5;
+    const tags = call.input['tags'] as string[] | undefined;
+
+    return tracer.withSpan('agent-loop', `recall:${queryResult.value.slice(0, 30)}`, async () => {
+      try {
+        const results = await state.contextManager!.recall({
+          query: queryResult.value,
+          tier,
+          ...(tags !== undefined ? { tags } : {}),
+          limit,
+        });
+
+        if (results.length === 0) {
+          return successResult(
+            call.id,
+            `No results found for query: "${queryResult.value}" (tier: ${tier})`,
+            config.maxOutputChars,
+          );
+        }
+
+        const lines: string[] = [`Found ${results.length} result(s) for "${queryResult.value}":\n`];
+
+        for (const r of results) {
+          lines.push(`--- [${r.entry.id}] ${r.entry.title} (score: ${r.score}, tier: ${r.entry.tier}) ---`);
+          lines.push(`Tags: ${r.entry.tags.join(', ')}`);
+          lines.push(`Source: ${r.entry.source} | Date: ${r.entry.timestamp.split('T')[0]}`);
+          lines.push(`Matched: ${r.matchedKeywords.join(', ')}`);
+          lines.push('');
+          lines.push(r.entry.content);
+          lines.push('');
+        }
+
+        return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+      } catch (err) {
+        return failureResult(call.id, `Recall failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+  });
+
+  // ── archive ─────────────────────────────────────────────────────────────
+
+  executors.set('archive', async (call) => {
+    if (!state.contextManager) {
+      return failureResult(call.id, 'Memory system is not yet initialized (Phase 4). Archive is unavailable.');
+    }
+
+    const titleResult = requireString(call, 'title');
+    if ('error' in titleResult) return titleResult.error;
+
+    const contentResult = requireString(call, 'content');
+    if ('error' in contentResult) return contentResult.error;
+
+    const tags = call.input['tags'] as string[] | undefined;
+    if (!tags || !Array.isArray(tags) || tags.length === 0) {
+      return failureResult(call.id, 'Missing required parameter: tags (must be a non-empty array of strings)');
+    }
+
+    return tracer.withSpan('agent-loop', `archive:${titleResult.value.slice(0, 30)}`, async () => {
+      try {
+        const id = await state.contextManager!.archive({
+          title: titleResult.value,
+          content: contentResult.value,
+          tags,
+          source: 'agent',
+        });
+
+        return successResult(
+          call.id,
+          `Archived as ${id}: "${titleResult.value}" [tags: ${tags.join(', ')}]`,
+          config.maxOutputChars,
+        );
+      } catch (err) {
+        return failureResult(call.id, `Archive failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+  });
+
   return executors;
 }
 
@@ -1386,6 +1547,8 @@ export function buildAgentToolkit(
     UPDATE_GOAL_SCHEMA,
     DELEGATE_SCHEMA,
     MESSAGE_USER_SCHEMA,
+    RECALL_SCHEMA,
+    ARCHIVE_SCHEMA,
   ];
 
   // Build all executors

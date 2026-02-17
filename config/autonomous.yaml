@@ -183,6 +183,39 @@ events:
   daily_budget_turns: 200
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TIERED MEMORY (Phase 4: MemGPT-style context management)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+memory_tiers:
+  # Hot tier: identity prompt, always in context (~4k tokens)
+  hot_tier_max_tokens: 2000
+
+  # Warm tier: working memory for current cycle (~20k tokens)
+  warm_tier_max_tokens: 10000
+
+  # Overall context window size in tokens
+  context_window_tokens: 32768
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # COOL/COLD STORAGE
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # Base path for persistent memory storage
+  store_base_path: ~/.casterly/memory
+
+  # Maximum entries in the cool tier before oldest are promoted to cold
+  max_cool_entries: 200
+
+  # Days before cool entries are promoted to cold tier
+  cool_retention_days: 30
+
+  # Default number of results from recall searches
+  default_search_limit: 10
+
+  # Path to existing reflections directory (cold tier integration)
+  reflections_path: ~/.casterly/autonomous/reflections
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
