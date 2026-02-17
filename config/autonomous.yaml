@@ -245,6 +245,51 @@ hardware:
   bestofn_judge_model: hermes3:70b
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# DREAM CYCLES (Phase 6: quiet-hours strategic consolidation)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dream_cycles:
+  # Master switch — enable dream cycles during quiet hours
+  enabled: false
+
+  # Hours between consolidation runs
+  consolidation_interval_hours: 24
+
+  # Maximum turns for the exploration phase
+  exploration_budget_turns: 50
+
+  # Hours between self-model rebuilds
+  self_model_rebuild_interval_hours: 48
+
+  # Days to look back for code archaeology
+  archaeology_lookback_days: 90
+
+  # Days between retrospective writes
+  retrospective_interval_days: 7
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMMUNICATION (Phase 7: proactive user messaging)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+communication:
+  # Master switch — enable proactive user messaging
+  enabled: false
+
+  # Throttle settings
+  throttle:
+    max_per_hour: 3
+    max_per_day: 10
+    quiet_hours: true
+    quiet_start: "22:00"
+    quiet_end: "08:00"
+
+  # Only notify about test failures Tyrion can't fix himself
+  test_failure_min_severity: unresolvable   # 'always' or 'unresolvable'
+
+  # Enable daily summary notifications
+  daily_summary_enabled: true
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 

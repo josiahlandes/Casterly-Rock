@@ -205,3 +205,40 @@ export type {
   AdversarialReport,
   AdversarialTesterConfig,
 } from './reasoning/adversarial.js';
+
+// ── Phase 6: Dream Cycles ────────────────────────────────────────────────────
+
+// Self-model
+export { SelfModel, createSelfModel } from './dream/self-model.js';
+export type {
+  SkillAssessment,
+  SelfModelData,
+  SelfModelConfig,
+} from './dream/self-model.js';
+
+// Code archaeology
+export { CodeArchaeologist, createCodeArchaeologist } from './dream/archaeology.js';
+export type {
+  FileHistory,
+  FragileFile,
+  ArchaeologyConfig,
+} from './dream/archaeology.js';
+
+// Dream cycle runner
+export { DreamCycleRunner, createDreamCycleRunner } from './dream/runner.js';
+export type {
+  DreamCycleConfig,
+  DreamOutcome,
+} from './dream/runner.js';
+
+// ── Phase 7: Communication ───────────────────────────────────────────────────
+
+// Message policy
+export { MessagePolicy, createMessagePolicy } from './communication/policy.js';
+export type {
+  NotifiableEvent,
+  DailySummaryStats,
+  ThrottleConfig,
+  MessagePolicyConfig,
+  PolicyDecision,
+} from './communication/policy.js';
