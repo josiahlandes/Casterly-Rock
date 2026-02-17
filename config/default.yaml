@@ -88,4 +88,4 @@ hardware:
   test_time_scaling: true
   adversarial_testing: true
   max_parallel_generations: 4
-  bestofn_judge_model: hermes3:70b
+  bestofn_judge_model: gpt-oss:120b
