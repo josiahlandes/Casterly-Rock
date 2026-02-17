@@ -731,6 +731,40 @@ Use this after writing or modifying any non-trivial function.`,
   },
 };
 
+// ── UPDATE WORLD MODEL TOOL ──────────────────────────────────────────────────
+
+const UPDATE_WORLD_MODEL_SCHEMA: ToolSchema = {
+  name: 'update_world_model',
+  description: `Track or resolve a concern in the world model. Use 'add' to flag something
+you've observed (e.g., "flaky test in detector.test.ts"), or 'resolve' to clear
+a concern you've fixed. Concerns have severity levels: informational, worth-watching, needs-action.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['add', 'resolve'],
+        description: 'Whether to add a new concern or resolve an existing one.',
+      },
+      description: {
+        type: 'string',
+        description: 'Description of the concern.',
+      },
+      severity: {
+        type: 'string',
+        enum: ['informational', 'worth-watching', 'needs-action'],
+        description: 'Severity level (only for add).',
+      },
+      related_files: {
+        type: 'array',
+        items: { type: 'string', description: 'A file path.' },
+        description: 'Related file paths (only for add).',
+      },
+    },
+    required: ['action', 'description'],
+  },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Blocked Command Patterns
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1448,6 +1482,57 @@ function buildExecutors(
     );
   });
 
+  // ── update_world_model ──────────────────────────────────────────────────
+
+  executors.set('update_world_model', async (call) => {
+    const actionResult = requireString(call, 'action');
+    if ('error' in actionResult) return actionResult.error;
+    const descResult = requireString(call, 'description');
+    if ('error' in descResult) return descResult.error;
+
+    return tracer.withSpan('agent-loop', 'update_world_model', async () => {
+      const worldModel = state.worldModel;
+      if (!worldModel) {
+        return failureResult(call.id, 'World model not available.');
+      }
+
+      const action = actionResult.value;
+      const description = descResult.value;
+
+      if (action === 'add') {
+        const severityRaw = typeof call.input['severity'] === 'string'
+          ? call.input['severity']
+          : 'informational';
+        const severity = (['informational', 'worth-watching', 'needs-action'] as const)
+          .includes(severityRaw as 'informational')
+          ? (severityRaw as 'informational' | 'worth-watching' | 'needs-action')
+          : 'informational';
+
+        const relatedFiles = Array.isArray(call.input['related_files'])
+          ? (call.input['related_files'] as unknown[]).filter((f): f is string => typeof f === 'string')
+          : [];
+
+        worldModel.addConcern({ description, severity, relatedFiles });
+
+        return successResult(
+          call.id,
+          `Concern tracked: "${description}" [${severity}]`,
+          config.maxOutputChars,
+        );
+      } else if (action === 'resolve') {
+        const resolved = worldModel.removeConcern(description);
+
+        if (resolved) {
+          return successResult(call.id, `Concern resolved: "${description}"`, config.maxOutputChars);
+        } else {
+          return failureResult(call.id, `No concern found matching: "${description}"`);
+        }
+      } else {
+        return failureResult(call.id, `Unknown action: "${action}". Use "add" or "resolve".`);
+      }
+    });
+  });
+
   // ── adversarial_test ────────────────────────────────────────────────────
 
   executors.set('adversarial_test', async (call) => {
@@ -1647,6 +1732,7 @@ export function buildAgentToolkit(
     RECALL_SCHEMA,
     ARCHIVE_SCHEMA,
     ADVERSARIAL_TEST_SCHEMA,
+    UPDATE_WORLD_MODEL_SCHEMA,
   ];
 
   // Build all executors

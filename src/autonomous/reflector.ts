@@ -166,6 +166,26 @@ export class Reflector {
         stats.successRate = stats.successfulCycles / stats.totalCycles;
         stats.averageDurationMs /= stats.totalCycles;
       }
+
+      // Compute top failure reasons from recent reflections
+      const reflections = await this.loadRecentReflections(100);
+      const failedReflections = reflections.filter(
+        (r) => r.outcome === 'failure' && r.learnings,
+      );
+
+      if (failedReflections.length > 0) {
+        // Count failure reason patterns
+        const reasonCounts = new Map<string, number>();
+        for (const r of failedReflections) {
+          const area = r.observation?.suggestedArea ?? 'unknown';
+          reasonCounts.set(area, (reasonCounts.get(area) ?? 0) + 1);
+        }
+
+        stats.topFailureReasons = [...reasonCounts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([reason, count]) => `${reason} (${count})`);
+      }
     } catch {
       // Metrics file might not exist
     }
