@@ -372,6 +372,12 @@ export class AgentLoop {
         });
       }
 
+      // Record goal attempt when working on a goal
+      if (trigger.type === 'goal' && this.state.goalStack) {
+        this.state.goalStack.recordAttempt(trigger.goal.id);
+        tracer.log('agent-loop', 'debug', `Recorded attempt for goal ${trigger.goal.id}`);
+      }
+
       const systemPrompt = buildSystemPrompt(trigger, this.toolkit.schemas);
       const fullSystemPrompt = `${identityPrompt}\n\n${systemPrompt}`;
 
@@ -574,6 +580,14 @@ export class AgentLoop {
         goalsUpdated: Array.from(goalsUpdated),
         ...(error !== undefined ? { error } : {}),
       };
+
+      // Update goal notes with outcome so next cycle has context
+      if (trigger.type === 'goal' && this.state.goalStack) {
+        const progressNote = outcome.success
+          ? `Completed in ${turns.length} turns. ${filesModified.size} files modified.`
+          : `${stopReason} after ${turns.length} turns. ${summary || ''}`.trim();
+        this.state.goalStack.updateNotes(trigger.goal.id, progressNote);
+      }
 
       rootSpan.metadata['totalTurns'] = outcome.totalTurns;
       rootSpan.metadata['stopReason'] = outcome.stopReason;

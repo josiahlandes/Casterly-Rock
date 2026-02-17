@@ -7,7 +7,7 @@
 import { join } from 'node:path';
 import { loadConfig } from '../config/index.js';
 import { safeLogger } from '../logging/safe-logger.js';
-import { buildProviders, type LlmProvider } from '../providers/index.js';
+import { buildProviders, type LlmProvider, type ProviderRegistry } from '../providers/index.js';
 import { createSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import {
   createToolRegistry,
@@ -89,6 +89,7 @@ async function processMessage(
     taskManager?: TaskManager | undefined;
     autonomousController?: AutonomousController | undefined;
     modeManager?: ModeManager | undefined;
+    providers?: ProviderRegistry | undefined;
   }
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
@@ -126,6 +127,7 @@ async function processMessage(
       jobStore,
       approvalBridge,
       taskManager,
+      providers: options.providers,
     }, {
       enableTools,
       maxToolIterations,
@@ -492,6 +494,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       taskManager,
       autonomousController,
       modeManager: modeManagers.get(recipient),
+      providers,
     });
   };
 
@@ -588,6 +591,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           taskManager,
           autonomousController,
           modeManager: modeManagers.get(sender),
+          providers,
         });
       }
 

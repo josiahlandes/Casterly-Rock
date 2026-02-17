@@ -12,7 +12,7 @@
  */
 
 import { safeLogger } from '../logging/safe-logger.js';
-import type { LlmProvider, PreviousAssistantMessage } from '../providers/index.js';
+import type { LlmProvider, PreviousAssistantMessage, ProviderRegistry } from '../providers/index.js';
 import type { SkillRegistry } from '../skills/index.js';
 import {
   createToolRegistry,
@@ -97,6 +97,8 @@ export interface ProcessDependencies {
   jobStore?: JobStore | undefined;
   approvalBridge?: ApprovalBridge | undefined;
   taskManager?: TaskManager | undefined;
+  /** Full provider registry for task-based model routing */
+  providers?: ProviderRegistry | undefined;
 }
 
 export interface ProcessOptions {
@@ -122,8 +124,11 @@ export async function processChatMessage(
   deps: ProcessDependencies,
   options: ProcessOptions,
 ): Promise<ProcessResult> {
-  const { provider, skillRegistry, sessionManager, modeManager, jobStore, approvalBridge, taskManager } = deps;
+  const { skillRegistry, sessionManager, modeManager, jobStore, approvalBridge, taskManager } = deps;
   const { enableTools, maxToolIterations, workspacePath } = options;
+
+  // Start with the default provider; may be swapped after classification
+  let provider = deps.provider;
   const toolCallsMade: ToolCallRecord[] = [];
 
   // Create memory manager for this workspace
@@ -212,6 +217,20 @@ export async function processChatMessage(
     if (detection) {
       const currentMode = modeManager.getCurrentMode();
       modeSystemPrompt = currentMode.systemPrompt;
+
+      // Route to coding model when a coding mode is active
+      if (deps.providers) {
+        const codingProvider = deps.providers.coding;
+        if (codingProvider.model !== provider.model) {
+          safeLogger.info('Model routing: coding mode active, switching provider', {
+            mode: currentMode.name,
+            from: provider.model,
+            to: codingProvider.model,
+          });
+          provider = codingProvider;
+        }
+      }
+
       safeLogger.info('Mode detected', {
         mode: currentMode.name,
         confidence: detection.confidence,
@@ -253,6 +272,19 @@ export async function processChatMessage(
 
       const taskType = classification.taskType ?? '';
       const shouldUseFlat = FLAT_LOOP_TASK_TYPES.has(taskType);
+
+      // Route to the correct model based on task type
+      if (deps.providers && taskType) {
+        const routedProvider = deps.providers.forTask(taskType);
+        if (routedProvider.model !== provider.model) {
+          safeLogger.info('Model routing: switching provider for task type', {
+            taskType,
+            from: provider.model,
+            to: routedProvider.model,
+          });
+          provider = routedProvider;
+        }
+      }
 
       if (classification.taskClass === 'conversation') {
         safeLogger.info('Task classifier: conversation, using flat tool loop', {

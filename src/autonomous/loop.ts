@@ -807,8 +807,23 @@ export class AutonomousLoop {
         this.selfModelSummary,
       );
 
-      const outcome = await this.activeAgentLoop.run(effectiveTrigger);
-      this.activeAgentLoop = null;
+      let outcome: AgentOutcome;
+      try {
+        outcome = await this.activeAgentLoop.run(effectiveTrigger);
+      } finally {
+        this.activeAgentLoop = null;
+
+        // Always persist state — even if the cycle threw, partial
+        // progress (goal attempt counts, issue updates, world model
+        // concerns) should not be lost.
+        try {
+          await this.saveState();
+        } catch (saveErr) {
+          tracer.log('agent-loop', 'error', 'Failed to save state after cycle', {
+            error: saveErr instanceof Error ? saveErr.message : String(saveErr),
+          });
+        }
+      }
 
       // 6. Record activity
       this.worldModel.addActivity({
@@ -816,7 +831,7 @@ export class AutonomousLoop {
         source: 'tyrion',
       });
 
-      // 7. Save state
+      // 7. Save state (final — includes the activity record above)
       await this.saveState();
 
       // 8. Log outcome
