@@ -125,3 +125,24 @@ export type {
   DebugSchemaConfig,
   Phase1Config,
 } from './memory-config.js';
+
+// ── Phase 2: Agent Loop (ReAct) ─────────────────────────────────────────────
+
+// Agent toolkit
+export { buildAgentToolkit } from './agent-tools.js';
+export type {
+  AgentToolkit,
+  AgentToolkitConfig,
+  AgentTool,
+  AgentState,
+} from './agent-tools.js';
+
+// Agent loop
+export { AgentLoop, createAgentLoop } from './agent-loop.js';
+export type {
+  AgentTrigger,
+  AgentEvent,
+  AgentLoopConfig,
+  AgentTurn,
+  AgentOutcome,
+} from './agent-loop.js';
