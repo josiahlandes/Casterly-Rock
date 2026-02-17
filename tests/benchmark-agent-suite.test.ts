@@ -17,8 +17,8 @@ describe('AGENT_BENCHMARK_SUITE — structure', () => {
     expect(AGENT_BENCHMARK_SUITE_ID).toBe('casterly-v2');
   });
 
-  it('contains 13 benchmark cases', () => {
-    expect(AGENT_BENCHMARK_SUITE).toHaveLength(13);
+  it('contains 28 benchmark cases', () => {
+    expect(AGENT_BENCHMARK_SUITE).toHaveLength(28);
   });
 
   it('every case has a unique ID', () => {

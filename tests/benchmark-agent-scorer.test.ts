@@ -366,7 +366,9 @@ describe('ScoringProfile constants', () => {
       + V1_SCORING_PROFILE.performance
       + V1_SCORING_PROFILE.toolSelection
       + V1_SCORING_PROFILE.reasoning
-      + V1_SCORING_PROFILE.delegation;
+      + V1_SCORING_PROFILE.delegation
+      + V1_SCORING_PROFILE.quality
+      + V1_SCORING_PROFILE.argCorrectness;
     expect(sum).toBeCloseTo(1.0);
   });
 
@@ -376,7 +378,9 @@ describe('ScoringProfile constants', () => {
       + V2_SCORING_PROFILE.performance
       + V2_SCORING_PROFILE.toolSelection
       + V2_SCORING_PROFILE.reasoning
-      + V2_SCORING_PROFILE.delegation;
+      + V2_SCORING_PROFILE.delegation
+      + V2_SCORING_PROFILE.quality
+      + V2_SCORING_PROFILE.argCorrectness;
     expect(sum).toBeCloseTo(1.0);
   });
 
@@ -384,11 +388,15 @@ describe('ScoringProfile constants', () => {
     expect(V1_SCORING_PROFILE.toolSelection).toBe(0);
     expect(V1_SCORING_PROFILE.reasoning).toBe(0);
     expect(V1_SCORING_PROFILE.delegation).toBe(0);
+    expect(V1_SCORING_PROFILE.quality).toBe(0);
+    expect(V1_SCORING_PROFILE.argCorrectness).toBe(0);
   });
 
   it('v2 profile has non-zero v2 weights', () => {
     expect(V2_SCORING_PROFILE.toolSelection).toBeGreaterThan(0);
     expect(V2_SCORING_PROFILE.reasoning).toBeGreaterThan(0);
     expect(V2_SCORING_PROFILE.delegation).toBeGreaterThan(0);
+    expect(V2_SCORING_PROFILE.quality).toBeGreaterThan(0);
+    expect(V2_SCORING_PROFILE.argCorrectness).toBeGreaterThan(0);
   });
 });

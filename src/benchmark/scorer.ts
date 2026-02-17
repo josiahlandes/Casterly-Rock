@@ -134,17 +134,83 @@ export function scoreDelegation(
   return usedDelegate ? 0 : 1;
 }
 
+// ─── v2: Argument Correctness ───────────────────────────────────────────────
+
+interface ToolCallWithArgs {
+  name: string;
+  arguments?: Record<string, unknown>;
+}
+
+/**
+ * Score tool argument correctness: did the model pass the right arguments?
+ * Returns 0-1 where 1 means all expected arguments were correct.
+ *
+ * Expected args format: { toolName: { argName: expectedValue } }
+ * Values can be:
+ * - A string/number for exact match
+ * - A RegExp-like string prefixed with "re:" for pattern match
+ * - "*" for "must be present, any value"
+ */
+export function scoreArgCorrectness(
+  expectedArgs: Record<string, Record<string, unknown>> | undefined,
+  toolCalls: ToolCallWithArgs[],
+): number {
+  if (!expectedArgs || Object.keys(expectedArgs).length === 0) return 1;
+
+  let totalChecks = 0;
+  let passedChecks = 0;
+
+  for (const [toolName, argExpectations] of Object.entries(expectedArgs)) {
+    const matchingCall = toolCalls.find((c) => c.name === toolName);
+    if (!matchingCall) {
+      // Tool wasn't called at all — fail all arg checks for it
+      totalChecks += Object.keys(argExpectations).length;
+      continue;
+    }
+
+    const actualArgs = matchingCall.arguments ?? {};
+
+    for (const [argName, expected] of Object.entries(argExpectations)) {
+      totalChecks++;
+      const actual = actualArgs[argName];
+
+      if (expected === '*') {
+        // Just needs to be present
+        if (actual !== undefined && actual !== null) passedChecks++;
+      } else if (typeof expected === 'string' && expected.startsWith('re:')) {
+        // Regex match
+        const pattern = new RegExp(expected.slice(3));
+        if (typeof actual === 'string' && pattern.test(actual)) passedChecks++;
+      } else {
+        // Exact match (loose comparison for numbers)
+        if (actual === expected) passedChecks++;
+        else if (String(actual) === String(expected)) passedChecks++;
+      }
+    }
+  }
+
+  return totalChecks > 0 ? passedChecks / totalChecks : 1;
+}
+
 // ─── Score a Single Case ─────────────────────────────────────────────────────
 
 /**
  * Score a single benchmark case from its TestResult and PerformanceMetrics.
  * The toolsCalled array is used for v2 agent dimension scoring.
+ * Optional qualityScore (0-10) from LLM-as-judge and toolCallsWithArgs
+ * for argument correctness scoring.
  */
 export function scoreCase(
   benchmarkCase: BenchmarkCase,
   result: TestResult,
   metrics: PerformanceMetrics,
   toolsCalled?: string[],
+  options?: {
+    qualityScore?: number;
+    toolCallsWithArgs?: ToolCallWithArgs[];
+    warmStart?: boolean;
+    vramBytes?: number;
+  },
 ): CaseResult {
   // Structural score: fraction of checks that passed
   const totalChecks = countChecks(benchmarkCase.expected);
@@ -171,6 +237,12 @@ export function scoreCase(
   const reasoningScore = scoreReasoning(benchmarkCase, tools);
   const delegationScore = scoreDelegation(benchmarkCase, tools);
 
+  // Argument correctness
+  const argCorrectnessScore = scoreArgCorrectness(
+    benchmarkCase.expectedArgs,
+    options?.toolCallsWithArgs ?? [],
+  );
+
   // Only include v2 scores if the case defines v2 expectations
   const hasV2 = benchmarkCase.preferredTools !== undefined
     || benchmarkCase.avoidTools !== undefined
@@ -188,7 +260,15 @@ export function scoreCase(
     totalMs: metrics.totalMs,
     evalRate: metrics.evalRate,
     failures: result.failures,
-    ...(hasV2 ? { toolSelectionScore, reasoningScore, delegationScore } : {}),
+    ...(hasV2 ? {
+      toolSelectionScore,
+      reasoningScore,
+      delegationScore,
+      argCorrectnessScore,
+    } : {}),
+    ...(options?.qualityScore !== undefined ? { qualityScore: options.qualityScore } : {}),
+    ...(options?.warmStart !== undefined ? { warmStart: options.warmStart } : {}),
+    ...(options?.vramBytes !== undefined ? { vramBytes: options.vramBytes } : {}),
   };
 }
 
@@ -277,6 +357,35 @@ export function aggregateScores(
     totalWeight += weights.delegation;
   }
 
+  // v2: Quality score (0-10 normalized to 0-1)
+  const qualityCases = cases.filter((c) => c.qualityScore !== undefined);
+  const hasQuality = qualityCases.length > 0;
+  const qualityAvg = hasQuality
+    ? qualityCases.reduce((sum, c) => sum + (c.qualityScore ?? 0), 0) / qualityCases.length
+    : undefined;
+
+  if (hasQuality && weights.quality > 0 && qualityAvg !== undefined) {
+    weightedSum += (qualityAvg / 10) * weights.quality;
+    totalWeight += weights.quality;
+  }
+
+  // v2: Argument correctness
+  const argCases = cases.filter((c) => c.argCorrectnessScore !== undefined);
+  const hasArgCorrectness = argCases.length > 0;
+  const argCorrectnessAvg = hasArgCorrectness
+    ? argCases.reduce((sum, c) => sum + (c.argCorrectnessScore ?? 0), 0) / argCases.length
+    : undefined;
+
+  if (hasArgCorrectness && weights.argCorrectness > 0 && argCorrectnessAvg !== undefined) {
+    weightedSum += argCorrectnessAvg * weights.argCorrectness;
+    totalWeight += weights.argCorrectness;
+  }
+
+  // v2: VRAM footprint (informational, not weighted)
+  const vramCases = cases.filter((c) => c.vramBytes !== undefined);
+  const vramBytes = vramCases.length > 0 ? vramCases[0]!.vramBytes : undefined;
+  const warmStart = cases.length > 0 ? cases[0]!.warmStart : undefined;
+
   const overall = totalWeight > 0
     ? Math.round((weightedSum / totalWeight) * 100)
     : 0;
@@ -327,5 +436,9 @@ export function aggregateScores(
     byDifficulty,
     byCategory,
     ...(hasV2 ? { toolSelectionAvg, reasoningAvg, delegationAvg } : {}),
+    ...(hasQuality ? { qualityAvg } : {}),
+    ...(hasArgCorrectness ? { argCorrectnessAvg } : {}),
+    ...(vramBytes !== undefined ? { vramBytes } : {}),
+    ...(warmStart !== undefined ? { warmStart } : {}),
   };
 }

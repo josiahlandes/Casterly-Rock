@@ -11,6 +11,7 @@ export type {
   BenchmarkRun,
   BenchmarkStoreData,
   ScoringProfile,
+  MultiTurnMeta,
 } from './types.js';
 
 export {
@@ -57,6 +58,7 @@ export {
   scoreToolSelection,
   scoreReasoning,
   scoreDelegation,
+  scoreArgCorrectness,
 } from './scorer.js';
 
 export {
@@ -76,3 +78,25 @@ export {
   formatComparison,
   formatRunAsJson,
 } from './report.js';
+
+// v2: LLM-as-judge quality scoring
+export {
+  judgeResponse,
+  normalizeJudgeScore,
+  DEFAULT_RUBRIC,
+  type JudgeRubric,
+  type JudgeDimensionScore,
+  type JudgeResult,
+  type JudgeConfig,
+} from './judge.js';
+
+// v2: Ollama health check, memory footprint, warmth detection
+export {
+  runHealthCheck,
+  formatHealthReport,
+  type OllamaHealthStatus,
+  type ModelAvailability,
+  type MemoryFootprint,
+  type WarmthStatus,
+  type HealthReport,
+} from './health.js';

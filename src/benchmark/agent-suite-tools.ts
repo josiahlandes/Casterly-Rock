@@ -262,6 +262,126 @@ export const AGENT_TOOL_SCHEMAS: BenchmarkToolSchema[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'close_issue',
+      description: 'Close an issue in the issue log, marking it as resolved.',
+      parameters: {
+        type: 'object',
+        properties: {
+          issue_id: { type: 'string', description: 'Issue ID to close.' },
+          resolution: { type: 'string', description: 'How the issue was resolved.' },
+        },
+        required: ['issue_id', 'resolution'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'message_user',
+      description: 'Send a notification or message to the user via the configured channel (e.g., iMessage).',
+      parameters: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: 'The message content to send.' },
+          urgency: { type: 'string', enum: ['low', 'normal', 'high'], description: 'Message urgency level.' },
+        },
+        required: ['message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recall',
+      description: 'Search warm and cold memory tiers for relevant context. Returns stored entries matching the query.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query for memory recall.' },
+          limit: { type: 'integer', description: 'Max entries to return.' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'archive',
+      description: 'Archive a memory entry from warm tier to cold storage.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entry_id: { type: 'string', description: 'ID of the warm entry to archive.' },
+        },
+        required: ['entry_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'adversarial_test',
+      description: 'Run adversarial testing against a specific component to probe for edge cases and vulnerabilities.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', description: 'Component or module to test.' },
+          category: { type: 'string', enum: ['injection', 'boundary', 'fuzzing', 'logic'], description: 'Attack category.' },
+        },
+        required: ['target'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_world_model',
+      description: 'Update the world model with new observations about the codebase health, concerns, or activity.',
+      parameters: {
+        type: 'object',
+        properties: {
+          observation: { type: 'string', description: 'What was observed.' },
+          category: { type: 'string', enum: ['health', 'concern', 'activity'], description: 'Observation category.' },
+        },
+        required: ['observation', 'category'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recall_journal',
+      description: 'Search the journal for past experiences, handoff notes, reflections, and observations.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query.' },
+          type: { type: 'string', enum: ['handoff', 'reflection', 'opinion', 'observation', 'user_interaction'], description: 'Filter by entry type.' },
+          limit: { type: 'integer', description: 'Max entries to return.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consolidate',
+      description: 'End-of-session consolidation: write a reflection to the journal and optionally clear the warm memory tier.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reflection: { type: 'string', description: 'Summary of what was learned and accomplished.' },
+          clear_warm: { type: 'boolean', description: 'Whether to clear the warm tier after consolidation.' },
+        },
+        required: ['reflection'],
+      },
+    },
+  },
 ];
 
 /**

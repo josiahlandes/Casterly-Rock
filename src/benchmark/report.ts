@@ -35,13 +35,28 @@ export function formatRunSummary(run: BenchmarkRun): string {
   if (run.aggregate.toolSelectionAvg !== undefined) {
     lines.push('');
     lines.push('  Agent Dimensions:');
-    lines.push(`    Tool Selection: ${run.aggregate.toolSelectionAvg.toFixed(3)}`);
+    lines.push(`    Tool Selection:    ${run.aggregate.toolSelectionAvg.toFixed(3)}`);
     if (run.aggregate.reasoningAvg !== undefined) {
-      lines.push(`    Reasoning:      ${run.aggregate.reasoningAvg.toFixed(3)}`);
+      lines.push(`    Reasoning:         ${run.aggregate.reasoningAvg.toFixed(3)}`);
     }
     if (run.aggregate.delegationAvg !== undefined) {
-      lines.push(`    Delegation:     ${run.aggregate.delegationAvg.toFixed(3)}`);
+      lines.push(`    Delegation:        ${run.aggregate.delegationAvg.toFixed(3)}`);
     }
+    if (run.aggregate.argCorrectnessAvg !== undefined) {
+      lines.push(`    Arg Correctness:   ${run.aggregate.argCorrectnessAvg.toFixed(3)}`);
+    }
+    if (run.aggregate.qualityAvg !== undefined) {
+      lines.push(`    Quality (judge):   ${run.aggregate.qualityAvg.toFixed(1)}/10`);
+    }
+  }
+
+  // Memory and warmth info
+  if (run.aggregate.vramBytes !== undefined) {
+    const gb = (run.aggregate.vramBytes / (1024 * 1024 * 1024)).toFixed(1);
+    lines.push(`  VRAM Footprint:   ${gb} GB`);
+  }
+  if (run.aggregate.warmStart !== undefined) {
+    lines.push(`  Start Type:       ${run.aggregate.warmStart ? 'warm' : 'cold'}`);
   }
 
   // Difficulty breakdown
@@ -82,6 +97,12 @@ export function formatRunSummary(run: BenchmarkRun): string {
       }
       if (c.delegationScore !== undefined) {
         detail += ` dlg=${c.delegationScore.toFixed(0)}`;
+      }
+      if (c.argCorrectnessScore !== undefined) {
+        detail += ` arg=${c.argCorrectnessScore.toFixed(2)}`;
+      }
+      if (c.qualityScore !== undefined) {
+        detail += ` q=${c.qualityScore.toFixed(1)}`;
       }
 
       lines.push(`    ${status} [${c.caseId}] ${detail}`);
