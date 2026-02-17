@@ -224,6 +224,27 @@ memory_tiers:
   reflections_path: ~/.casterly/autonomous/reflections
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# HARDWARE MAXIMIZATION (Phase 5: concurrent inference + test-time scaling)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+hardware:
+  # Concurrent inference across multiple models
+  concurrent_inference: true
+  max_concurrent_requests: 3
+
+  # Test-time compute scaling (difficulty-adaptive reasoning)
+  test_time_scaling: true
+  max_parallel_generations: 4
+
+  # Adversarial self-testing after code generation
+  adversarial_testing: true
+  max_adversarial_test_cases: 10
+  adversarial_attack_temperature: 0.7
+
+  # Best-of-N judging model
+  bestofn_judge_model: hermes3:70b
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 

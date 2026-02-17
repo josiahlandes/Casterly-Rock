@@ -184,3 +184,24 @@ export type {
   RecallResult,
   ContextStoreConfig,
 } from './context-store.js';
+
+// ── Phase 5: Hardware Maximization ──────────────────────────────────────────
+
+// Reasoning scaler
+export { ReasoningScaler, createReasoningScaler } from './reasoning/scaling.js';
+export type {
+  Difficulty,
+  ReasoningScalerConfig,
+  ProblemContext,
+  ScaledSolution,
+} from './reasoning/scaling.js';
+
+// Adversarial tester
+export { AdversarialTester, createAdversarialTester } from './reasoning/adversarial.js';
+export type {
+  TestCase as AdversarialTestCase,
+  AttackCategory,
+  AttackResult,
+  AdversarialReport,
+  AdversarialTesterConfig,
+} from './reasoning/adversarial.js';

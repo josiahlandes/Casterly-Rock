@@ -78,3 +78,14 @@ logging:
   level: info                   # Options: debug, info, warn, error
   redactSensitive: true         # Always redact sensitive content in logs
   # Never log raw user content - use safe-logger module
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HARDWARE (Phase 5: Hardware Maximization)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+hardware:
+  concurrent_inference: true
+  test_time_scaling: true
+  adversarial_testing: true
+  max_parallel_generations: 4
+  bestofn_judge_model: hermes3:70b
