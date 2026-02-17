@@ -36,6 +36,13 @@ import { getMessagesSince, getLatestMessageRowId, type Message } from './reader.
 import { sendMessage, checkMessagesAvailable } from './sender.js';
 import { filterToolCalls } from './tool-filter.js';
 import { isAcknowledgementMessage } from './message-utils.js';
+import {
+  resolveModelProfile,
+  enrichSystemPrompt,
+  enrichToolDescriptions,
+  applyResponseHints,
+  getGenerationOverrides,
+} from '../models/index.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
@@ -130,6 +137,13 @@ async function processMessage(
   orchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
   registerNativeExecutors(orchestrator);
 
+  // Resolve model profile for per-model tuning
+  const modelProfile = resolveModelProfile(provider.model);
+  const enrichedSystemPrompt = enrichSystemPrompt(assembled.systemPrompt, modelProfile);
+  const rawTools = enableTools ? toolRegistry.getTools() : [];
+  const enrichedTools = enrichToolDescriptions(rawTools, modelProfile);
+  const genOverrides = getGenerationOverrides(modelProfile);
+
   let iteration = 0;
   let finalResponse = '';
   let previousResults: ToolResultMessage[] = [];
@@ -142,11 +156,11 @@ async function processMessage(
       const response = await provider.generateWithTools(
         {
           prompt: assembled.context,
-          systemPrompt: assembled.systemPrompt,
-          maxTokens: 2048,
-          temperature: 0.7,
+          systemPrompt: enrichedSystemPrompt,
+          maxTokens: (genOverrides.num_predict as number | undefined) ?? 2048,
+          temperature: (genOverrides.temperature as number | undefined) ?? 0.7,
         },
-        enableTools ? toolRegistry.getTools() : [],
+        enrichedTools,
         previousResults.length > 0 ? previousResults : undefined
       );
 
@@ -229,6 +243,9 @@ async function processMessage(
       safeLogger.warn('Max tool iterations reached', { maxToolIterations });
       finalResponse += '\n\n(Reached maximum tool execution limit)';
     }
+
+    // Apply model-specific response cleanup
+    finalResponse = applyResponseHints(finalResponse, modelProfile);
 
     // Process memory commands from the response
     const memoryCommands = parseMemoryCommands(finalResponse);

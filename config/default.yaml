@@ -7,7 +7,7 @@
 
 local:
   provider: ollama
-  model: hermes3:70b            # Primary model: native tool use + strong reasoning
+  model: gpt-oss:120b            # Primary model: native tool use + strong reasoning
   codingModel: qwen3-coder-next:latest  # Coding-specific model
   baseUrl: http://localhost:11434
   timeoutMs: 120000             # 70B models need longer timeout
@@ -88,4 +88,4 @@ hardware:
   test_time_scaling: true
   adversarial_testing: true
   max_parallel_generations: 4
-  bestofn_judge_model: hermes3:70b
+  bestofn_judge_model: gpt-oss:120b
