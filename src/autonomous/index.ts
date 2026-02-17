@@ -166,3 +166,21 @@ export type { GitWatcherConfig } from './watchers/index.js';
 
 export { IssueWatcher } from './watchers/index.js';
 export type { IssueWatcherConfig } from './watchers/index.js';
+
+// ── Phase 4: Tiered Memory ──────────────────────────────────────────────────
+
+// Context manager
+export { ContextManager, createContextManager } from './context-manager.js';
+export type {
+  ContextManagerConfig,
+  WarmEntry,
+  TierUsage,
+} from './context-manager.js';
+
+// Context store
+export { ContextStore } from './context-store.js';
+export type {
+  MemoryEntry as ContextMemoryEntry,
+  RecallResult,
+  ContextStoreConfig,
+} from './context-store.js';
