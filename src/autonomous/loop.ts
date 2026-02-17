@@ -23,6 +23,16 @@ import type {
   Observation,
 } from './types.js';
 
+// Phase 2: Agent Loop imports
+import { AgentLoop, createAgentLoop } from './agent-loop.js';
+import type { AgentTrigger, AgentLoopConfig, AgentOutcome } from './agent-loop.js';
+import { buildAgentToolkit } from './agent-tools.js';
+import type { AgentToolkit, AgentState } from './agent-tools.js';
+import { WorldModel } from './world-model.js';
+import { GoalStack } from './goal-stack.js';
+import { IssueLog } from './issue-log.js';
+import { getTracer } from './debug.js';
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -48,10 +58,20 @@ export class AutonomousLoop {
   private lastResetDate: string = '';
   private running: boolean = false;
 
+  // Phase 2: Agent loop state
+  private worldModel: WorldModel;
+  private goalStack: GoalStack;
+  private issueLog: IssueLog;
+  private agentToolkit: AgentToolkit | null = null;
+  private activeAgentLoop: AgentLoop | null = null;
+  private agentConfig: Partial<AgentLoopConfig>;
+  private useAgentLoop: boolean = false;
+
   constructor(
     config: AutonomousConfig,
     projectRoot: string,
-    provider: AutonomousProvider
+    provider: AutonomousProvider,
+    agentConfig?: Partial<AgentLoopConfig> & { enabled?: boolean },
   ) {
     this.config = config;
     this.projectRoot = projectRoot;
@@ -63,6 +83,13 @@ export class AutonomousLoop {
       invariants: buildInvariants(config),
     });
     this.reflector = new Reflector({ projectRoot });
+
+    // Phase 2: Initialize persistent state
+    this.worldModel = new WorldModel({ projectRoot });
+    this.goalStack = new GoalStack();
+    this.issueLog = new IssueLog();
+    this.agentConfig = agentConfig ?? {};
+    this.useAgentLoop = agentConfig?.enabled ?? false;
   }
 
   /**
@@ -260,8 +287,162 @@ export class AutonomousLoop {
     }
   }
 
+  // ── Phase 2: Agent Loop Cycle ─────────────────────────────────────────────
+
+  /**
+   * Load persistent state from disk. Called at the start of the loop
+   * and before each agent cycle.
+   */
+  async loadState(): Promise<void> {
+    const tracer = getTracer();
+    tracer.log('agent-loop', 'debug', 'Loading persistent state');
+    await Promise.all([
+      this.worldModel.load(),
+      this.goalStack.load(),
+      this.issueLog.load(),
+    ]);
+  }
+
+  /**
+   * Save persistent state to disk. Called after each agent cycle.
+   */
+  async saveState(): Promise<void> {
+    const tracer = getTracer();
+    tracer.log('agent-loop', 'debug', 'Saving persistent state');
+    await Promise.all([
+      this.worldModel.save(),
+      this.goalStack.save(),
+      this.issueLog.save(),
+    ]);
+  }
+
+  /**
+   * Run a single improvement cycle using the ReAct agent loop.
+   * This is the Phase 2 replacement for runCycle(). It:
+   *   1. Loads persistent state (world model, goals, issues).
+   *   2. Determines the trigger (scheduled, goal-based, etc.).
+   *   3. Builds the agent toolkit and loop.
+   *   4. Runs the agent loop.
+   *   5. Saves state and logs the outcome.
+   */
+  async runAgentCycle(): Promise<AgentOutcome> {
+    const tracer = getTracer();
+    return tracer.withSpan('agent-loop', 'runAgentCycle', async () => {
+      this.cycleCount++;
+      this.dailyCycleCount++;
+
+      const cycleId = this.generateCycleId();
+      tracer.log('agent-loop', 'info', `=== Agent cycle ${cycleId} ===`);
+
+      // 1. Load state
+      await this.loadState();
+
+      // 2. Update world model (quick refresh)
+      await this.worldModel.updateActivity();
+
+      // 3. Determine trigger
+      const trigger = this.determineTrigger();
+
+      tracer.log('agent-loop', 'info', `Trigger: ${trigger.type}`, {
+        ...(trigger.type === 'goal'
+          ? { goalId: trigger.goal.id, description: trigger.goal.description }
+          : {}),
+      });
+
+      // 4. Build toolkit
+      const agentState: AgentState = {
+        worldModel: this.worldModel,
+        goalStack: this.goalStack,
+        issueLog: this.issueLog,
+      };
+
+      this.agentToolkit = buildAgentToolkit(
+        {
+          projectRoot: this.projectRoot,
+          allowedDirectories: this.config.allowedDirectories,
+          forbiddenPatterns: this.config.forbiddenPatterns,
+        },
+        agentState,
+      );
+
+      // 5. Build and run agent loop
+      // NOTE: The provider interface differs between AutonomousProvider
+      // and LlmProvider. For now we cast through 'unknown' since the
+      // Ollama provider implements both interfaces. In Phase 3+ we'll
+      // unify the provider interface.
+      const llmProvider = this.provider as unknown as import('../providers/base.js').LlmProvider;
+
+      this.activeAgentLoop = createAgentLoop(
+        this.agentConfig,
+        llmProvider,
+        this.agentToolkit,
+        agentState,
+      );
+
+      const outcome = await this.activeAgentLoop.run(trigger);
+      this.activeAgentLoop = null;
+
+      // 6. Record activity
+      this.worldModel.addActivity({
+        description: `Agent cycle ${cycleId}: ${outcome.stopReason} (${outcome.totalTurns} turns)`,
+        source: 'tyrion',
+      });
+
+      // 7. Save state
+      await this.saveState();
+
+      // 8. Log outcome
+      tracer.log('agent-loop', 'info', `=== Agent cycle ${cycleId} complete ===`, {
+        success: outcome.success,
+        stopReason: outcome.stopReason,
+        totalTurns: outcome.totalTurns,
+        durationMs: outcome.durationMs,
+        filesModified: outcome.filesModified.length,
+        issuesFiled: outcome.issuesFiled.length,
+      });
+
+      return outcome;
+    });
+  }
+
+  /**
+   * Determine the trigger for an agent cycle. Checks:
+   *   1. Is there a goal in progress? Continue it.
+   *   2. Is there a pending goal? Start it.
+   *   3. Default to scheduled.
+   */
+  private determineTrigger(): AgentTrigger {
+    const nextGoal = this.goalStack.getNextGoal();
+    if (nextGoal) {
+      return { type: 'goal', goal: nextGoal };
+    }
+    return { type: 'scheduled' };
+  }
+
+  /**
+   * Abort the currently running agent cycle. Used when a user message
+   * arrives and should preempt autonomous work.
+   */
+  abortAgentCycle(): void {
+    if (this.activeAgentLoop) {
+      this.activeAgentLoop.abort();
+    }
+  }
+
+  /**
+   * Get references to the persistent state (for external access).
+   */
+  getState(): { worldModel: WorldModel; goalStack: GoalStack; issueLog: IssueLog } {
+    return {
+      worldModel: this.worldModel,
+      goalStack: this.goalStack,
+      issueLog: this.issueLog,
+    };
+  }
+
   /**
    * Attempt a single hypothesis.
+   * @deprecated Use runAgentCycle() instead. Retained for fallback.
    */
   private async attemptHypothesis(
     cycleId: string,

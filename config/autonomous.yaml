@@ -88,6 +88,42 @@ autonomous:
   # budget: null
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AGENT LOOP (Phase 2: ReAct)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+agent_loop:
+  # Master switch — when true, use the new ReAct agent loop instead of
+  # the legacy 4-phase pipeline
+  enabled: false
+
+  # Maximum reasoning turns per cycle (prevents infinite loops)
+  max_turns: 20
+
+  # Soft limit on estimated tokens per cycle (input + output)
+  max_tokens_per_cycle: 50000
+
+  # Model used for reasoning / planning / decision-making
+  reasoning_model: hermes3:70b
+
+  # Model used for code generation and analysis
+  coding_model: qwen3-coder-next:latest
+
+  # Enable the 'think' tool for explicit reasoning steps
+  think_tool_enabled: true
+
+  # Enable delegation to sub-models
+  delegation_enabled: true
+
+  # Enable user messaging (Phase 7 placeholder — keep false until Phase 7)
+  user_messaging_enabled: false
+
+  # Temperature for the reasoning model
+  temperature: 0.2
+
+  # Maximum tokens per individual LLM response
+  max_response_tokens: 4096
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
