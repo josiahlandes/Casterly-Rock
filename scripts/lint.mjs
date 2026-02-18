@@ -11,7 +11,8 @@ const ALLOWED_CONSOLE_LOG_FILES = new Set([
   'src/benchmark-cli.ts',    // Benchmark CLI needs console output
   'src/terminal-repl.ts',    // Terminal REPL needs console output
   'tests/validation-parser.test.ts',  // Test fixtures contain console.log in code strings
-  'src/autonomous/debug.ts'  // Debug tracer applies redaction before console output
+  'src/autonomous/debug.ts',  // Debug tracer applies redaction before console output
+  'tests/integration-system-health.test.ts'  // Test asserts lint script contains console.log string
 ]);
 
 function walk(dir) {

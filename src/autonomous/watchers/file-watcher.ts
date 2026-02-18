@@ -213,6 +213,9 @@ export class FileWatcher {
    * Check if a file path matches any ignore pattern.
    */
   private shouldIgnore(filePath: string): boolean {
-    return this.config.ignorePatterns.some((pattern) => filePath.includes(pattern));
+    return this.config.ignorePatterns.some((pattern) => {
+      const bare = pattern.endsWith('/') ? pattern.slice(0, -1) : pattern;
+      return filePath.includes(pattern) || filePath.includes(bare + '/') || filePath === bare || filePath.endsWith('/' + bare);
+    });
   }
 }

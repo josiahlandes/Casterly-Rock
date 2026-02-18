@@ -25,8 +25,8 @@ import { resetTracer, initTracer } from '../src/autonomous/debug.js';
 
 /** Create a date at a specific hour and minute. */
 function dateAt(hour: number, minute: number = 0): Date {
-  const d = new Date('2026-02-17T00:00:00.000Z');
-  d.setUTCHours(hour, minute, 0, 0);
+  const d = new Date();
+  d.setHours(hour, minute, 0, 0);
   return d;
 }
 
