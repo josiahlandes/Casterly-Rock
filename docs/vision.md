@@ -141,20 +141,56 @@ A change is done only when:
 3. `npm run check` passes locally.
 4. Any remaining risk is called out explicitly in the final summary.
 
+## Dream Cycles & Self-Knowledge
+
+### Dream Cycle Consolidation
+
+Background reasoning during idle time. When Casterly is not actively processing user requests, it analyzes its journal for patterns, consolidates operational memory, updates its self-model, and compresses old entries. The dream cycle runner (`src/autonomous/dream/runner.ts`) executes six phases:
+
+1. **Consolidate reflections** -- groups past outcomes by success/failure, archives insights.
+2. **Update world model** -- runs a codebase health check and refreshes the world model YAML.
+3. **Reorganize goals** -- reprioritizes the goal stack based on recent activity.
+4. **Explore** -- code archaeology pass to find fragile or abandoned files.
+5. **Update self-model** -- recalculates strengths and weaknesses from the issue log.
+6. **Write retrospective** -- weekly summary written to the journal.
+
+Dream cycles are configured with intervals, budgets, and lookback windows in `config/autonomous.yaml`.
+
+### Self-Knowledge Rebuilding
+
+Periodic self-reflection where Casterly rebuilds its understanding of its own strengths, weaknesses, and working patterns from journal history. The self-model (`src/autonomous/dream/self-model.ts`) tracks 13 skills (regex, TypeScript, testing, refactoring, security, performance, concurrency, parsing, config, git, bug-fixing, documentation) with success rates and sample sizes. The model is stored in `~/.casterly/self-model.yaml` and rebuilt every 48 hours from the issue log and reflections. This replaces telemetry-based metrics with genuine self-knowledge: "I tend to over-complicate refactors" rather than "successRate: 0.7."
+
 ## Roadmap
 
 ### Semantic Memory
 
-On-device embeddings for richer recall beyond keyword matching. The journal's `recall_journal` tool currently uses keyword search. Embedding-based similarity search would enable the agent to find relevant past context even when the exact words differ. This requires a small, fast embedding model running alongside the reasoning model within the 128GB memory budget.
+On-device embeddings for richer recall beyond keyword matching. The context store's `recall()` method currently uses keyword-weighted substring matching across the cool and cold memory tiers. Embedding-based similarity search would enable the agent to find relevant past context even when the exact words differ.
+
+**What exists today:**
+- Four-tier memory system (hot/warm/cool/cold) with keyword recall fully operational.
+- Ollama supports embeddings via `/api/embed` -- the inference provider is already running.
+
+**What needs to be built:**
+- Embedding provider module (`src/providers/embedding.ts`) calling Ollama's `/api/embed` endpoint with a small model like `nomic-embed-text` (~40MB).
+- Vector storage layer extending the existing context store JSONL with embedding vectors.
+- Cosine similarity search with configurable threshold, blended with keyword scoring.
+- Configuration in `config/autonomous.yaml` for model, dimensions, threshold, and hybrid weighting.
+
+**Estimated effort:** Moderate. ~17-27 hours for base implementation (embedding provider + vector storage + similarity search + config). No external dependencies; all computation stays on-device. Can be phased: (1) basic semantic search, (2) persistent vector storage, (3) optional ANN indexing at scale.
 
 ### Parallelism
 
-Concurrent agent reasoning to maximize hardware utilization. The M4 Max can support two concurrent models. The task runner already has a semaphore-based concurrency pool, but independent branches of a task DAG could be processed in parallel by multiple subagents, each with a scoped context. The hardware constraint is two concurrent large models; the architecture should exploit this fully.
+Concurrent agent reasoning to maximize hardware utilization. The M4 Max can support two concurrent models. Independent branches of a task DAG should be processed in parallel by multiple subagents, each with a scoped context.
 
-### Dream Cycle Consolidation
+**What exists today:**
+- `ConcurrentProvider` (`src/providers/concurrent.ts`) is fully implemented with `parallel()` and `bestOfN()` methods, bounded concurrency (max 3), and per-model timing metrics.
+- `ReasoningScaler` (`src/autonomous/reasoning/scaling.ts`) maps task difficulty to strategy (single-model for easy, parallel for medium, best-of-N with judge for hard).
+- Task runner (`src/tasks/runner.ts`) already executes DAG branches concurrently via `Promise.all` with a semaphore.
 
-Background reasoning during idle time. When the agent is not actively processing user requests, it can analyze its journal for patterns, consolidate operational memory, update its self-model, and compress old entries. The `consolidate` tool and dream cycle runner are currently stubs awaiting real pattern analysis logic.
+**What needs to be wired:**
+- Agent loop currently accepts `LlmProvider` -- needs to accept `ConcurrentProvider` as well.
+- `AutonomousLoop` initialization needs to build and pass a `ConcurrentProvider` when parallel reasoning is enabled.
+- ReasoningScaler's difficulty assessment needs to drive the provider selection per turn, not just scale `maxTurns`.
+- Config entry in `config/autonomous.yaml` for `parallelReasoning.enabled`, model list, and concurrency limits.
 
-### Self-Knowledge Rebuilding
-
-Periodic self-reflection passes where the agent rebuilds its understanding of its own strengths, weaknesses, and working patterns entirely from journal history. This replaces telemetry-based metrics with genuine self-knowledge: "I tend to over-complicate refactors" rather than "successRate: 0.7."
+**Estimated effort:** Moderate. ~6-8 hours of implementation + ~2 hours of testing. All components exist; this is a wiring task connecting `ConcurrentProvider` and `ReasoningScaler` into the agent loop's turn logic.
