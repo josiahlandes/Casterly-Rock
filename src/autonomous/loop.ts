@@ -71,9 +71,6 @@ const CYCLE_ID_PREFIX = 'cycle';
  * Configuration for the event-driven awareness system.
  */
 export interface EventsConfig {
-  /** Whether the event system is enabled */
-  enabled: boolean;
-
   /** File watcher config overrides */
   fileWatcher: Partial<FileWatcherConfig> & { enabled: boolean };
 
@@ -91,7 +88,6 @@ export interface EventsConfig {
 }
 
 const DEFAULT_EVENTS_CONFIG: EventsConfig = {
-  enabled: false,
   fileWatcher: { enabled: true, debounceMs: 500 },
   gitWatcher: { enabled: true, debounceMs: 1000 },
   issueWatcher: { enabled: true, checkIntervalMs: 6 * 60 * 60 * 1000 },
@@ -143,7 +139,6 @@ export class AutonomousLoop {
   private agentToolkit: AgentToolkit | null = null;
   private activeAgentLoop: AgentLoop | null = null;
   private agentConfig: Partial<AgentLoopConfig>;
-  private useAgentLoop: boolean = false;
 
   // Phase 4: Tiered memory
   private contextManager: ContextManager;
@@ -201,7 +196,6 @@ export class AutonomousLoop {
     this.goalStack = new GoalStack();
     this.issueLog = new IssueLog();
     this.agentConfig = agentConfig ?? {};
-    this.useAgentLoop = agentConfig?.enabled ?? false;
 
     // Phase 3: Initialize event system
     this.eventsConfig = { ...DEFAULT_EVENTS_CONFIG, ...eventsConfig };
@@ -242,18 +236,20 @@ export class AutonomousLoop {
     this.log(`Cycle interval: ${this.config.cycleIntervalMinutes} minutes`);
     this.log(`Max cycles per day: ${this.config.maxCyclesPerDay}`);
 
+    // Start event-driven awareness (watchers always run)
+    await this.startEventDriven();
+
     while (this.running) {
       try {
         // Check if we should run
         if (!this.shouldRunCycle()) {
-          // During quiet hours, run dream cycle once per night
-          await this.runDreamCycleIfDue();
           await this.sleep(60_000); // Check again in 1 minute
           continue;
         }
 
-        // Run a cycle
-        await this.runCycle();
+        // Run a cycle via the agent loop (the sole execution path)
+        const trigger = this.determineTrigger();
+        await this.runAgentCycle(trigger);
 
         // Sleep until next cycle
         await this.sleep(this.config.cycleIntervalMinutes * 60_000);
@@ -293,35 +289,18 @@ export class AutonomousLoop {
       return false;
     }
 
-    // Check quiet hours
-    if (this.config.quietHours?.enabled) {
-      const now = new Date();
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const currentTime = hours * 60 + minutes;
-
-      const startParts = this.config.quietHours.start.split(':').map(Number);
-      const endParts = this.config.quietHours.end.split(':').map(Number);
-      const startHour = startParts[0] ?? 0;
-      const startMin = startParts[1] ?? 0;
-      const endHour = endParts[0] ?? 0;
-      const endMin = endParts[1] ?? 0;
-      const startTime = startHour * 60 + startMin;
-      const endTime = endHour * 60 + endMin;
-
-      if (currentTime >= startTime && currentTime < endTime) {
-        return false; // In quiet hours
-      }
-    }
+    // Quiet hours are a scheduling preference, not a hard gate.
+    // The LLM receives quiet hours info via the system prompt and
+    // prefers consolidation work during those times. The system
+    // never refuses to run cycles. See docs/vision.md.
 
     return true;
   }
 
   /**
-   * Run a single improvement cycle.
-   *
-   * When called from the daemon controller, pass an AbortSignal so the
-   * cycle can be interrupted between phases if a user message arrives.
+   * @deprecated Legacy 4-phase pipeline (analyze → hypothesize → implement → validate).
+   * Use runAgentCycle() instead — the agent loop is the sole execution path.
+   * Retained temporarily for test compatibility.
    */
   async runCycle(signal?: AbortSignal): Promise<void> {
     this.cycleCount++;
@@ -548,11 +527,8 @@ export class AutonomousLoop {
   async startEventDriven(): Promise<void> {
     const tracer = getTracer();
 
-    if (!this.eventsConfig.enabled) {
-      tracer.log('events', 'info', 'Event-driven mode is disabled');
-      return;
-    }
-
+    // Watchers always run and emit events. The LLM decides what to
+    // do with them. There is no events.enabled toggle.
     tracer.log('events', 'info', 'Starting event-driven mode');
 
     // Load persistent state first
@@ -639,11 +615,8 @@ export class AutonomousLoop {
   private async handleEvent(event: SystemEvent): Promise<void> {
     const tracer = getTracer();
 
-    // Check if agent loop is enabled
-    if (!this.useAgentLoop) {
-      tracer.log('events', 'debug', `Event ${event.type} ignored (agent loop disabled)`);
-      return;
-    }
+    // The agent loop is always the execution path. Events always
+    // flow to the agent loop. There is no disabled state.
 
     // Check if a cycle is already running
     if (this.activeAgentLoop !== null) {
@@ -744,6 +717,9 @@ export class AutonomousLoop {
         ...(this.embeddingProvider ? { embeddingProvider: this.embeddingProvider } : {}),
         // Supporting: Concurrent provider for parallel_reason
         ...(this.concurrentProvider ? { concurrentProvider: this.concurrentProvider } : {}),
+        // Reconciliation: Dream cycle phases as tools
+        dreamCycleRunner: this.dreamCycleRunner,
+        reflector: this.reflector,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -1199,7 +1175,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
 
   // Convert from YAML structure to config object
   return {
-    enabled: raw.autonomous?.enabled ?? false,
+    enabled: true, // Always active — no master switch (see docs/vision.md)
     provider: 'ollama',
     model: raw.autonomous?.model ?? 'qwen3-coder-next:latest',
     cycleIntervalMinutes: raw.autonomous?.cycle_interval_minutes ?? 60,
@@ -1208,7 +1184,9 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
       ? {
           start: raw.autonomous.quiet_hours.start,
           end: raw.autonomous.quiet_hours.end,
-          enabled: raw.autonomous.quiet_hours.enabled ?? false,
+          // Quiet hours are a soft preference, not a hard gate.
+          // The enabled field is kept for type compat but always true.
+          enabled: true,
         }
       : undefined,
     maxAttemptsPerCycle: raw.autonomous?.max_attempts_per_cycle ?? 3,
@@ -1253,10 +1231,8 @@ export async function main(): Promise<void> {
   console.log('Loading configuration...');
   const config = await loadConfig(configPath);
 
-  if (!config.enabled) {
-    console.log('Autonomous improvement is disabled in config. Set enabled: true to start.');
-    process.exit(0);
-  }
+  // The autonomous loop always starts. There is no master switch.
+  // Autonomy is the default state. See docs/vision.md.
 
   console.log('Creating provider...');
   const provider = await createProvider(config);

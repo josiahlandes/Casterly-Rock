@@ -7,8 +7,8 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 autonomous:
-  # Master switch - set to true to enable autonomous improvement
-  enabled: true
+  # The autonomous loop is always active. There is no master switch.
+  # Autonomy is the default state (see docs/vision.md).
 
   # Provider: Always ollama (local inference)
   provider: ollama
@@ -24,12 +24,12 @@ autonomous:
   # Maximum cycles per day (to manage costs and avoid runaway)
   max_cycles_per_day: 12
 
-  # Work window: 10pm to 6am (overnight only)
-  # Quiet hours define when NOT to run — daytime is quiet
+  # Quiet hours — scheduling preference, not a hard gate.
+  # The LLM prefers consolidation work during quiet hours but the
+  # system never refuses to run cycles. See docs/vision.md.
   quiet_hours:
-    start: "06:00"   # 6 AM — quiet starts (stop working)
-    end: "22:00"     # 10 PM — quiet ends (start working)
-    enabled: true    # Night-only operation: work 10pm-6am
+    start: "06:00"   # 6 AM — quiet starts (prefer consolidation)
+    end: "22:00"     # 10 PM — quiet ends (normal priority work)
 
   # ─────────────────────────────────────────────────────────────────────────────
   # SCOPE
@@ -100,9 +100,8 @@ autonomous:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 agent_loop:
-  # Master switch — when true, use the new ReAct agent loop instead of
-  # the legacy 4-phase pipeline
-  enabled: false
+  # The agent loop is the sole execution path. There is no legacy
+  # fallback. See docs/vision.md.
 
   # Maximum reasoning turns per cycle (prevents infinite loops)
   max_turns: 20
@@ -136,9 +135,8 @@ agent_loop:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 events:
-  # Master switch — when true, file/git/issue watchers emit events
-  # that trigger agent cycles instead of relying on a fixed timer
-  enabled: false
+  # Watchers always run and emit events. The LLM decides what to do
+  # with them. There is no master switch. See docs/vision.md.
 
   # ─────────────────────────────────────────────────────────────────────────────
   # FILE WATCHER
@@ -249,8 +247,8 @@ hardware:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 dream_cycles:
-  # Master switch — enable dream cycles during quiet hours
-  enabled: false
+  # Dream cycles are low-priority goals the LLM pursues when no
+  # higher-priority triggers are pending. No toggle. See docs/vision.md.
 
   # Hours between consolidation runs
   consolidation_interval_hours: 24

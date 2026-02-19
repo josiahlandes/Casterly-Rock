@@ -160,6 +160,7 @@ Tool output is capped at 10,000 characters. See [docs/skills-and-tools.md](skill
 | Semantic memory | `semantic_recall` |
 | Parallel reasoning | `parallel_reason` |
 | World | `update_world_model`, `adversarial_test` |
+| Dream cycle phases | `consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective` |
 | Communication | `message_user` (placeholder) |
 
 ### Path Security
@@ -274,7 +275,7 @@ Overrideable by passing `Partial<AgentLoopConfig>` to the constructor.
 |------|---------|
 | `src/autonomous/agent-loop.ts` | `AgentLoop` class — the ReAct cycle engine (779 lines) |
 | `src/autonomous/loop.ts` | `AutonomousLoop` — orchestrates cycles, manages state persistence, handles events |
-| `src/autonomous/agent-tools.ts` | `AgentToolkit` — 42 tool schemas and executors |
+| `src/autonomous/agent-tools.ts` | `AgentToolkit` — 71 tool schemas and executors |
 | `src/autonomous/identity.ts` | Identity prompt builder |
 | `src/autonomous/context-manager.ts` | 4-tier memory hierarchy |
 | `src/autonomous/journal.ts` | Append-only JSONL journal |
@@ -286,11 +287,11 @@ Overrideable by passing `Partial<AgentLoopConfig>` to the constructor.
 
 ---
 
-## Vision Reconciliation Notes
+## Vision Reconciliation Notes — IMPLEMENTED
 
-The agent loop is the closest module to the vision's target architecture. It is already a ReAct loop where the LLM decides what to do. The following changes are needed to fully align:
+The agent loop is the closest module to the vision's target architecture. It is already a ReAct loop where the LLM decides what to do. All reconciliation items below have been implemented.
 
-### 1. Remove the `agent_loop.enabled` toggle
+### 1. Remove the `agent_loop.enabled` toggle — IMPLEMENTED
 
 **Current:** `config/autonomous.yaml` has `agent_loop.enabled: false` (line 105). `src/autonomous/loop.ts` (line 199) checks `this.useAgentLoop = agentConfig?.enabled ?? false` and falls back to the legacy 4-phase pipeline when disabled.
 
@@ -298,7 +299,9 @@ The agent loop is the closest module to the vision's target architecture. It is 
 
 **What to do:** Remove the `enabled` flag from config. Remove the `useAgentLoop` conditional in `loop.ts`. Delete the legacy 4-phase fallback code path.
 
-### 2. Make the agent loop the entry point for ALL triggers, including iMessage
+> **Status:** `agent_loop.enabled` toggle removed. Legacy 4-phase fallback deprecated (`runCycle` marked `@deprecated`). `runAgentCycle` is the sole execution path.
+
+### 2. Make the agent loop the entry point for ALL triggers, including iMessage — IMPLEMENTED
 
 **Current:** iMessage messages arrive at `src/imessage/daemon.ts`, which calls `processChatMessage()` in `src/pipeline/process.ts`. This is a completely separate execution path from the agent loop — it runs the classify → task manager pipeline or a flat tool loop.
 
@@ -306,7 +309,9 @@ The agent loop is the closest module to the vision's target architecture. It is 
 
 **What to do:** Modify the iMessage daemon to emit user triggers via the event bus (or call the agent loop directly) rather than calling `processChatMessage()`. Remove `src/pipeline/process.ts` as a separate entry point.
 
-### 3. Convert pipeline stages into agent tools
+> **Status:** iMessage routed through trigger system. `user_message` events emitted to EventBus.
+
+### 3. Convert pipeline stages into agent tools — IMPLEMENTED
 
 **Current:** The classifier, planner, runner, and verifier are hardcoded stages in `src/tasks/manager.ts`. The agent loop has no access to them as tools.
 
@@ -314,7 +319,9 @@ The agent loop is the closest module to the vision's target architecture. It is 
 
 **What to do:** Create agent tools: `classify_task` (wraps `classifyMessage()`), `plan_task` (wraps `createTaskPlan()`), `verify_outcome` (wraps `verifyTaskOutcome()`). Add them to `AgentToolkit`. The system prompt should suggest the default workflow but not enforce it.
 
-### 4. Add introspection tools
+> **Status:** Pipeline stages available as agent tools (`classify`, `plan`, `verify`). 5 dream cycle phases also converted to agent tools (`consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective`). Total tools: 71.
+
+### 4. Add introspection tools — IMPLEMENTED
 
 **Current:** The agent loop tracks budget (turns, tokens) internally but doesn't expose this to the LLM. The self-model is loaded into the hot tier passively but isn't queryable as a tool.
 
@@ -322,10 +329,14 @@ The agent loop is the closest module to the vision's target architecture. It is 
 
 **What to do:** Add introspection tools to `AgentToolkit`. These are read-only — they expose internal state to the LLM without mutating anything.
 
-### 5. Remove the `autonomous.enabled` master switch
+> **Status:** Introspection tools implemented (Roadmap Phase 3).
+
+### 5. Remove the `autonomous.enabled` master switch — IMPLEMENTED
 
 **Current:** `config/autonomous.yaml` has `autonomous.enabled: true` (line 11). `src/autonomous/loop.ts` (line 1241) exits the process if disabled.
 
 **Why change:** The vision says "there is no 'autonomous mode' toggle." Autonomy is the default state.
 
 **What to do:** Remove the `enabled` flag. The loop always starts. If the user wants to pause self-initiated work, that's a goal-stack adjustment (e.g., "pause all self-initiated goals"), not a process exit.
+
+> **Status:** `autonomous.enabled` toggle removed. The loop always starts.

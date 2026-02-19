@@ -93,9 +93,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 66 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(66);
-    expect(toolkit.toolNames).toHaveLength(66);
+  it('exposes all 71 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(71);
+    expect(toolkit.toolNames).toHaveLength(71);
   });
 
   it('includes all expected tool names', () => {
@@ -129,6 +129,9 @@ describe('AgentToolkit — Schema Validation', () => {
       'load_context', 'evict_context', 'set_budget',
       'schedule', 'list_schedules', 'cancel_schedule',
       'semantic_recall', 'parallel_reason',
+      // Reconciliation: Dream Cycle Phases
+      'consolidate_reflections', 'reorganize_goals', 'explore_codebase',
+      'rebuild_self_model', 'write_retrospective',
     ];
     for (const name of expected) {
       expect(names).toContain(name);

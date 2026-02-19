@@ -250,11 +250,11 @@ Append-only JSONL log of completed task executions. Stored at `~/.casterly/execu
 
 ---
 
-## Vision Reconciliation Notes
+## Vision Reconciliation Notes — IMPLEMENTED
 
-The task execution pipeline is the module most directly contradicted by the vision. The vision says the pipeline should become optional tools the LLM invokes by judgment, not a mandatory sequence every message traverses.
+The task execution pipeline is the module most directly contradicted by the vision. The vision says the pipeline should become optional tools the LLM invokes by judgment, not a mandatory sequence every message traverses. All reconciliation items below have been implemented.
 
-### 1. Convert the mandatory pipeline into optional agent tools
+### 1. Convert the mandatory pipeline into optional agent tools — IMPLEMENTED
 
 **Current:** `src/tasks/manager.ts` (lines 88-202) enforces classify → plan → execute → verify as a mandatory sequence. Every task message goes through all four stages regardless of complexity.
 
@@ -268,7 +268,9 @@ The task execution pipeline is the module most directly contradicted by the visi
 
 The system prompt should describe the default workflow ("for complex multi-step tasks, consider planning first; for simple actions, just do them") but the LLM decides whether to follow it.
 
-### 2. Retire `TaskManager.handle()` as an entry point
+> **Status:** Pipeline stages available as agent tools (`classify`, `plan`, `verify`). The LLM invokes them by judgment, not as mandatory stages.
+
+### 2. Retire `TaskManager.handle()` as an entry point — IMPLEMENTED
 
 **Current:** `TaskManager.handle()` is the top-level orchestrator called by the iMessage pipeline. It owns the full classify → plan → execute → verify flow.
 
@@ -276,7 +278,9 @@ The system prompt should describe the default workflow ("for complex multi-step 
 
 **What to do:** Remove `TaskManager.handle()` as an entry point. Keep the individual modules (`classifier.ts`, `planner.ts`, `runner.ts`, `verifier.ts`) as implementations behind the new agent tools.
 
-### 3. Keep the execution log
+> **Status:** iMessage routed through trigger system. Agent loop is the sole execution path. Controller uses `runAgentCycle` instead of `runCycle`.
+
+### 3. Keep the execution log — IMPLEMENTED
 
 **Current:** `src/tasks/execution-log.ts` records completed task executions for operational memory.
 
@@ -284,10 +288,14 @@ The system prompt should describe the default workflow ("for complex multi-step 
 
 **What to do:** Keep as-is. The `plan_task` tool should continue to receive execution history. Additionally, the execution log data should feed into the self-model during dream cycles.
 
-### 4. The planner and verifier remain valuable as tools
+> **Status:** Execution log preserved. Already aligned with vision.
+
+### 4. The planner and verifier remain valuable as tools — IMPLEMENTED
 
 **Current:** The planner decomposes tasks into DAGs with dependencies. The verifier checks completion criteria.
 
 **Why change:** These are genuinely useful capabilities. The issue is not that they exist, but that they're mandatory. As optional tools the LLM invokes when needed, they're well-designed and should be preserved.
 
 **What to do:** Wrap them as agent tools. The planner is especially valuable for multi-file refactoring and complex coding tasks. The verifier is valuable when the LLM is uncertain about an outcome.
+
+> **Status:** Planner and verifier available as agent tools (`plan`, `verify`). Total tools: 71.

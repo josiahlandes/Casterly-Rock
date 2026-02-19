@@ -60,6 +60,8 @@ import type { SelfModelSummary } from './identity.js';
 import type { JobStore } from '../scheduler/store.js';
 import type { EmbeddingProvider } from '../providers/embedding.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
+import type { DreamCycleRunner } from './dream/runner.js';
+import type { Reflector } from './reflector.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -167,6 +169,13 @@ export interface AgentState {
   embeddingProvider?: EmbeddingProvider;
   /** Supporting: Concurrent provider for parallel_reason tool */
   concurrentProvider?: ConcurrentProvider;
+
+  // ── Reconciliation: Dream cycle phases as tools ──
+
+  /** Dream cycle runner for phase-level tools */
+  dreamCycleRunner?: DreamCycleRunner;
+  /** Reflector for consolidation and retrospective phases */
+  reflector?: Reflector;
 }
 
 /**
@@ -1853,6 +1862,67 @@ Requires the concurrent inference provider to be available.`,
       },
     },
     required: ['problem'],
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reconciliation: Dream Cycle Phase Tools
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CONSOLIDATE_REFLECTIONS_SCHEMA: ToolSchema = {
+  name: 'consolidate_reflections',
+  description: `Find patterns across recent reflections and archive consolidated insights to long-term memory.
+This is a dream cycle phase that can now be invoked at your discretion.
+Useful during quiet hours or when reflection count is high.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+const REORGANIZE_GOALS_SCHEMA: ToolSchema = {
+  name: 'reorganize_goals',
+  description: `Reprioritize the goal stack: prune stale goals and create new goals from high-priority issues.
+This is a dream cycle phase that can now be invoked at your discretion.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+const EXPLORE_CODEBASE_SCHEMA: ToolSchema = {
+  name: 'explore_codebase',
+  description: `Run code archaeology: find fragile files (frequently changed/fixed) and abandoned code.
+Files issues for very fragile code. This is a dream cycle phase that can now be invoked at your discretion.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+const REBUILD_SELF_MODEL_SCHEMA: ToolSchema = {
+  name: 'rebuild_self_model',
+  description: `Recalculate the self-model: rebuild strengths, weaknesses, skill ratings, and preferences from recent history.
+This is a dream cycle phase that can now be invoked at your discretion.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+const WRITE_RETROSPECTIVE_SCHEMA: ToolSchema = {
+  name: 'write_retrospective',
+  description: `Write a retrospective to MEMORY.md summarizing recent dream cycle activity,
+fragile files, goal changes, and self-model state. Respects the configured interval
+between retrospectives. This is a dream cycle phase that can now be invoked at your discretion.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
   },
 };
 
@@ -4158,6 +4228,177 @@ function buildExecutors(
     }
   });
 
+  // ── Reconciliation: Dream cycle phase tools ─────────────────────────────
+
+  executors.set('consolidate_reflections', async (call) => {
+    if (!state.dreamCycleRunner || !state.reflector) {
+      return failureResult(call.id, 'Dream cycle runner or reflector not available.');
+    }
+
+    return tracer.withSpan('dream', 'consolidate_reflections', async () => {
+      const reflector = state.reflector!;
+      const reflections = await reflector.loadRecentReflections(50);
+
+      if (reflections.length === 0) {
+        return successResult(call.id, 'No reflections to consolidate.', config.maxOutputChars);
+      }
+
+      const successful = reflections.filter((r) => r.outcome === 'success');
+      const failed = reflections.filter((r) => r.outcome === 'failure');
+
+      if (state.contextManager && successful.length > 0) {
+        const insights = successful
+          .map((r) => `- [${r.cycleId}] ${r.observation.suggestedArea}: ${r.learnings}`)
+          .join('\n');
+        await state.contextManager.archive({
+          title: `Consolidation: ${successful.length} successful patterns`,
+          content: insights,
+          tags: ['consolidation', 'success-patterns'],
+          source: 'reflection',
+        });
+      }
+
+      if (state.contextManager && failed.length > 0) {
+        const failures = failed
+          .map((r) => `- [${r.cycleId}] ${r.observation.suggestedArea}: ${r.learnings}`)
+          .join('\n');
+        await state.contextManager.archive({
+          title: `Consolidation: ${failed.length} failure patterns`,
+          content: failures,
+          tags: ['consolidation', 'failure-patterns'],
+          source: 'reflection',
+        });
+      }
+
+      return successResult(
+        call.id,
+        `Consolidated ${reflections.length} reflections (${successful.length} successful, ${failed.length} failed). Insights archived.`,
+        config.maxOutputChars,
+      );
+    });
+  });
+
+  executors.set('reorganize_goals', async (call) => {
+    return tracer.withSpan('dream', 'reorganize_goals', async () => {
+      let reorganized = 0;
+
+      const staleGoals = state.goalStack.getStaleGoals();
+      for (const g of staleGoals) {
+        state.goalStack.removeGoal(g.id);
+        reorganized++;
+      }
+      const pruned = staleGoals.length;
+
+      const openIssues = state.issueLog.getOpenIssues();
+      for (const issue of openIssues) {
+        if (issue.priority === 'critical' || issue.priority === 'high') {
+          const goals = state.goalStack.getOpenGoals();
+          const hasGoal = goals.some(
+            (g) => g.description.includes(issue.id) || g.description.includes(issue.title),
+          );
+          if (!hasGoal) {
+            state.goalStack.addGoal({
+              source: 'self' as GoalSource,
+              priority: issue.priority === 'critical' ? 2 : 3,
+              description: `Investigate issue ${issue.id}: ${issue.title}`,
+              notes: 'Auto-created from high-priority issue during goal reorganization.',
+            });
+            reorganized++;
+          }
+        }
+      }
+
+      return successResult(
+        call.id,
+        `Goals reorganized: ${reorganized} changes (${pruned} stale pruned, ${reorganized - pruned} new from issues).`,
+        config.maxOutputChars,
+      );
+    });
+  });
+
+  executors.set('explore_codebase', async (call) => {
+    if (!state.dreamCycleRunner) {
+      return failureResult(call.id, 'Dream cycle runner not available.');
+    }
+
+    return tracer.withSpan('dream', 'explore_codebase', async () => {
+      try {
+        // Access the archaeologist through the dream runner's public API
+        const runner = state.dreamCycleRunner!;
+        const result = await (runner as unknown as { explore(): Promise<{ fragile: Array<{ path: string; fragilityScore: number; changeCount: number; fixCount: number }>; abandoned: string[] }> }).explore();
+
+        const fragileLines = result.fragile.slice(0, 5).map(
+          (f) => `  ${f.path} (score: ${f.fragilityScore}, changes: ${f.changeCount}, fixes: ${f.fixCount})`
+        );
+        const abandonedLines = result.abandoned.slice(0, 5).map((a) => `  ${a}`);
+
+        return successResult(
+          call.id,
+          [
+            `Fragile files (${result.fragile.length} found):`,
+            ...fragileLines,
+            result.fragile.length > 5 ? `  ... and ${result.fragile.length - 5} more` : '',
+            `\nAbandoned files (${result.abandoned.length} found):`,
+            ...abandonedLines,
+            result.abandoned.length > 5 ? `  ... and ${result.abandoned.length - 5} more` : '',
+          ].join('\n'),
+          config.maxOutputChars,
+        );
+      } catch (err) {
+        return failureResult(call.id, `Exploration failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+  });
+
+  executors.set('rebuild_self_model', async (call) => {
+    if (!state.dreamCycleRunner || !state.reflector) {
+      return failureResult(call.id, 'Dream cycle runner or reflector not available.');
+    }
+
+    return tracer.withSpan('dream', 'rebuild_self_model', async () => {
+      try {
+        const runner = state.dreamCycleRunner!;
+        const selfModel = (runner as unknown as { selfModel: { rebuild: (i: unknown, r: unknown) => Promise<void>; save: () => Promise<void>; getSummary: () => unknown } }).selfModel;
+        await selfModel.rebuild(state.issueLog, state.reflector!);
+        await selfModel.save();
+        const summary = selfModel.getSummary();
+        return successResult(
+          call.id,
+          `Self-model rebuilt.\n${JSON.stringify(summary, null, 2)}`,
+          config.maxOutputChars,
+        );
+      } catch (err) {
+        return failureResult(call.id, `Self-model rebuild failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+  });
+
+  executors.set('write_retrospective', async (call) => {
+    if (!state.reflector) {
+      return failureResult(call.id, 'Reflector not available.');
+    }
+
+    return tracer.withSpan('dream', 'write_retrospective', async () => {
+      try {
+        const summary = [
+          'Retrospective requested via agent tool.',
+          `Open goals: ${state.goalStack.getOpenGoals().length}`,
+          `Open issues: ${state.issueLog.getOpenIssues().length}`,
+        ].join('\n');
+
+        await state.reflector!.appendToMemory({
+          cycleId: `retro-${Date.now()}`,
+          title: 'Agent-Initiated Retrospective',
+          content: summary,
+        });
+
+        return successResult(call.id, 'Retrospective written to MEMORY.md.', config.maxOutputChars);
+      } catch (err) {
+        return failureResult(call.id, `Retrospective failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+  });
+
   return executors;
 }
 
@@ -4271,6 +4512,12 @@ export function buildAgentToolkit(
     SEMANTIC_RECALL_SCHEMA,
     // Supporting: Parallelism
     PARALLEL_REASON_SCHEMA,
+    // Reconciliation: Dream Cycle Phases as Tools
+    CONSOLIDATE_REFLECTIONS_SCHEMA,
+    REORGANIZE_GOALS_SCHEMA,
+    EXPLORE_CODEBASE_SCHEMA,
+    REBUILD_SELF_MODEL_SCHEMA,
+    WRITE_RETROSPECTIVE_SCHEMA,
   ];
 
   // Build all executors
@@ -4389,4 +4636,10 @@ export {
   // Supporting Work
   SEMANTIC_RECALL_SCHEMA,
   PARALLEL_REASON_SCHEMA,
+  // Reconciliation: Dream Cycle Phases
+  CONSOLIDATE_REFLECTIONS_SCHEMA,
+  REORGANIZE_GOALS_SCHEMA,
+  EXPLORE_CODEBASE_SCHEMA,
+  REBUILD_SELF_MODEL_SCHEMA,
+  WRITE_RETROSPECTIVE_SCHEMA,
 };

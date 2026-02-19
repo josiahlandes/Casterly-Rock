@@ -711,3 +711,20 @@ That's the unique advantage of local-first: you can afford to let the model be w
 >
 > **New files:** `src/providers/embedding.ts`, `src/utils/semaphore.ts`
 > **Modified files:** `src/autonomous/agent-tools.ts`, `src/autonomous/agent-loop.ts`, `src/autonomous/loop.ts`, `src/autonomous/context-store.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/debug.ts`
+
+> **Reconciliation Implementation Status**
+>
+> All vision reconciliation items are implemented. 5 new dream cycle phase tools bring the total to 71.
+>
+> | Reconciliation Item | Status |
+> |---------------------|--------|
+> | Removed `enabled` toggles (`events`, `agent_loop`, `autonomous`, `dream_cycles`) | IMPLEMENTED |
+> | Removed quiet hours hard gate -- converted to soft prompt preference | IMPLEMENTED |
+> | Deprecated legacy 4-phase fallback (`runCycle` marked `@deprecated`) | IMPLEMENTED |
+> | Converted 5 dream cycle phases to agent tools (`consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective`) | IMPLEMENTED |
+> | Route iMessage through trigger system (`user_message` events emitted to EventBus) | IMPLEMENTED |
+> | Deprecated hardcoded task-type model routing (`forTask` returns local for all) | IMPLEMENTED |
+> | Deprecated legacy `AutonomousProvider` interface | IMPLEMENTED |
+> | Controller uses `runAgentCycle` instead of `runCycle` | IMPLEMENTED |
+>
+> **Total tools: 71**

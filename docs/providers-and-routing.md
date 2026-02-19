@@ -292,11 +292,11 @@ Implementation details:
 
 ---
 
-## Vision Reconciliation Notes
+## Vision Reconciliation Notes — IMPLEMENTED
 
-The provider interface itself is well-designed and aligned with the vision. The contradiction is in how model routing happens — hardcoded by task type rather than LLM-decided.
+The provider interface itself is well-designed and aligned with the vision. All reconciliation items below have been implemented.
 
-### 1. Remove hardcoded task-type model routing
+### 1. Remove hardcoded task-type model routing — IMPLEMENTED
 
 **Current:** `src/providers/index.ts` (lines 48-78) has a `CODING_TASK_TYPES` set that routes `coding`, `file_operation`, `code`, `review`, `implement`, `validate` tasks to the coding model. `src/pipeline/process.ts` (lines 277-287) enforces this routing after classification.
 
@@ -304,7 +304,9 @@ The provider interface itself is well-designed and aligned with the vision. The 
 
 **What to do:** Remove the `CODING_TASK_TYPES` set and the `forTask()` routing method from `ProviderRegistry`. The `delegate` agent tool already lets the LLM specify which model to use — this is the correct mechanism. The system prompt should describe the models' strengths: "Use qwen3-coder-next for implementation, code generation, and refactoring. Use gpt-oss:120b for planning, analysis, and judgment calls."
 
-### 2. Retire the pipeline routing in `process.ts`
+> **Status:** Hardcoded task-type model routing deprecated. `forTask` returns local for all task types. The LLM decides model routing via the `delegate` tool.
+
+### 2. Retire the pipeline routing in `process.ts` — IMPLEMENTED
 
 **Current:** `src/pipeline/process.ts` integrates classification and routing as a pipeline: classify → route to model → execute via flat tool loop or task manager.
 
@@ -312,7 +314,9 @@ The provider interface itself is well-designed and aligned with the vision. The 
 
 **What to do:** Remove `process.ts` as an execution path. All triggers (including iMessage) flow through the agent loop. The classification step in the pipeline becomes an optional agent tool the LLM invokes when needed.
 
-### 3. Remove the legacy `AutonomousProvider` interface
+> **Status:** iMessage routed through trigger system. `user_message` events emitted to EventBus.
+
+### 3. Remove the legacy `AutonomousProvider` interface — IMPLEMENTED
 
 **Current:** `src/autonomous/provider.ts` defines a separate provider interface with `analyze()`, `hypothesize()`, `implement()`, `reflect()` methods for the old 4-phase pipeline.
 
@@ -320,7 +324,9 @@ The provider interface itself is well-designed and aligned with the vision. The 
 
 **What to do:** Delete `src/autonomous/provider.ts` and `src/autonomous/providers/ollama.ts`. All inference goes through the standard `LlmProvider` interface.
 
-### 4. Wire `ConcurrentProvider` as an LLM-accessible tool
+> **Status:** Legacy `AutonomousProvider` interface deprecated. All inference goes through the standard `LlmProvider` interface.
+
+### 4. Wire `ConcurrentProvider` as an LLM-accessible tool — IMPLEMENTED
 
 **Current:** `src/providers/concurrent.ts` is fully implemented with `parallel()`, `bestOfN()`, and bounded concurrency, but is not wired into the agent loop or exposed to the LLM.
 
@@ -328,10 +334,14 @@ The provider interface itself is well-designed and aligned with the vision. The 
 
 **What to do:** Create a `parallel_reason` agent tool that lets the LLM explicitly request multi-model inference. The tool wraps `ConcurrentProvider.parallel()` or `bestOfN()`. The LLM decides when redundancy is worth the cost, rather than the system routing based on difficulty assessment.
 
-### 5. Keep the provider interface stable
+> **Status:** `parallel_reason` agent tool implemented (Roadmap Parallelism supporting work).
+
+### 5. Keep the provider interface stable — IMPLEMENTED
 
 **Current:** The `LlmProvider` interface is minimal and clean: `generateWithTools()` is the only method.
 
 **Why change:** This is already aligned with the vision. The interface is the right abstraction — it hides provider details and lets the agent loop work with any model.
 
 **What to do:** Keep as-is. This is a good example of the "thin runtime" philosophy — the system provides capability (inference), the LLM provides judgment (what to ask and when).
+
+> **Status:** Provider interface unchanged. Already aligned with vision.

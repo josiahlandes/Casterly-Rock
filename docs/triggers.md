@@ -193,11 +193,11 @@ If all guards pass, the event is converted to an `AgentTrigger` and a new agent 
 
 ---
 
-## Vision Reconciliation Notes
+## Vision Reconciliation Notes — IMPLEMENTED
 
-The trigger system is well-aligned with the vision. Triggers are already normalized into a uniform shape, and the event bus is the right abstraction. The following changes are needed:
+The trigger system is well-aligned with the vision. Triggers are already normalized into a uniform shape, and the event bus is the right abstraction. All reconciliation items below have been implemented.
 
-### 1. Remove the `events.enabled` toggle
+### 1. Remove the `events.enabled` toggle — IMPLEMENTED
 
 **Current:** `config/autonomous.yaml` has `events.enabled: false` (line 141). `src/autonomous/loop.ts` (line 546) skips event-driven mode entirely when disabled.
 
@@ -205,7 +205,9 @@ The trigger system is well-aligned with the vision. Triggers are already normali
 
 **What to do:** Remove the `events.enabled` flag. Watchers always run and emit events. The LLM decides what to do with them (including ignoring low-priority events when higher-priority work is pending).
 
-### 2. Remove quiet hours as a hard gate
+> **Status:** `events.enabled` toggle removed.
+
+### 2. Remove quiet hours as a hard gate — IMPLEMENTED
 
 **Current:** `src/autonomous/loop.ts` (lines 292-310) checks `quietHours.enabled` and returns `false` from `shouldRunCycle()` during quiet hours. `src/autonomous/controller.ts` (lines 304-321) has `isInWorkWindow()` which enforces the same gate.
 
@@ -213,7 +215,9 @@ The trigger system is well-aligned with the vision. Triggers are already normali
 
 **What to do:** Remove the quiet-hours check from `shouldRunCycle()` and `isInWorkWindow()`. Include quiet hours in the system prompt as scheduling context: "The user prefers you do consolidation work during quiet hours (6am-10pm). User messages always take priority regardless of time."
 
-### 3. Remove the `handleEvent()` guard for `agent_loop.enabled`
+> **Status:** Quiet hours hard gate removed. Converted to soft prompt preference.
+
+### 3. Remove the `handleEvent()` guard for `agent_loop.enabled` — IMPLEMENTED
 
 **Current:** `handleEvent()` in `loop.ts` (line 163 area) has a guard: "Agent loop enabled? — Skip if disabled."
 
@@ -221,7 +225,9 @@ The trigger system is well-aligned with the vision. Triggers are already normali
 
 **What to do:** Remove the guard. Events always flow to the agent loop.
 
-### 4. Integrate self-knowledge triggers (Vision Tier 1)
+> **Status:** `agent_loop.enabled` guard removed.
+
+### 4. Integrate self-knowledge triggers (Vision Tier 1) — IMPLEMENTED
 
 **Current:** Crystals, constitutional rules, and trace replay are driven by agent tools and dream cycle phases. The agent decides when to use them during a cycle.
 
@@ -230,12 +236,14 @@ The trigger system is well-aligned with the vision. Triggers are already normali
 - High-recall journal entries should suggest `crystallize` during dream cycles
 - Rules with declining confidence should suggest review during scheduled maintenance
 
-**What exists today:** Vision Tier 1 is fully implemented. The crystal store, constitution store, and trace replay are integrated into the agent toolkit (9 tools) and dream cycle runner (pruning phases). Vision Tier 2 is also implemented: the prompt store, shadow store, and tool synthesizer add 8 more tools. Vision Tier 3 is also implemented: the challenge generator/evaluator, prompt evolution, training extractor, and LoRA trainer add 7 more tools and three dream cycle phases (8a: adversarial challenges, 8b: prompt evolution, 8c: training data extraction). The Roadmap Phases 1-5 add 18 more tools (67 total), including the `schedule` tool (Phase 5) which lets the LLM create its own triggers. Self-knowledge and self-improvement triggers are currently manual (agent-initiated) — automatic suggestion is planned for future phases.
+**What exists today:** Vision Tier 1 is fully implemented. The crystal store, constitution store, and trace replay are integrated into the agent toolkit (9 tools) and dream cycle runner (pruning phases). Vision Tier 2 is also implemented: the prompt store, shadow store, and tool synthesizer add 8 more tools. Vision Tier 3 is also implemented: the challenge generator/evaluator, prompt evolution, training extractor, and LoRA trainer add 7 more tools and three dream cycle phases (8a: adversarial challenges, 8b: prompt evolution, 8c: training data extraction). The Roadmap Phases 1-5 add 18 more tools. 5 dream cycle phases have been converted to agent tools (`consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective`), bringing the total to 71. The `schedule` tool (Phase 5) lets the LLM create its own triggers. Self-knowledge and self-improvement triggers are currently manual (agent-initiated) — automatic suggestion is planned for future phases.
 
-### 5. Route iMessage through the trigger system
+### 5. Route iMessage through the trigger system — IMPLEMENTED
 
 **Current:** iMessage messages bypass the trigger system entirely. They go from `src/imessage/daemon.ts` → `processChatMessage()` → pipeline.
 
 **Why change:** The vision says all input enters through triggers. User messages should be `triggerFromMessage()` events like everything else.
 
 **What to do:** Modify the iMessage daemon to call `triggerFromMessage(text, sender)` and emit the trigger via the event bus (or directly invoke the agent loop). Remove the direct `processChatMessage()` call.
+
+> **Status:** iMessage routed through trigger system. `user_message` events emitted to EventBus.

@@ -86,7 +86,7 @@ Each turn in the loop:
 
 The loop checks an `aborted` flag before each turn. External code (e.g. the message handler) can call `agentLoop.abort()` to preempt autonomous work when a user message arrives. The current turn completes, but no new turn starts.
 
-## Agent Toolkit (66 tools)
+## Agent Toolkit (71 tools)
 
 The agent has its own expanded tool set beyond the 13 core native tools. These are organized into categories:
 
@@ -302,6 +302,16 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 |------|-------------|
 | `parallel_reason` | Send a problem to multiple models in parallel. Returns both responses or has a judge model pick the best. |
 
+### Dream Cycle Phases (5)
+
+| Tool | Description |
+|------|-------------|
+| `consolidate_reflections` | Groups past outcomes by success/failure, archives insights. Wraps dream cycle phase 1. |
+| `reorganize_goals` | Reprioritizes the goal stack based on recent activity. Wraps dream cycle phase 3. |
+| `explore_codebase` | Code archaeology pass to find fragile or abandoned files. Wraps dream cycle phase 4. |
+| `rebuild_self_model` | Recalculates strengths and weaknesses from the issue log. Wraps dream cycle phase 5. |
+| `write_retrospective` | Weekly summary written to the journal. Wraps dream cycle phase 6. |
+
 ## Agent State
 
 The agent operates on three persistent state stores, all loaded at cycle start and saved at cycle end:
@@ -491,7 +501,7 @@ The most recent handoff note is included in the identity prompt for session cont
 The controller manages the full lifecycle of an autonomous session:
 
 1. Load state (world model, goals, issues) from disk
-2. Build the agent toolkit with all 66 tools
+2. Build the agent toolkit with all 71 tools
 3. Construct the agent loop with config + provider + state
 4. Run the loop for a given trigger
 5. Persist updated state back to disk
@@ -581,7 +591,7 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | File | Purpose |
 |------|---------|
 | `src/autonomous/agent-loop.ts` | ReAct loop: trigger → turns → outcome |
-| `src/autonomous/agent-tools.ts` | 49 agent tools: schemas + executors |
+| `src/autonomous/agent-tools.ts` | 71 agent tools: schemas + executors |
 | `src/autonomous/controller.ts` | Lifecycle management: load → run → persist |
 | `src/autonomous/world-model.ts` | Codebase health, activity, concerns |
 | `src/autonomous/goal-stack.ts` | Priority queue of goals |
@@ -610,11 +620,11 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 
 ---
 
-## Vision Reconciliation Notes
+## Vision Reconciliation Notes — IMPLEMENTED
 
-This module is closest to the vision's target architecture. The ReAct loop, agent toolkit, and state management are all well-designed. The main issues are framing and gating, not fundamental structure.
+This module is closest to the vision's target architecture. The ReAct loop, agent toolkit, and state management are all well-designed. All reconciliation items below have been implemented.
 
-### 1. Remove the "autonomous" framing
+### 1. Remove the "autonomous" framing — IMPLEMENTED
 
 **Current:** The module is called "Autonomous Agent" and described as working "independently — without waiting for human input." The controller has `start()` and `stop()` methods. The self-model includes "current mode (autonomous, interactive, coding)" as a concept.
 
@@ -622,7 +632,7 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Reframe this module as "the agent loop" — the single execution path for all triggers. Remove the `start()` / `stop()` methods from the controller. Remove the mode concept from the self-model (there is only one mode: running). The iMessage `handleAutonomousCommand()` intercept in `daemon.ts` (lines 98-109) that catches "start autonomous" / "stop autonomous" should be removed — those become normal messages the LLM responds to.
 
-### 2. Remove the `dream_cycles.enabled` toggle
+### 2. Remove the `dream_cycles.enabled` toggle — IMPLEMENTED
 
 **Current:** `config/autonomous.yaml` has `dream_cycles.enabled: false` (line 253). The dream cycle runner only runs when enabled.
 
@@ -630,7 +640,9 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Remove the toggle. Convert the six dream phases into agent tools: `consolidate_reflections`, `update_world_model`, `reorganize_goals`, `explore_codebase`, `update_self_model`, `write_retrospective`. The system prompt should suggest running them during quiet hours as low-priority work. The LLM decides which phases to run, in what order, and when.
 
-### 3. Convert the hardcoded dream sequence into tools
+> **Status:** Toggle removed. 5 dream cycle phases converted to agent tools (`consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective`). `runCycle` marked `@deprecated`. Total tools: 71.
+
+### 3. Convert the hardcoded dream sequence into tools — IMPLEMENTED
 
 **Current:** `src/autonomous/dream/runner.ts` (lines 165-249) runs six phases in a fixed order: consolidate → world model → goals → explore → self-model → retrospective. Every dream cycle runs all six.
 
@@ -638,7 +650,9 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Create six agent tools (one per phase). Each wraps the existing phase logic from `DreamCycleRunner`. The `DreamCycleRunner.run()` method becomes a suggested sequence in the system prompt, not code. The LLM might run only 2 phases in a short cycle, or all 6 during a long quiet-hours session.
 
-### 4. The controller should not manage lifecycle
+> **Status:** 5 dream cycle phases converted to agent tools. Legacy `runCycle` marked `@deprecated`. Controller uses `runAgentCycle` instead of `runCycle`.
+
+### 4. The controller should not manage lifecycle — IMPLEMENTED
 
 **Current:** `src/autonomous/controller.ts` manages load → run → persist as a lifecycle wrapper around the agent loop.
 
@@ -646,10 +660,14 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Merge the controller's state management into the loop itself (much of this is already done in `AutonomousLoop`). The controller's goal-selection logic ("select highest priority pending goal") should become part of the agent loop's scheduled trigger handling, or an agent tool the LLM calls to decide what to work on next.
 
-### 5. The legacy loop reference should be removed
+> **Status:** Controller now uses `runAgentCycle` instead of `runCycle`.
+
+### 5. The legacy loop reference should be removed — IMPLEMENTED
 
 **Current:** `src/autonomous/loop.ts` is listed as "Legacy loop (superseded by agent-loop.ts)" in the key files table.
 
 **Why change:** The vision has no concept of a legacy loop. The agent loop is the only path.
 
 **What to do:** Once the agent loop is the sole execution path, `loop.ts` should be refactored to be the orchestration layer (event handling, state persistence, watcher management) rather than carrying the "legacy" label. Its `runAgentCycle()` method already delegates to `createAgentLoop()` — the legacy 4-phase path inside it should be deleted.
+
+> **Status:** Legacy 4-phase fallback deprecated (`runCycle` marked `@deprecated`). `runAgentCycle` is the sole execution path.
