@@ -394,3 +394,49 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | `src/autonomous/loop.ts` | Legacy loop (superseded by agent-loop.ts) |
 | `src/autonomous/types.ts` | Shared type definitions |
 | `src/autonomous/index.ts` | Public exports |
+
+---
+
+## Vision Reconciliation Notes
+
+This module is closest to the vision's target architecture. The ReAct loop, agent toolkit, and state management are all well-designed. The main issues are framing and gating, not fundamental structure.
+
+### 1. Remove the "autonomous" framing
+
+**Current:** The module is called "Autonomous Agent" and described as working "independently — without waiting for human input." The controller has `start()` and `stop()` methods. The self-model includes "current mode (autonomous, interactive, coding)" as a concept.
+
+**Why change:** The vision says "there is no modal boundary between 'interactive' and 'autonomous.'" Responding to a user and fixing a self-discovered bug are the same thing — a trigger arrives, the LLM decides what to do. The word "autonomous" implies a special mode.
+
+**What to do:** Reframe this module as "the agent loop" — the single execution path for all triggers. Remove the `start()` / `stop()` methods from the controller. Remove the mode concept from the self-model (there is only one mode: running). The iMessage `handleAutonomousCommand()` intercept in `daemon.ts` (lines 98-109) that catches "start autonomous" / "stop autonomous" should be removed — those become normal messages the LLM responds to.
+
+### 2. Remove the `dream_cycles.enabled` toggle
+
+**Current:** `config/autonomous.yaml` has `dream_cycles.enabled: false` (line 253). The dream cycle runner only runs when enabled.
+
+**Why change:** The vision says dream cycles are "low-priority goals that the LLM pursues when no higher-priority triggers are pending." They are not a feature to toggle on/off.
+
+**What to do:** Remove the toggle. Convert the six dream phases into agent tools: `consolidate_reflections`, `update_world_model`, `reorganize_goals`, `explore_codebase`, `update_self_model`, `write_retrospective`. The system prompt should suggest running them during quiet hours as low-priority work. The LLM decides which phases to run, in what order, and when.
+
+### 3. Convert the hardcoded dream sequence into tools
+
+**Current:** `src/autonomous/dream/runner.ts` (lines 165-249) runs six phases in a fixed order: consolidate → world model → goals → explore → self-model → retrospective. Every dream cycle runs all six.
+
+**Why change:** The vision says the LLM should invoke these "in any order, skip, or extend based on its judgment." If the codebase hasn't changed, archaeology is pointless. If the model has been struggling with a skill, self-model rebuilding should happen sooner.
+
+**What to do:** Create six agent tools (one per phase). Each wraps the existing phase logic from `DreamCycleRunner`. The `DreamCycleRunner.run()` method becomes a suggested sequence in the system prompt, not code. The LLM might run only 2 phases in a short cycle, or all 6 during a long quiet-hours session.
+
+### 4. The controller should not manage lifecycle
+
+**Current:** `src/autonomous/controller.ts` manages load → run → persist as a lifecycle wrapper around the agent loop.
+
+**Why change:** In the thin runtime architecture, state loading and persistence happen at the system level, not as a managed lifecycle. The agent loop loads state at cycle start and saves at cycle end — the controller's orchestration is redundant when the loop is always running.
+
+**What to do:** Merge the controller's state management into the loop itself (much of this is already done in `AutonomousLoop`). The controller's goal-selection logic ("select highest priority pending goal") should become part of the agent loop's scheduled trigger handling, or an agent tool the LLM calls to decide what to work on next.
+
+### 5. The legacy loop reference should be removed
+
+**Current:** `src/autonomous/loop.ts` is listed as "Legacy loop (superseded by agent-loop.ts)" in the key files table.
+
+**Why change:** The vision has no concept of a legacy loop. The agent loop is the only path.
+
+**What to do:** Once the agent loop is the sole execution path, `loop.ts` should be refactored to be the orchestration layer (event handling, state persistence, watcher management) rather than carrying the "legacy" label. Its `runAgentCycle()` method already delegates to `createAgentLoop()` — the legacy 4-phase path inside it should be deleted.

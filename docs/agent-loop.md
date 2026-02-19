@@ -271,3 +271,49 @@ Overrideable by passing `Partial<AgentLoopConfig>` to the constructor.
 | `src/autonomous/world-model.ts` | Persistent world state |
 | `src/autonomous/events.ts` | Event types and priority system |
 | `src/autonomous/trigger-router.ts` | Trigger normalization |
+
+---
+
+## Vision Reconciliation Notes
+
+The agent loop is the closest module to the vision's target architecture. It is already a ReAct loop where the LLM decides what to do. The following changes are needed to fully align:
+
+### 1. Remove the `agent_loop.enabled` toggle
+
+**Current:** `config/autonomous.yaml` has `agent_loop.enabled: false` (line 105). `src/autonomous/loop.ts` (line 199) checks `this.useAgentLoop = agentConfig?.enabled ?? false` and falls back to the legacy 4-phase pipeline when disabled.
+
+**Why change:** The vision says "the agent loop is the only execution path." There should be no toggle — the agent loop is always active. The legacy pipeline is retired.
+
+**What to do:** Remove the `enabled` flag from config. Remove the `useAgentLoop` conditional in `loop.ts`. Delete the legacy 4-phase fallback code path.
+
+### 2. Make the agent loop the entry point for ALL triggers, including iMessage
+
+**Current:** iMessage messages arrive at `src/imessage/daemon.ts`, which calls `processChatMessage()` in `src/pipeline/process.ts`. This is a completely separate execution path from the agent loop — it runs the classify → task manager pipeline or a flat tool loop.
+
+**Why change:** The vision says "responding to a user message, noticing a file change, consolidating memory [...] are all the same thing: the LLM receiving a trigger, deciding what to do, and doing it." User messages should flow through `triggerFromMessage()` → agent loop, not a separate pipeline.
+
+**What to do:** Modify the iMessage daemon to emit user triggers via the event bus (or call the agent loop directly) rather than calling `processChatMessage()`. Remove `src/pipeline/process.ts` as a separate entry point.
+
+### 3. Convert pipeline stages into agent tools
+
+**Current:** The classifier, planner, runner, and verifier are hardcoded stages in `src/tasks/manager.ts`. The agent loop has no access to them as tools.
+
+**Why change:** The vision says classification, planning, and verification are "tools and strategies the LLM invokes based on its judgment." A simple question shouldn't go through planning. A complex task should be planned. The LLM decides.
+
+**What to do:** Create agent tools: `classify_task` (wraps `classifyMessage()`), `plan_task` (wraps `createTaskPlan()`), `verify_outcome` (wraps `verifyTaskOutcome()`). Add them to `AgentToolkit`. The system prompt should suggest the default workflow but not enforce it.
+
+### 4. Add introspection tools
+
+**Current:** The agent loop tracks budget (turns, tokens) internally but doesn't expose this to the LLM. The self-model is loaded into the hot tier passively but isn't queryable as a tool.
+
+**Why change:** The vision's Phase 3 (Introspection Tools) says "a model that can see its own state makes better decisions." The LLM needs tools like `check_budget`, `peek_queue`, `list_context`, `review_steps`, `assess_self`.
+
+**What to do:** Add introspection tools to `AgentToolkit`. These are read-only — they expose internal state to the LLM without mutating anything.
+
+### 5. Remove the `autonomous.enabled` master switch
+
+**Current:** `config/autonomous.yaml` has `autonomous.enabled: true` (line 11). `src/autonomous/loop.ts` (line 1241) exits the process if disabled.
+
+**Why change:** The vision says "there is no 'autonomous mode' toggle." Autonomy is the default state.
+
+**What to do:** Remove the `enabled` flag. The loop always starts. If the user wants to pause self-initiated work, that's a goal-stack adjustment (e.g., "pause all self-initiated goals"), not a process exit.

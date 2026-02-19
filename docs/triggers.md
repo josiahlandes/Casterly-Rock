@@ -190,3 +190,41 @@ If all guards pass, the event is converted to an `AgentTrigger` and a new agent 
 | `src/autonomous/watchers/git-watcher.ts` | Git ref monitoring via `.git/refs/heads/` |
 | `src/autonomous/watchers/issue-watcher.ts` | Periodic stale issue scanner |
 | `src/autonomous/loop.ts` | `handleEvent()` — the glue between events and agent cycles |
+
+---
+
+## Vision Reconciliation Notes
+
+The trigger system is well-aligned with the vision. Triggers are already normalized into a uniform shape, and the event bus is the right abstraction. The following changes are needed:
+
+### 1. Remove the `events.enabled` toggle
+
+**Current:** `config/autonomous.yaml` has `events.enabled: false` (line 141). `src/autonomous/loop.ts` (line 546) skips event-driven mode entirely when disabled.
+
+**Why change:** The vision says events are triggers the LLM receives — the same as user messages, just with a different source. Gating them behind a toggle creates a modal boundary.
+
+**What to do:** Remove the `events.enabled` flag. Watchers always run and emit events. The LLM decides what to do with them (including ignoring low-priority events when higher-priority work is pending).
+
+### 2. Remove quiet hours as a hard gate
+
+**Current:** `src/autonomous/loop.ts` (lines 292-310) checks `quietHours.enabled` and returns `false` from `shouldRunCycle()` during quiet hours. `src/autonomous/controller.ts` (lines 304-321) has `isInWorkWindow()` which enforces the same gate.
+
+**Why change:** The vision says "quiet hours are a scheduling preference, not a mode switch." The LLM should know about quiet hours through its system prompt and prefer consolidation work during those times, but the system shouldn't refuse to run cycles.
+
+**What to do:** Remove the quiet-hours check from `shouldRunCycle()` and `isInWorkWindow()`. Include quiet hours in the system prompt as scheduling context: "The user prefers you do consolidation work during quiet hours (6am-10pm). User messages always take priority regardless of time."
+
+### 3. Remove the `handleEvent()` guard for `agent_loop.enabled`
+
+**Current:** `handleEvent()` in `loop.ts` (line 163 area) has a guard: "Agent loop enabled? — Skip if disabled."
+
+**Why change:** The agent loop is always the execution path. There is no disabled state.
+
+**What to do:** Remove the guard. Events always flow to the agent loop.
+
+### 4. Route iMessage through the trigger system
+
+**Current:** iMessage messages bypass the trigger system entirely. They go from `src/imessage/daemon.ts` → `processChatMessage()` → pipeline.
+
+**Why change:** The vision says all input enters through triggers. User messages should be `triggerFromMessage()` events like everything else.
+
+**What to do:** Modify the iMessage daemon to call `triggerFromMessage(text, sender)` and emit the trigger via the event bus (or directly invoke the agent loop). Remove the direct `processChatMessage()` call.
