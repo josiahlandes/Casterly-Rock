@@ -83,8 +83,10 @@ Components:
 3. **Goal stack summary** — active goals with status and progress
 4. **Issue log summary** — open issues with severity and attempt history
 5. **Self-model summary** — strengths, weaknesses, patterns (Phase 6)
+6. **Crystallized knowledge** — permanent insights from `CrystalStore`, sorted by confidence (Vision Tier 1)
+7. **Operational rules** — self-authored constitutional rules from `ConstitutionStore`, with success rates (Vision Tier 1)
 
-Budget: ~4000 characters (configurable via `IdentityConfig.maxChars`).
+Budget: ~4000 characters (configurable via `IdentityConfig.maxChars`). Crystals and constitution each have a 500-token sub-budget within the hot tier.
 
 The handoff note from the previous cycle is appended after the identity prompt:
 
@@ -103,7 +105,7 @@ if (this.journal) {
 
 | Tier | Budget | Content | Persistence |
 |------|--------|---------|-------------|
-| **Hot** | ~2k tokens | Identity prompt — always in context, never evicted | Rebuilt each cycle from live state |
+| **Hot** | ~2k tokens | Identity prompt + crystals + constitution — always in context, never evicted | Rebuilt each cycle from live state |
 | **Warm** | ~20k tokens | Session working memory — tool results, working notes | In-memory only, cleared between cycles |
 | **Cool** | On-demand | Past 30 days of archived notes | Disk (JSONL store) |
 | **Cold** | Archive | Full historical archive | Disk (JSONL store) |
@@ -147,6 +149,7 @@ Tool output is capped at 10,000 characters. See [docs/skills-and-tools.md](skill
 | State | `file_issue`, `close_issue`, `update_goal` |
 | Reasoning | `think` (no-op for explicit reasoning), `delegate` |
 | Memory | `recall`, `archive`, `recall_journal`, `consolidate`, `save_note` |
+| Self-knowledge | `crystallize`, `dissolve`, `list_crystals`, `create_rule`, `update_rule`, `list_rules`, `replay`, `compare_traces`, `search_traces` |
 | World | `update_world_model`, `adversarial_test` |
 | Communication | `message_user` (placeholder) |
 
@@ -262,7 +265,7 @@ Overrideable by passing `Partial<AgentLoopConfig>` to the constructor.
 |------|---------|
 | `src/autonomous/agent-loop.ts` | `AgentLoop` class — the ReAct cycle engine (779 lines) |
 | `src/autonomous/loop.ts` | `AutonomousLoop` — orchestrates cycles, manages state persistence, handles events |
-| `src/autonomous/agent-tools.ts` | `AgentToolkit` — tool schemas and executors (1900+ lines) |
+| `src/autonomous/agent-tools.ts` | `AgentToolkit` — 34 tool schemas and executors |
 | `src/autonomous/identity.ts` | Identity prompt builder |
 | `src/autonomous/context-manager.ts` | 4-tier memory hierarchy |
 | `src/autonomous/journal.ts` | Append-only JSONL journal |

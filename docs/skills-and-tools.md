@@ -157,6 +157,33 @@ Bash execution is registered separately.
 
 ---
 
+## Agent Tools (34)
+
+In addition to the 13 native tools above, the autonomous agent loop has 21 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
+
+See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categories:
+
+| Category | Tools |
+|----------|-------|
+| Reasoning | `think` |
+| File ops | `read_file`, `edit_file`, `create_file` |
+| Search | `grep`, `glob` |
+| System | `bash` |
+| Quality | `run_tests`, `typecheck`, `lint` |
+| Git | `git_status`, `git_diff`, `git_commit`, `git_log` |
+| State | `file_issue`, `close_issue`, `update_goal` |
+| Memory | `recall`, `archive`, `recall_journal`, `consolidate` |
+| World | `update_world_model`, `adversarial_test` |
+| Self-knowledge (crystals) | `crystallize`, `dissolve`, `list_crystals` |
+| Self-knowledge (constitution) | `create_rule`, `update_rule`, `list_rules` |
+| Self-knowledge (traces) | `replay`, `compare_traces`, `search_traces` |
+| Delegation | `delegate` |
+| Communication | `message_user` |
+
+The self-knowledge tools (9 total) are part of Vision Tier 1. They enable the agent to learn from experience (crystals), author its own operational rules (constitution), and debug past failures (trace replay).
+
+---
+
 ## Skills System
 
 Skills are self-contained capability packages loaded from disk. Each skill is a directory containing a `SKILL.md` with YAML frontmatter and markdown instructions.

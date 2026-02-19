@@ -86,7 +86,7 @@ Each turn in the loop:
 
 The loop checks an `aborted` flag before each turn. External code (e.g. the message handler) can call `agentLoop.abort()` to preempt autonomous work when a user message arrives. The current turn completes, but no new turn starts.
 
-## Agent Toolkit (25 tools)
+## Agent Toolkit (34 tools)
 
 The agent has its own expanded tool set beyond the 13 core native tools. These are organized into categories:
 
@@ -181,6 +181,30 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 |------|-------------|
 | `adversarial_test` | Generate edge-case test inputs for a function (empty/null, boundary, unicode, injection, type coercion). Uses LLM to produce attack vectors, writes a Vitest test file. |
 
+### Self-Knowledge — Crystals (3)
+
+| Tool | Description |
+|------|-------------|
+| `crystallize` | Promote a high-value insight to a permanent crystal — always loaded into context. Limited to 30 crystals sharing 500 tokens in the hot tier. |
+| `dissolve` | Remove or invalidate a crystal. Logs dissolution to the journal. |
+| `list_crystals` | List all active crystals with confidence scores and metadata. |
+
+### Self-Knowledge — Constitution (3)
+
+| Tool | Description |
+|------|-------------|
+| `create_rule` | Create a new operational rule based on observed experience. Rules are tactical ("do X when Y") with evidence (journal references). |
+| `update_rule` | Modify a rule's text, confidence, or tags based on new evidence. |
+| `list_rules` | List all constitutional rules with confidence, success rate, and invocation count. Optionally filter by keyword. |
+
+### Self-Knowledge — Trace Replay (3)
+
+| Tool | Description |
+|------|-------------|
+| `replay` | Load and replay a past execution trace step-by-step. Shows tool calls, parameters, results, and timing. Supports step range and tool filters. |
+| `compare_traces` | Compare two execution traces side-by-side. Highlights divergence points and unique strategies. |
+| `search_traces` | Search past traces by outcome, trigger type, or tools used. Returns index entries (use `replay` for full details). |
+
 ## Agent State
 
 The agent operates on three persistent state stores, all loaded at cycle start and saved at cycle end:
@@ -234,6 +258,55 @@ Tracked problems the agent has discovered:
 | `nextIdea` | What to try next |
 | `discoveredBy` | `autonomous` or `user` |
 
+## Self-Knowledge (Vision Tier 1)
+
+Three self-improvement stores provide Tyrion with the ability to learn from experience, author his own rules, and debug past failures.
+
+### Crystal Store
+
+> **Source**: `src/autonomous/crystal-store.ts`, stored at `~/.casterly/crystals.yaml`
+
+Permanent, always-available insights promoted from memory tiers. Crystals represent stable facts the LLM doesn't have to re-derive each cycle.
+
+| Property | Description |
+|----------|-------------|
+| `id` | Auto-generated (`crys-<timestamp>-<random>`) |
+| `content` | The insight — concise and actionable |
+| `sourceEntries` | IDs of memory/journal entries that motivated this crystal |
+| `formedDate` | When first crystallized |
+| `lastValidated` | When last confirmed against recent experience |
+| `recallCount` | Times referenced |
+| `confidence` | 0-1 score. Strengthens on validation, decays when contradicted. |
+
+Budget: max 30 crystals, 500 tokens in the hot tier. Pruned during dream cycles when confidence drops below 0.3.
+
+### Constitution Store
+
+> **Source**: `src/autonomous/constitution-store.ts`, stored at `~/.casterly/constitution.yaml`
+
+Self-authored operational rules discovered through experience. Distinct from safety rules (those are immutable).
+
+| Property | Description |
+|----------|-------------|
+| `id` | Auto-generated (`rule-<timestamp>-<random>`) |
+| `rule` | The directive — concise and actionable |
+| `added` | When created |
+| `motivation` | Journal reference explaining why this rule exists |
+| `confidence` | 0-1 score. Strengthens with success, decays on violation+success. |
+| `invocations` | Times the rule was relevant |
+| `successes` | Times following the rule led to success |
+| `tags` | Categorization tags |
+
+Budget: max 50 rules, 500 tokens in the hot tier. Pruned during dream cycles when confidence drops below 0.3.
+
+### Trace Replay
+
+> **Source**: `src/autonomous/trace-replay.ts`, stored at `~/.casterly/traces/`
+
+Execution trace recording for post-mortem analysis. Each cycle's tool calls, parameters, results, and timing are stored as structured traces.
+
+Retention policy: successful traces kept 7 days, failed traces kept 30 days, traces referenced by crystals or rules kept indefinitely. Max 500 traces.
+
 ## Identity System
 
 > **Source**: `src/autonomous/identity.ts`
@@ -245,6 +318,8 @@ Identity prompt = Self model (who I am)
                 + World model summary (codebase state)
                 + Goal stack (what I'm working on)
                 + Issue log (known problems)
+                + Crystallized knowledge (permanent insights)
+                + Operational rules (self-authored constitution)
                 + Handoff note (what happened last session)
 ```
 
@@ -291,7 +366,7 @@ The most recent handoff note is included in the identity prompt for session cont
 The controller manages the full lifecycle of an autonomous session:
 
 1. Load state (world model, goals, issues) from disk
-2. Build the agent toolkit with all 25 tools
+2. Build the agent toolkit with all 34 tools
 3. Construct the agent loop with config + provider + state
 4. Run the loop for a given trigger
 5. Persist updated state back to disk
@@ -381,7 +456,7 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | File | Purpose |
 |------|---------|
 | `src/autonomous/agent-loop.ts` | ReAct loop: trigger → turns → outcome |
-| `src/autonomous/agent-tools.ts` | 25 agent tools: schemas + executors |
+| `src/autonomous/agent-tools.ts` | 34 agent tools: schemas + executors |
 | `src/autonomous/controller.ts` | Lifecycle management: load → run → persist |
 | `src/autonomous/world-model.ts` | Codebase health, activity, concerns |
 | `src/autonomous/goal-stack.ts` | Priority queue of goals |
@@ -392,6 +467,9 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | `src/autonomous/debug.ts` | Structured tracing + redacted logging |
 | `src/autonomous/reasoning/adversarial.ts` | Adversarial test case generation |
 | `src/autonomous/loop.ts` | Legacy loop (superseded by agent-loop.ts) |
+| `src/autonomous/crystal-store.ts` | Crystal store — permanent insights (Vision Tier 1) |
+| `src/autonomous/constitution-store.ts` | Constitution — self-authored rules (Vision Tier 1) |
+| `src/autonomous/trace-replay.ts` | Trace replay — self-debugging (Vision Tier 1) |
 | `src/autonomous/types.ts` | Shared type definitions |
 | `src/autonomous/index.ts` | Public exports |
 

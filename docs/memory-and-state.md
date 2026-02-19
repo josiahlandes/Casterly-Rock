@@ -1,8 +1,8 @@
 # Memory & State
 
-> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/tasks/execution-log.ts`
+> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/tasks/execution-log.ts`
 
-Casterly maintains persistent state across sessions through five subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
+Casterly maintains persistent state across sessions through eight subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
 
 ```
 ~/.casterly/
@@ -10,6 +10,11 @@ Casterly maintains persistent state across sessions through five subsystems, eac
 ├── world-model.yaml           ← Codebase health, stats, concerns
 ├── goals.yaml                 ← Priority queue of work items
 ├── issues.yaml                ← Problem tracker with attempt history
+├── crystals.yaml              ← Permanent high-value insights (Vision Tier 1)
+├── constitution.yaml          ← Self-authored operational rules (Vision Tier 1)
+├── traces/                    ← Execution trace archive (Vision Tier 1)
+│   ├── index.json             ← Lightweight trace index
+│   └── <cycleId>.json         ← Individual trace files
 └── execution-log/
     └── log.jsonl              ← Task execution outcomes (operational memory)
 ```
@@ -243,6 +248,127 @@ When an attempt is recorded on an `open` issue, it auto-transitions to `investig
 - **Pruning**: Max 200 total issues. Oldest resolved/wontfix issues pruned first.
 - **Summary text**: Shows investigating (with next idea), open by priority, stale, stubborn (3+ failed attempts), and recently resolved.
 
+## Crystal Store (Vision Tier 1: Memory Crystallization)
+
+> **Source**: `src/autonomous/crystal-store.ts`
+> **Storage**: `~/.casterly/crystals.yaml` (JSON, full rewrite on save)
+
+Permanent, always-available insights that Tyrion has promoted from the warm/cool memory tiers. Crystals represent stable facts, patterns, and preferences that don't need to be re-derived from the journal each cycle.
+
+### Crystal Structure
+
+```typescript
+interface Crystal {
+  id: string;              // "crys-<timestamp>-<random>"
+  content: string;         // The insight — concise and actionable
+  sourceEntries: string[]; // IDs of memory/journal entries that motivated this crystal
+  formedDate: string;      // When first crystallized (ISO)
+  lastValidated: string;   // When last confirmed against recent experience (ISO)
+  recallCount: number;     // Times referenced
+  confidence: number;      // 0-1 score
+}
+```
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Formation** | Agent calls `crystallize` tool | New crystal added (if budget allows) |
+| **Validation** | Agent calls `validate` or re-crystallizes | Confidence increases slightly |
+| **Weakening** | Crystal contradicts recent experience | Confidence decreases |
+| **Pruning** | Dream cycle maintenance | Crystals below 0.3 confidence removed |
+| **Dissolution** | Agent calls `dissolve` tool | Crystal removed, dissolution logged to journal |
+
+### Key Behaviors
+
+- **Budget**: Max 30 crystals, 500 tokens total in the hot tier
+- **Deduplication**: Re-crystallizing the same content strengthens the existing crystal
+- **Eviction**: When at capacity, new high-confidence crystals evict the lowest-confidence existing crystal
+- **Hot tier**: `buildCrystalsPrompt()` produces text for inclusion in the identity prompt, sorted by confidence
+- **Privacy**: Only derived insights, never raw user content
+
+## Constitution Store (Vision Tier 1: Self-Governance)
+
+> **Source**: `src/autonomous/constitution-store.ts`
+> **Storage**: `~/.casterly/constitution.yaml` (JSON, full rewrite on save)
+
+Self-authored operational rules discovered through experience. These are tactical rules with evidence — distinct from the immutable safety boundary.
+
+### Rule Structure
+
+```typescript
+interface ConstitutionalRule {
+  id: string;              // "rule-<timestamp>-<random>"
+  rule: string;            // The directive — concise and actionable
+  added: string;           // When created (ISO)
+  motivation: string;      // Journal reference explaining why this rule exists
+  confidence: number;      // 0-1 score
+  invocations: number;     // Times the rule was relevant
+  successes: number;       // Times following the rule led to success
+  tags: string[];          // Categorization tags
+}
+```
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Creation** | Agent calls `create_rule` after observing a pattern | New rule added |
+| **Strengthening** | `recordSuccess()` — rule followed, positive outcome | Confidence +0.03 |
+| **Slight decay** | `recordFailure()` — rule followed, negative outcome | Confidence -0.02 |
+| **Strong decay** | `recordViolationSuccess()` — rule violated, succeeded anyway | Confidence -0.05 |
+| **Pruning** | Dream cycle maintenance | Rules below 0.3 confidence removed |
+| **Evolution** | Agent calls `update_rule` | Rule text refined based on new evidence |
+
+### Key Behaviors
+
+- **Budget**: Max 50 rules, 500 tokens total in the hot tier
+- **Deduplication**: Creating a duplicate rule strengthens the existing one
+- **Success tracking**: Each rule tracks invocations and successes for success rate reporting
+- **Search**: Rules searchable by keyword across text and tags
+- **Hot tier**: `buildConstitutionPrompt()` includes success rate in the prompt
+
+## Trace Replay (Vision Tier 1: Self-Debugging)
+
+> **Source**: `src/autonomous/trace-replay.ts`
+> **Storage**: `~/.casterly/traces/` (JSON files + index)
+
+Execution trace recording for post-mortem analysis. Each cycle's tool calls, parameters, results, and timing are stored as structured traces.
+
+### Trace Structure
+
+```typescript
+interface ExecutionTrace {
+  cycleId: string;
+  startedAt: string;
+  endedAt: string;
+  triggerType: string;
+  outcome: 'success' | 'failure' | 'partial';
+  steps: TraceStep[];     // Each tool call with params, result, reasoning, duration
+  totalDurationMs: number;
+  summary?: string;
+  error?: string;
+}
+```
+
+### Retention Policy
+
+| Outcome | Retention | Override |
+|---------|-----------|---------|
+| Success | 7 days | — |
+| Failure | 30 days | — |
+| Referenced (by crystal or rule) | Indefinite | `markReferenced()` |
+
+Max 500 traces. Retention enforced during dream cycles and when the limit is exceeded.
+
+### Key Capabilities
+
+- **Replay**: Step-by-step walkthrough with optional step range and tool filter
+- **Compare**: Side-by-side comparison of two traces — finds divergence point, unique tools, outcome differences
+- **Search**: Index-based search by outcome, trigger type, or tool used
+- **Format**: Human-readable narrative format for both traces and comparisons
+- **Auto-rebuild**: Index is rebuilt from trace files on first load if missing
+
 ## Context Manager (Tiered Memory)
 
 > **Source**: `src/autonomous/context-manager.ts`
@@ -251,7 +377,7 @@ Manages what Tyrion can "see" during a cycle. Four tiers:
 
 | Tier | Budget | Content | Persistence |
 |------|--------|---------|-------------|
-| **Hot** | ~2k tokens | Identity prompt (always in context) | Rebuilt each cycle from live state |
+| **Hot** | ~2k tokens | Identity prompt + crystals + constitution (always in context) | Rebuilt each cycle from live state |
 | **Warm** | ~20k tokens | Tool results, working notes, snippets | In-memory only (cleared between cycles) |
 | **Cool** | On-demand | Past 30 days of archived notes | Disk (JSONL store, queried via `recall` tool) |
 | **Cold** | Archive | Full historical archive | Disk (JSONL store, queried via `recall` tool) |
@@ -281,7 +407,10 @@ Cycle start
     ├── journal.load()           ← Read JSONL, cache last 200
     ├── worldModel.load()        ← Read YAML
     ├── goalStack.load()         ← Read YAML
-    └── issueLog.load()          ← Read YAML
+    ├── issueLog.load()          ← Read YAML
+    ├── crystalStore.load()      ← Read JSON (Vision Tier 1)
+    ├── constitutionStore.load() ← Read JSON (Vision Tier 1)
+    └── traceReplay.initialize() ← Load trace index (Vision Tier 1)
          (all in parallel)
     │
     ▼
@@ -291,6 +420,9 @@ During cycle
     ├── World model: addActivity(), addConcern(), updateHealth()
     ├── Goal stack: recordAttempt(), updateNotes(), completeGoal()
     ├── Issue log: fileIssue(), recordAttempt(), resolveIssue()
+    ├── Crystal store: crystallize(), dissolve(), validate(), weaken()
+    ├── Constitution: createRule(), recordSuccess/Failure/ViolationSuccess()
+    ├── Trace replay: record() (at cycle end)
     └── Context manager: addToWarmTier() (auto from tool results)
     │
     ▼
@@ -299,7 +431,9 @@ Cycle end
     ├── journal.append(handoff)  ← Write-through (immediate)
     ├── worldModel.save()        ← Only if dirty
     ├── goalStack.save()         ← Only if dirty
-    └── issueLog.save()          ← Only if dirty
+    ├── issueLog.save()          ← Only if dirty
+    ├── crystalStore.save()      ← Only if dirty (Vision Tier 1)
+    └── constitutionStore.save() ← Only if dirty (Vision Tier 1)
 ```
 
 ## Privacy Guarantees
@@ -311,6 +445,9 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 - Goals: Task descriptions and codebase references only
 - Issues: Technical descriptions, fix approaches, file paths only
 - User model: Derived preferences (e.g. "prefers brief responses"), never quotes
+- Crystals: Only derived insights, never raw user content
+- Constitution: Only empirical rules from journal references, never user data
+- Traces: Execution sequences and tool parameters only, no raw sensitive content
 
 ## Key Files
 
@@ -321,4 +458,7 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 | `src/autonomous/goal-stack.ts` | Priority queue with capacity management (731 lines) |
 | `src/autonomous/issue-log.ts` | Problem tracker with attempt history (729 lines) |
 | `src/autonomous/context-manager.ts` | 4-tier memory hierarchy (150+ lines) |
+| `src/autonomous/crystal-store.ts` | Permanent insights with confidence tracking (Vision Tier 1) |
+| `src/autonomous/constitution-store.ts` | Self-authored rules with evidence (Vision Tier 1) |
+| `src/autonomous/trace-replay.ts` | Execution trace recording and replay (Vision Tier 1) |
 | `src/tasks/execution-log.ts` | Bounded task outcome log (248 lines) |

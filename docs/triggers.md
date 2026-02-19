@@ -221,7 +221,18 @@ The trigger system is well-aligned with the vision. Triggers are already normali
 
 **What to do:** Remove the guard. Events always flow to the agent loop.
 
-### 4. Route iMessage through the trigger system
+### 4. Integrate self-knowledge triggers (Vision Tier 1)
+
+**Current:** Crystals, constitutional rules, and trace replay are driven by agent tools and dream cycle phases. The agent decides when to use them during a cycle.
+
+**Future:** As the system matures, certain events should automatically suggest self-knowledge actions:
+- A failed cycle should suggest `replay` + `create_rule` in the next scheduled trigger
+- High-recall journal entries should suggest `crystallize` during dream cycles
+- Rules with declining confidence should suggest review during scheduled maintenance
+
+**What exists today:** Vision Tier 1 is fully implemented. The crystal store, constitution store, and trace replay are integrated into the agent toolkit (9 tools) and dream cycle runner (pruning phases). Self-knowledge triggers are currently manual (agent-initiated) — automatic suggestion is planned for future phases.
+
+### 5. Route iMessage through the trigger system
 
 **Current:** iMessage messages bypass the trigger system entirely. They go from `src/imessage/daemon.ts` → `processChatMessage()` → pipeline.
 
