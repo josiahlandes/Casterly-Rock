@@ -44,9 +44,16 @@ These docs provide comprehensive coverage of every major subsystem:
 | [Coding Interface](coding-interface.md) | Context management between LLM and code editing, repo map architecture |
 | [API Reference](api-reference.md) | Detailed API for providers, tools, security, interface, skills, config |
 | [Error Codes](error-codes.md) | Structured error codes with messages and remediation steps |
-| [Security (original)](security.md) | Earlier security doc — superseded by [Security & Privacy](security-and-privacy.md) |
-| [Testing (original)](testing.md) | Trace collection, test case execution, CLI testing |
 | [Test Registry](test-registry.md) | Test file → source module mapping, coverage instructions |
+
+### Archived
+
+Superseded docs moved to `docs/archive/`:
+
+| Doc | Superseded By |
+|-----|---------------|
+| [security.md](archive/security.md) | [Security & Privacy](security-and-privacy.md) |
+| [testing.md](archive/testing.md) | [Testing & Quality Gates](testing-and-quality-gates.md) |
 
 ## Planning & Operations
 
