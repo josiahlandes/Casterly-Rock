@@ -12,20 +12,20 @@ import { tmpdir } from 'node:os';
 import extractZip from 'extract-zip';
 import * as tar from 'tar';
 
-export interface ArchiveEntry {
+interface ArchiveEntry {
   path: string;
   size: number;
   type: 'file' | 'directory';
 }
 
-export interface ArchiveResult {
+interface ArchiveResult {
   format: 'zip' | 'tar.gz';
   totalEntries: number;
   totalSize: number;
   entries: ArchiveEntry[];
 }
 
-export interface ArchiveOptions {
+interface ArchiveOptions {
   /** Max number of entries to list (default: 500) */
   maxEntries?: number | undefined;
 }

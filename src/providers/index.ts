@@ -13,11 +13,10 @@ import type { AppConfig } from '../config/schema.js';
 import type { LlmProvider } from './base.js';
 import { OllamaProvider } from './ollama.js';
 
-export { BillingError } from './base.js';
 export type { LlmProvider, PreviousAssistantMessage } from './base.js';
 
 // Phase 5: Concurrent provider
-export { ConcurrentProvider, createConcurrentProvider } from './concurrent.js';
+export { ConcurrentProvider } from './concurrent.js';
 export type {
   ConcurrentProviderConfig,
   NamedResult,

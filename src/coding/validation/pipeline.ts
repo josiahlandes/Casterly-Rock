@@ -227,8 +227,6 @@ export class ValidationPipeline {
     // Build summary
     const passedSteps = steps.filter((s) => s.passed && !s.skipped).length;
     const failedSteps = steps.filter((s) => !s.passed && !s.skipped).length;
-    const skippedSteps = steps.filter((s) => s.skipped).length;
-
     let summary: string;
     if (success) {
       summary = `✓ Validation passed (${passedSteps} steps, ${totalDurationMs}ms)`;

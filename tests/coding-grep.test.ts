@@ -3,7 +3,7 @@ import { existsSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { grep, grepFiles, grepCount, formatGrepResults } from '../src/coding/tools/grep.js';
+import { grep, formatGrepResults } from '../src/coding/tools/grep.js';
 
 // ─── Temp dir helpers ────────────────────────────────────────────────────────
 
@@ -187,61 +187,6 @@ describe('grep — errors', () => {
     expect(result.success).toBe(true);
     expect(result.matches).toHaveLength(0);
     expect(result.totalMatches).toBe(0);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// grepFiles
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('grepFiles', () => {
-  it('returns matching file paths', async () => {
-    setupTree();
-    const result = await grepFiles('function', {
-      cwd: TEST_BASE,
-      include: ['**/*.ts'],
-    });
-    expect(result.success).toBe(true);
-    expect(result.files.length).toBeGreaterThan(0);
-    expect(result.files.every((f) => typeof f === 'string')).toBe(true);
-  });
-
-  it('returns error for invalid regex', async () => {
-    setupTree();
-    const result = await grepFiles('[bad', {
-      cwd: TEST_BASE,
-      include: ['**/*.ts'],
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Invalid regex');
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// grepCount
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('grepCount', () => {
-  it('counts total matches', async () => {
-    setupTree();
-    const result = await grepCount('function', {
-      cwd: TEST_BASE,
-      include: ['**/*.ts'],
-    });
-    expect(result.success).toBe(true);
-    expect(result.totalMatches).toBeGreaterThanOrEqual(3);
-    expect(result.filesMatched).toBeGreaterThan(0);
-  });
-
-  it('returns zero for no matches', async () => {
-    setupTree();
-    const result = await grepCount('zzznope999', {
-      cwd: TEST_BASE,
-      include: ['**/*.ts'],
-    });
-    expect(result.success).toBe(true);
-    expect(result.totalMatches).toBe(0);
-    expect(result.filesMatched).toBe(0);
   });
 });
 

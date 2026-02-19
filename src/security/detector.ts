@@ -1,13 +1,13 @@
 import { matchSensitiveCategories } from './patterns.js';
 import type { SensitiveCategory } from './patterns.js';
 
-export interface SensitiveDetectionResult {
+interface SensitiveDetectionResult {
   isSensitive: boolean;
   categories: SensitiveCategory[];
   reasons: string[];
 }
 
-export interface SensitiveDetectionOptions {
+interface SensitiveDetectionOptions {
   alwaysLocalCategories: SensitiveCategory[];
 }
 

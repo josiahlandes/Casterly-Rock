@@ -7,7 +7,7 @@
 
 import { fileTypeFromBuffer } from 'file-type';
 
-export interface MimeResult {
+interface MimeResult {
   /** Detected MIME type (e.g. 'application/pdf') */
   mime: string;
   /** Detected extension without dot (e.g. 'pdf') */
@@ -82,13 +82,6 @@ export async function detectFormat(
 
   // Fall back to extension
   return extToFormat(fileExtension);
-}
-
-/**
- * Check if a format is a supported document type (for read_document).
- */
-export function isDocumentFormat(format: string): boolean {
-  return ['pdf', 'docx', 'xlsx', 'csv'].includes(format);
 }
 
 /**

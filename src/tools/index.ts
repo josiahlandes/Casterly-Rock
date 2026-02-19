@@ -34,8 +34,6 @@ export {
   requiresApproval,
 } from './executor.js';
 
-export type { BashExecutorOptions } from './executor.js';
-
 // Orchestrator
 export { createToolOrchestrator } from './orchestrator.js';
 

@@ -8,12 +8,12 @@ import ExcelJS from 'exceljs';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface XlsxParseOptions {
+interface XlsxParseOptions {
   maxRows?: number | undefined;
   sheet?: string | undefined;
 }
 
-export interface XlsxSheet {
+interface XlsxSheet {
   name: string;
   rows: number;
   columns: number;
@@ -21,7 +21,7 @@ export interface XlsxSheet {
   truncated: boolean;
 }
 
-export interface XlsxParseResult {
+interface XlsxParseResult {
   sheets: XlsxSheet[];
   totalSheets: number;
 }

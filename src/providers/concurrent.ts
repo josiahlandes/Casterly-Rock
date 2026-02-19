@@ -121,7 +121,6 @@ export class ConcurrentProvider {
     }
 
     await this.acquireSlot();
-    const startMs = Date.now();
 
     try {
       const response = await provider.generateWithTools(
@@ -132,10 +131,6 @@ export class ConcurrentProvider {
       return response;
     } finally {
       this.releaseSlot();
-      const durationMs = Date.now() - startMs;
-      if (durationMs > this.config.requestTimeoutMs) {
-        // Log but don't throw — the request already completed
-      }
     }
   }
 

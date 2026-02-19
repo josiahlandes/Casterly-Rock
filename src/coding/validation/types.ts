@@ -52,7 +52,7 @@ export interface ValidationError {
 /**
  * A validation warning.
  */
-export interface ValidationWarning {
+interface ValidationWarning {
   /** File path */
   file?: string;
   /** Warning message */
@@ -124,78 +124,4 @@ export const DEFAULT_VALIDATION_CONFIG: Required<Omit<ValidationConfig, 'rootPat
   onlyNewErrors: true,
 };
 
-/**
- * Validation presets for different scenarios.
- */
-export const VALIDATION_PRESETS = {
-  /** Quick validation - parse and lint only */
-  quick: {
-    parseCheck: true,
-    lintOnEdit: true,
-    typecheckOnEdit: false,
-    testOnEdit: false,
-    autoCommit: false,
-  },
-  /** Standard validation - parse, lint, typecheck */
-  standard: {
-    parseCheck: true,
-    lintOnEdit: true,
-    typecheckOnEdit: true,
-    testOnEdit: false,
-    autoCommit: false,
-  },
-  /** Full validation - all checks including tests */
-  full: {
-    parseCheck: true,
-    lintOnEdit: true,
-    typecheckOnEdit: true,
-    testOnEdit: true,
-    autoCommit: false,
-  },
-  /** CI mode - full validation with auto-commit */
-  ci: {
-    parseCheck: true,
-    lintOnEdit: true,
-    typecheckOnEdit: true,
-    testOnEdit: true,
-    autoCommit: true,
-  },
-} as const;
 
-/**
- * Language-specific parser configuration.
- */
-export interface ParserConfig {
-  /** File extensions this parser handles */
-  extensions: string[];
-  /** Parser name */
-  name: string;
-  /** Whether the parser is available */
-  available: boolean;
-}
-
-/**
- * Supported parsers.
- */
-export const SUPPORTED_PARSERS: ParserConfig[] = [
-  {
-    extensions: ['.ts', '.tsx'],
-    name: 'typescript',
-    available: true,
-  },
-  {
-    extensions: ['.js', '.jsx', '.mjs', '.cjs'],
-    name: 'javascript',
-    available: true,
-  },
-  {
-    extensions: ['.json'],
-    name: 'json',
-    available: true,
-  },
-  {
-    extensions: ['.yaml', '.yml'],
-    name: 'yaml',
-    available: true,
-  },
-];

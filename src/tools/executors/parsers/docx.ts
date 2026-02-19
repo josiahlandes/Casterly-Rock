@@ -8,11 +8,11 @@ import mammoth from 'mammoth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface DocxParseOptions {
+interface DocxParseOptions {
   format?: 'text' | 'html' | undefined;
 }
 
-export interface DocxParseResult {
+interface DocxParseResult {
   content: string;
   format: 'text' | 'html';
   paragraphs: number;

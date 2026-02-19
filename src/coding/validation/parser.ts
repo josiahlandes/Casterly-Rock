@@ -353,25 +353,6 @@ function checkCommonSyntaxErrors(
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line) continue;
-    const lineNum = i + 1;
-
-    // Check for unclosed strings (simple check)
-    const singleQuotes = (line.match(/'/g) || []).length;
-    const doubleQuotes = (line.match(/"/g) || []).length;
-    const escapedSingle = (line.match(/\\'/g) || []).length;
-    const escapedDouble = (line.match(/\\"/g) || []).length;
-
-    // This is a very basic check - real parsing would be more accurate
-    if ((singleQuotes - escapedSingle) % 2 !== 0 && !line.includes('`')) {
-      // Could be unclosed string, but also could be in template literal
-      // Skip for now to avoid false positives
-    }
-
-    // Check for trailing operators that suggest continuation errors
-    const trimmed = line.trim();
-    if (trimmed.endsWith('= ') || trimmed.endsWith('+ ') || trimmed.endsWith('- ')) {
-      // Could be intentional line continuation, skip
-    }
   }
 
   return errors;

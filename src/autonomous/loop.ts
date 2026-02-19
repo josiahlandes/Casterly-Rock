@@ -13,7 +13,7 @@ import { createProvider, type AutonomousProvider } from './provider.js';
 import { Analyzer } from './analyzer.js';
 import { GitOperations } from './git.js';
 import { Validator, buildInvariants } from './validator.js';
-import { Reflector, type MemoryEntry } from './reflector.js';
+import { Reflector } from './reflector.js';
 import type { ApprovalBridge } from '../approval/index.js';
 import type {
   AutonomousConfig,
@@ -21,7 +21,6 @@ import type {
   CycleOutcome,
   Hypothesis,
   Implementation,
-  Observation,
   PendingBranch,
 } from './types.js';
 
@@ -29,7 +28,7 @@ import type {
 import { AgentLoop, createAgentLoop } from './agent-loop.js';
 import type { AgentTrigger, AgentLoopConfig, AgentOutcome } from './agent-loop.js';
 import { buildAgentToolkit } from './agent-tools.js';
-import type { AgentToolkit, AgentState, CycleIntrospection } from './agent-tools.js';
+import type { AgentToolkit, AgentState } from './agent-tools.js';
 import { WorldModel } from './world-model.js';
 import { GoalStack } from './goal-stack.js';
 import { IssueLog } from './issue-log.js';
@@ -39,9 +38,7 @@ import { triggerFromEvent, triggerFromSchedule, triggerFromGoal } from './trigge
 
 // Phase 3: Event-Driven Awareness imports
 import { ContextManager, createContextManager } from './context-manager.js';
-import type { ContextManagerConfig } from './context-manager.js';
 import { EventBus, type SystemEvent } from './events.js';
-import type { EventBusConfig } from './events.js';
 import { FileWatcher } from './watchers/file-watcher.js';
 import { GitWatcher } from './watchers/git-watcher.js';
 import { IssueWatcher } from './watchers/issue-watcher.js';
@@ -70,7 +67,7 @@ const CYCLE_ID_PREFIX = 'cycle';
 /**
  * Configuration for the event-driven awareness system.
  */
-export interface EventsConfig {
+interface EventsConfig {
   /** File watcher config overrides */
   fileWatcher: Partial<FileWatcherConfig> & { enabled: boolean };
 
@@ -165,7 +162,6 @@ export class AutonomousLoop {
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
-  private embeddingProvider: import('../providers/embedding.js').EmbeddingProvider | null = null;
   private concurrentProvider: import('../providers/concurrent.js').ConcurrentProvider | null = null;
 
   constructor(
@@ -713,8 +709,6 @@ export class AutonomousLoop {
         ...(this.selfModelSummary !== null ? { selfModelSummary: this.selfModelSummary } : {}),
         // Roadmap Phase 5: Job store for schedule/list_schedules/cancel_schedule
         ...(this.jobStore ? { jobStore: this.jobStore } : {}),
-        // Supporting: Embedding provider for semantic_recall
-        ...(this.embeddingProvider ? { embeddingProvider: this.embeddingProvider } : {}),
         // Supporting: Concurrent provider for parallel_reason
         ...(this.concurrentProvider ? { concurrentProvider: this.concurrentProvider } : {}),
         // Reconciliation: Dream cycle phases as tools

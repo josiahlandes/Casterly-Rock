@@ -22,8 +22,8 @@
  * the journal and issue log (Tyrion's own reasoning).
  */
 
-import { readFile, writeFile, mkdir, readdir, unlink } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { getTracer } from '../debug.js';
 import type { TrainingDataset } from './training-extractor.js';
 
