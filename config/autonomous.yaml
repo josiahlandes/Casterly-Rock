@@ -268,6 +268,59 @@ dream_cycles:
   retrospective_interval_days: 7
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SELF-KNOWLEDGE (Vision Tier 1: Crystals, Constitution, Traces)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+self_knowledge:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # MEMORY CRYSTALLIZATION
+  # ─────────────────────────────────────────────────────────────────────────────
+  crystals:
+    # Path to crystal store
+    path: ~/.casterly/crystals.yaml
+
+    # Maximum number of crystals
+    max_crystals: 30
+
+    # Token budget for crystals in the hot tier
+    budget_tokens: 500
+
+    # Minimum confidence to keep a crystal during pruning
+    min_confidence: 0.3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CONSTITUTIONAL SELF-GOVERNANCE
+  # ─────────────────────────────────────────────────────────────────────────────
+  constitution:
+    # Path to constitution store
+    path: ~/.casterly/constitution.yaml
+
+    # Maximum number of rules
+    max_rules: 50
+
+    # Token budget for constitution in the hot tier
+    budget_tokens: 500
+
+    # Minimum confidence to keep a rule during pruning
+    min_confidence: 0.3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SELF-DEBUGGING REPLAY
+  # ─────────────────────────────────────────────────────────────────────────────
+  traces:
+    # Base path for trace storage
+    path: ~/.casterly/traces
+
+    # Days to retain successful traces
+    success_retention_days: 7
+
+    # Days to retain failed traces
+    failure_retention_days: 30
+
+    # Maximum number of traces to keep
+    max_traces: 500
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # COMMUNICATION (Phase 7: proactive user messaging)
 # ═══════════════════════════════════════════════════════════════════════════════
 

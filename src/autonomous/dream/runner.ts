@@ -31,6 +31,9 @@ import type { ContextManager } from '../context-manager.js';
 import { SelfModel } from './self-model.js';
 import { CodeArchaeologist } from './archaeology.js';
 import type { FragileFile } from './archaeology.js';
+import type { CrystalStore } from '../crystal-store.js';
+import type { ConstitutionStore } from '../constitution-store.js';
+import type { TraceReplay } from '../trace-replay.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -90,6 +93,15 @@ export interface DreamOutcome {
   /** Whether the self-model was rebuilt */
   selfModelRebuilt: boolean;
 
+  /** Number of crystals pruned */
+  crystalsPruned: number;
+
+  /** Number of constitutional rules pruned */
+  rulesPruned: number;
+
+  /** Number of traces cleaned up */
+  tracesCleaned: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -142,6 +154,9 @@ export class DreamCycleRunner {
     issueLog: IssueLog,
     reflector: Reflector,
     contextManager?: ContextManager,
+    crystalStore?: CrystalStore,
+    constitutionStore?: ConstitutionStore,
+    traceReplay?: TraceReplay,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -158,6 +173,9 @@ export class DreamCycleRunner {
         goalsReorganized: 0,
         retrospectiveWritten: false,
         selfModelRebuilt: false,
+        crystalsPruned: 0,
+        rulesPruned: 0,
+        tracesCleaned: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -232,7 +250,48 @@ export class DreamCycleRunner {
         outcome.phasesSkipped.push('updateSelfModel');
       }
 
-      // Phase 6: Write retrospective
+      // Phase 6a: Crystal maintenance (Vision Tier 1)
+      if (crystalStore) {
+        try {
+          const prunedCrystals = crystalStore.prune();
+          outcome.crystalsPruned = prunedCrystals.length;
+          if (prunedCrystals.length > 0) {
+            await crystalStore.save();
+          }
+          outcome.phasesCompleted.push('crystalMaintenance');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Crystal maintenance failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('crystalMaintenance');
+        }
+      }
+
+      // Phase 6b: Constitution pruning (Vision Tier 1)
+      if (constitutionStore) {
+        try {
+          const prunedRules = constitutionStore.prune();
+          outcome.rulesPruned = prunedRules.length;
+          if (prunedRules.length > 0) {
+            await constitutionStore.save();
+          }
+          outcome.phasesCompleted.push('constitutionPruning');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Constitution pruning failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('constitutionPruning');
+        }
+      }
+
+      // Phase 6c: Trace retention cleanup (Vision Tier 1)
+      if (traceReplay) {
+        try {
+          outcome.tracesCleaned = await traceReplay.enforceRetentionPolicy();
+          outcome.phasesCompleted.push('traceCleanup');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Trace cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('traceCleanup');
+        }
+      }
+
+      // Phase 7: Write retrospective
       try {
         outcome.retrospectiveWritten = await this.writeRetrospective(
           reflector,
