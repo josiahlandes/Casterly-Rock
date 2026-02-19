@@ -7,8 +7,8 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 autonomous:
-  # Master switch - set to true to enable autonomous improvement
-  enabled: true
+  # The autonomous loop is always active. There is no master switch.
+  # Autonomy is the default state (see docs/vision.md).
 
   # Provider: Always ollama (local inference)
   provider: ollama
@@ -24,12 +24,12 @@ autonomous:
   # Maximum cycles per day (to manage costs and avoid runaway)
   max_cycles_per_day: 12
 
-  # Work window: 10pm to 6am (overnight only)
-  # Quiet hours define when NOT to run — daytime is quiet
+  # Quiet hours — scheduling preference, not a hard gate.
+  # The LLM prefers consolidation work during quiet hours but the
+  # system never refuses to run cycles. See docs/vision.md.
   quiet_hours:
-    start: "06:00"   # 6 AM — quiet starts (stop working)
-    end: "22:00"     # 10 PM — quiet ends (start working)
-    enabled: true    # Night-only operation: work 10pm-6am
+    start: "06:00"   # 6 AM — quiet starts (prefer consolidation)
+    end: "22:00"     # 10 PM — quiet ends (normal priority work)
 
   # ─────────────────────────────────────────────────────────────────────────────
   # SCOPE
@@ -100,9 +100,8 @@ autonomous:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 agent_loop:
-  # Master switch — when true, use the new ReAct agent loop instead of
-  # the legacy 4-phase pipeline
-  enabled: false
+  # The agent loop is the sole execution path. There is no legacy
+  # fallback. See docs/vision.md.
 
   # Maximum reasoning turns per cycle (prevents infinite loops)
   max_turns: 20
@@ -136,9 +135,8 @@ agent_loop:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 events:
-  # Master switch — when true, file/git/issue watchers emit events
-  # that trigger agent cycles instead of relying on a fixed timer
-  enabled: false
+  # Watchers always run and emit events. The LLM decides what to do
+  # with them. There is no master switch. See docs/vision.md.
 
   # ─────────────────────────────────────────────────────────────────────────────
   # FILE WATCHER
@@ -249,8 +247,8 @@ hardware:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 dream_cycles:
-  # Master switch — enable dream cycles during quiet hours
-  enabled: false
+  # Dream cycles are low-priority goals the LLM pursues when no
+  # higher-priority triggers are pending. No toggle. See docs/vision.md.
 
   # Hours between consolidation runs
   consolidation_interval_hours: 24
@@ -266,6 +264,206 @@ dream_cycles:
 
   # Days between retrospective writes
   retrospective_interval_days: 7
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SELF-KNOWLEDGE (Vision Tier 1: Crystals, Constitution, Traces)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+self_knowledge:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # MEMORY CRYSTALLIZATION
+  # ─────────────────────────────────────────────────────────────────────────────
+  crystals:
+    # Path to crystal store
+    path: ~/.casterly/crystals.yaml
+
+    # Maximum number of crystals
+    max_crystals: 30
+
+    # Token budget for crystals in the hot tier
+    budget_tokens: 500
+
+    # Minimum confidence to keep a crystal during pruning
+    min_confidence: 0.3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CONSTITUTIONAL SELF-GOVERNANCE
+  # ─────────────────────────────────────────────────────────────────────────────
+  constitution:
+    # Path to constitution store
+    path: ~/.casterly/constitution.yaml
+
+    # Maximum number of rules
+    max_rules: 50
+
+    # Token budget for constitution in the hot tier
+    budget_tokens: 500
+
+    # Minimum confidence to keep a rule during pruning
+    min_confidence: 0.3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SELF-DEBUGGING REPLAY
+  # ─────────────────────────────────────────────────────────────────────────────
+  traces:
+    # Base path for trace storage
+    path: ~/.casterly/traces
+
+    # Days to retain successful traces
+    success_retention_days: 7
+
+    # Days to retain failed traces
+    failure_retention_days: 30
+
+    # Maximum number of traces to keep
+    max_traces: 500
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SELF-IMPROVEMENT TIER 2 (Vision: Prompts, Shadows, Tool Synthesis)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+self_improvement:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SELF-MODIFYING PROMPTS
+  # ─────────────────────────────────────────────────────────────────────────────
+  prompts:
+    # Path to the editable system prompt
+    system_prompt_path: ~/.casterly/system-prompt.md
+
+    # Path to version history
+    versions_path: ~/.casterly/prompt-versions.json
+
+    # Maximum versions to retain
+    max_versions: 20
+
+    # Protected patterns that can never be removed from the prompt
+    protected_patterns:
+      - "Safety Boundary"
+      - "Path Guards"
+      - "Redaction Rules"
+      - "Security Invariants"
+      - "NEVER"
+      - "non-negotiable"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SHADOW EXECUTION
+  # ─────────────────────────────────────────────────────────────────────────────
+  shadows:
+    # Path to shadow analysis store
+    analysis_path: ~/.casterly/shadow-analysis.json
+
+    # Maximum shadows to retain
+    max_shadows: 200
+
+    # Minimum scenarios needed to form a judgment pattern
+    min_scenarios_for_pattern: 5
+
+    # Days to retain assessed shadows
+    retention_days: 90
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # TOOL SYNTHESIS
+  # ─────────────────────────────────────────────────────────────────────────────
+  tools:
+    # Directory for synthesized tool definitions
+    tools_directory: ~/.casterly/tools
+
+    # Maximum number of custom tools
+    max_tools: 20
+
+    # Maximum template body length in characters
+    max_template_length: 2000
+
+    # Days before unused tools are flagged for archival
+    unused_days_threshold: 30
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SELF-IMPROVEMENT TIER 3 (Vision: Adversarial Testing, Prompt Evolution, LoRA)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+advanced_self_improvement:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ADVERSARIAL DUAL-MODEL SELF-TESTING
+  # ─────────────────────────────────────────────────────────────────────────────
+  adversarial:
+    # Maximum challenges per dream cycle batch
+    challenge_budget: 20
+
+    # Prioritize weakest skills from self-model
+    prioritize_weak_skills: true
+
+    # Challenge types to generate
+    challenge_types:
+      - code_completion
+      - bug_detection
+      - regex_construction
+      - refactoring_decision
+      - security_review
+
+    # Time limit per challenge in seconds
+    default_time_limit_seconds: 60
+
+    # Path to challenge evaluation history
+    history_path: ~/.casterly/challenge-history.json
+
+    # Maximum batch records to keep
+    max_batch_records: 50
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PROMPT GENETIC ALGORITHM
+  # ─────────────────────────────────────────────────────────────────────────────
+  prompt_evolution:
+    # Directory for prompt variants
+    variants_path: ~/.casterly/prompt-evolution
+
+    # Population size (number of variant prompts)
+    population_size: 8
+
+    # Mutation rate (0.0-1.0)
+    mutation_rate: 0.3
+
+    # Crossover rate (0.0-1.0)
+    crossover_rate: 0.7
+
+    # Keep current best in next generation (elite strategy)
+    elite_strategy: true
+
+    # Maximum generation records to keep
+    max_generation_history: 50
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LOCAL FINE-TUNING AND LoRA ADAPTERS
+  # ─────────────────────────────────────────────────────────────────────────────
+  lora_training:
+    # Directory for adapter files
+    adapters_path: ~/.casterly/adapters
+
+    # Directory for benchmark tasks
+    benchmarks_path: ~/.casterly/benchmarks
+
+    # Maximum adapters to maintain
+    max_adapters: 20
+
+    # Minimum improvement threshold to keep adapter (e.g., 0.05 = +5%)
+    min_improvement_threshold: 0.05
+
+    # Training data lookback in days
+    training_data_lookback_days: 90
+
+    # Default LoRA configuration
+    lora:
+      rank: 8
+      alpha: 16
+      target_modules:
+        - q_proj
+        - v_proj
+      learning_rate: 0.0001
+      epochs: 3
+      batch_size: 8
+      format: instruction_completion
+
+    # Number of benchmark tasks per evaluation
+    eval_sample_size: 10
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COMMUNICATION (Phase 7: proactive user messaging)

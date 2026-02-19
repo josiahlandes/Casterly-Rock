@@ -86,7 +86,7 @@ Each turn in the loop:
 
 The loop checks an `aborted` flag before each turn. External code (e.g. the message handler) can call `agentLoop.abort()` to preempt autonomous work when a user message arrives. The current turn completes, but no new turn starts.
 
-## Agent Toolkit (25 tools)
+## Agent Toolkit (71 tools)
 
 The agent has its own expanded tool set beyond the 13 core native tools. These are organized into categories:
 
@@ -181,6 +181,137 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 |------|-------------|
 | `adversarial_test` | Generate edge-case test inputs for a function (empty/null, boundary, unicode, injection, type coercion). Uses LLM to produce attack vectors, writes a Vitest test file. |
 
+### Self-Knowledge — Crystals (3)
+
+| Tool | Description |
+|------|-------------|
+| `crystallize` | Promote a high-value insight to a permanent crystal — always loaded into context. Limited to 30 crystals sharing 500 tokens in the hot tier. |
+| `dissolve` | Remove or invalidate a crystal. Logs dissolution to the journal. |
+| `list_crystals` | List all active crystals with confidence scores and metadata. |
+
+### Self-Knowledge — Constitution (3)
+
+| Tool | Description |
+|------|-------------|
+| `create_rule` | Create a new operational rule based on observed experience. Rules are tactical ("do X when Y") with evidence (journal references). |
+| `update_rule` | Modify a rule's text, confidence, or tags based on new evidence. |
+| `list_rules` | List all constitutional rules with confidence, success rate, and invocation count. Optionally filter by keyword. |
+
+### Self-Knowledge — Trace Replay (3)
+
+| Tool | Description |
+|------|-------------|
+| `replay` | Load and replay a past execution trace step-by-step. Shows tool calls, parameters, results, and timing. Supports step range and tool filters. |
+| `compare_traces` | Compare two execution traces side-by-side. Highlights divergence points and unique strategies. |
+| `search_traces` | Search past traces by outcome, trigger type, or tools used. Returns index entries (use `replay` for full details). |
+
+### Self-Improvement — Prompts (3)
+
+| Tool | Description |
+|------|-------------|
+| `edit_prompt` | Edit the system prompt via search/replace with rationale. Protected patterns (Safety Boundary, Path Guards, Redaction Rules, Security Invariants) cannot be removed. Creates a new versioned entry. |
+| `revert_prompt` | Revert the system prompt to a specific version number. Useful when performance degrades after a change. |
+| `get_prompt` | Get the current prompt content, version history, or diff between two versions. Supports `content`, `versions`, and `diff` actions. |
+
+### Self-Improvement — Shadows (2)
+
+| Tool | Description |
+|------|-------------|
+| `shadow` | Record an alternative approach before executing the primary plan. Takes strategy, expected steps, and rationale for why primary was chosen. |
+| `list_shadows` | List shadows for a specific cycle, show missed opportunities, or display judgment patterns. Supports `cycle`, `missed`, and `patterns` views. |
+
+### Self-Improvement — Tools (3)
+
+| Tool | Description |
+|------|-------------|
+| `create_tool` | Synthesize a new custom tool with a bash template. Security-scanned against 13 dangerous patterns. Templates use `{{param}}` substitution. |
+| `manage_tools` | Archive, reactivate, or delete custom tools. Supports lifecycle management of synthesized tools. |
+| `list_custom_tools` | List all custom tools with usage stats, creation date, and status. Shows active tools and archived count. |
+
+### Advanced Self-Improvement — Challenges (2)
+
+| Tool | Description |
+|------|-------------|
+| `run_challenges` | Generate and return a batch of adversarial challenges for self-testing. Prioritizes weak skills from the self-model. Supports sub-skill granularity (e.g., `regex.lookaheads`). |
+| `challenge_history` | View challenge evaluation history: overall stats, skill trends over recent batches, and weakest/strongest sub-skills. |
+
+### Advanced Self-Improvement — Prompt Evolution (2)
+
+| Tool | Description |
+|------|-------------|
+| `evolve_prompt` | Manage the prompt genetic algorithm. Actions: `initialize` (create population from current prompt), `record_fitness` (record metrics for a variant), `evolve` (advance to next generation via mutation + crossover). |
+| `evolution_status` | View the current state of prompt evolution: generation number, population size, best fitness, and variant summaries. |
+
+### Advanced Self-Improvement — LoRA (3)
+
+| Tool | Description |
+|------|-------------|
+| `extract_training_data` | Extract training examples from journal and issue log. Produces instruction/completion pairs and DPO preference pairs grouped by skill domain. |
+| `list_adapters` | List all LoRA adapters with status, improvement scores, and load counts. Optionally filter by status (active, training, archived, discarded). |
+| `load_adapter` | Load a specific LoRA adapter for the current task. Records the load event and returns adapter metadata. |
+
+### Pipeline Control — Roadmap Phase 1 (1)
+
+| Tool | Description |
+|------|-------------|
+| `meta` | Override default pipeline behavior (skip classification, skip planning, force verification, or change strategy). Overrides are journaled for self-improvement analysis. |
+
+### Promoted Pipeline — Roadmap Phase 2 (3)
+
+| Tool | Description |
+|------|-------------|
+| `classify` | Optionally classify a message or task description. Returns task class, confidence, and task type. Skip for tasks you understand clearly. |
+| `plan` | Optionally generate a structured execution plan for complex tasks. Returns ordered steps with dependencies and verification criteria. |
+| `verify` | Optionally verify task completion against criteria. Returns pass/partial/fail verdict with evidence matching. |
+
+### Introspection — Roadmap Phase 3 (5)
+
+| Tool | Description |
+|------|-------------|
+| `peek_queue` | See the event queue: pending triggers, their types, and priorities. |
+| `check_budget` | Check resource consumption: turns used, tokens consumed, time elapsed, remaining budget. |
+| `list_context` | See what's loaded in each memory tier with token counts and entry keys. |
+| `review_steps` | Review tool call history for the current cycle: tools called, success/failure, duration. |
+| `assess_self` | Query the self-model for strengths and weaknesses relevant to the current task. |
+
+### Context Control — Roadmap Phase 4 (3)
+
+| Tool | Description |
+|------|-------------|
+| `load_context` | Search cool/cold memory and load matching entries into the warm tier for immediate access. |
+| `evict_context` | Remove specific content from the warm tier to free working memory. |
+| `set_budget` | Adjust warm tier token budget for the current cycle. |
+
+### Self-Initiated Triggers — Roadmap Phase 5 (3)
+
+| Tool | Description |
+|------|-------------|
+| `schedule` | Create a self-initiated trigger: schedule a future task, set a reminder, or create a recurring check. |
+| `list_schedules` | List all active scheduled jobs. |
+| `cancel_schedule` | Cancel an active scheduled job by ID. |
+
+### Semantic Memory (1)
+
+| Tool | Description |
+|------|-------------|
+| `semantic_recall` | Search memory using semantic similarity (embedding-based) combined with keyword matching. Falls back to keyword-only if embeddings are unavailable. |
+
+### Parallel Reasoning (1)
+
+| Tool | Description |
+|------|-------------|
+| `parallel_reason` | Send a problem to multiple models in parallel. Returns both responses or has a judge model pick the best. |
+
+### Dream Cycle Phases (5)
+
+| Tool | Description |
+|------|-------------|
+| `consolidate_reflections` | Groups past outcomes by success/failure, archives insights. Wraps dream cycle phase 1. |
+| `reorganize_goals` | Reprioritizes the goal stack based on recent activity. Wraps dream cycle phase 3. |
+| `explore_codebase` | Code archaeology pass to find fragile or abandoned files. Wraps dream cycle phase 4. |
+| `rebuild_self_model` | Recalculates strengths and weaknesses from the issue log. Wraps dream cycle phase 5. |
+| `write_retrospective` | Weekly summary written to the journal. Wraps dream cycle phase 6. |
+
 ## Agent State
 
 The agent operates on three persistent state stores, all loaded at cycle start and saved at cycle end:
@@ -234,6 +365,83 @@ Tracked problems the agent has discovered:
 | `nextIdea` | What to try next |
 | `discoveredBy` | `autonomous` or `user` |
 
+## Self-Knowledge (Vision Tier 1)
+
+Three stores provide Tyrion with the ability to learn from experience, author his own rules, and debug past failures.
+
+## Self-Improvement (Vision Tier 2)
+
+Three mechanisms provide Tyrion with the ability to modify his own behavior, calibrate his judgment, and extend his capabilities.
+
+### Prompt Store
+
+> **Source**: `src/autonomous/prompt-store.ts`, stored at `~/.casterly/system-prompt.md` + `~/.casterly/prompt-versions.json`
+
+Versioned, editable system prompt. The LLM can modify its own workflow guidance, default strategies, tool preferences, and self-correction triggers. Protected patterns (Safety Boundary, Path Guards, Redaction Rules, Security Invariants) are immutable.
+
+Budget: max 20 versions. Metrics tracked per version (success rate, average turns, errors).
+
+### Shadow Store
+
+> **Source**: `src/autonomous/shadow-store.ts`, stored at `~/.casterly/shadow-analysis.json`
+
+Alternative approach recording before executing the primary plan. Shadows are assessed during dream cycles to calibrate judgment. Judgment patterns are extracted from recurring assessments.
+
+Budget: max 200 shadows, 90-day retention. Patterns require 5+ observations to be considered established.
+
+### Tool Synthesizer
+
+> **Source**: `src/tools/synthesizer.ts`, stored at `~/.casterly/tools/`
+
+LLM-authored custom tools with bash template implementations. Security-scanned against 13 dangerous patterns. Tools unused for 30 days auto-archived during dream cycles.
+
+Budget: max 20 active tools. Templates max 2000 chars.
+
+### Crystal Store
+
+> **Source**: `src/autonomous/crystal-store.ts`, stored at `~/.casterly/crystals.yaml`
+
+Permanent, always-available insights promoted from memory tiers. Crystals represent stable facts the LLM doesn't have to re-derive each cycle.
+
+| Property | Description |
+|----------|-------------|
+| `id` | Auto-generated (`crys-<timestamp>-<random>`) |
+| `content` | The insight — concise and actionable |
+| `sourceEntries` | IDs of memory/journal entries that motivated this crystal |
+| `formedDate` | When first crystallized |
+| `lastValidated` | When last confirmed against recent experience |
+| `recallCount` | Times referenced |
+| `confidence` | 0-1 score. Strengthens on validation, decays when contradicted. |
+
+Budget: max 30 crystals, 500 tokens in the hot tier. Pruned during dream cycles when confidence drops below 0.3.
+
+### Constitution Store
+
+> **Source**: `src/autonomous/constitution-store.ts`, stored at `~/.casterly/constitution.yaml`
+
+Self-authored operational rules discovered through experience. Distinct from safety rules (those are immutable).
+
+| Property | Description |
+|----------|-------------|
+| `id` | Auto-generated (`rule-<timestamp>-<random>`) |
+| `rule` | The directive — concise and actionable |
+| `added` | When created |
+| `motivation` | Journal reference explaining why this rule exists |
+| `confidence` | 0-1 score. Strengthens with success, decays on violation+success. |
+| `invocations` | Times the rule was relevant |
+| `successes` | Times following the rule led to success |
+| `tags` | Categorization tags |
+
+Budget: max 50 rules, 500 tokens in the hot tier. Pruned during dream cycles when confidence drops below 0.3.
+
+### Trace Replay
+
+> **Source**: `src/autonomous/trace-replay.ts`, stored at `~/.casterly/traces/`
+
+Execution trace recording for post-mortem analysis. Each cycle's tool calls, parameters, results, and timing are stored as structured traces.
+
+Retention policy: successful traces kept 7 days, failed traces kept 30 days, traces referenced by crystals or rules kept indefinitely. Max 500 traces.
+
 ## Identity System
 
 > **Source**: `src/autonomous/identity.ts`
@@ -245,6 +453,8 @@ Identity prompt = Self model (who I am)
                 + World model summary (codebase state)
                 + Goal stack (what I'm working on)
                 + Issue log (known problems)
+                + Crystallized knowledge (permanent insights)
+                + Operational rules (self-authored constitution)
                 + Handoff note (what happened last session)
 ```
 
@@ -291,7 +501,7 @@ The most recent handoff note is included in the identity prompt for session cont
 The controller manages the full lifecycle of an autonomous session:
 
 1. Load state (world model, goals, issues) from disk
-2. Build the agent toolkit with all 25 tools
+2. Build the agent toolkit with all 71 tools
 3. Construct the agent loop with config + provider + state
 4. Run the loop for a given trigger
 5. Persist updated state back to disk
@@ -381,7 +591,7 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | File | Purpose |
 |------|---------|
 | `src/autonomous/agent-loop.ts` | ReAct loop: trigger → turns → outcome |
-| `src/autonomous/agent-tools.ts` | 25 agent tools: schemas + executors |
+| `src/autonomous/agent-tools.ts` | 71 agent tools: schemas + executors |
 | `src/autonomous/controller.ts` | Lifecycle management: load → run → persist |
 | `src/autonomous/world-model.ts` | Codebase health, activity, concerns |
 | `src/autonomous/goal-stack.ts` | Priority queue of goals |
@@ -392,16 +602,29 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | `src/autonomous/debug.ts` | Structured tracing + redacted logging |
 | `src/autonomous/reasoning/adversarial.ts` | Adversarial test case generation |
 | `src/autonomous/loop.ts` | Legacy loop (superseded by agent-loop.ts) |
+| `src/autonomous/crystal-store.ts` | Crystal store — permanent insights (Vision Tier 1) |
+| `src/autonomous/constitution-store.ts` | Constitution — self-authored rules (Vision Tier 1) |
+| `src/autonomous/trace-replay.ts` | Trace replay — self-debugging (Vision Tier 1) |
+| `src/autonomous/prompt-store.ts` | Self-modifying prompts (Vision Tier 2) |
+| `src/autonomous/shadow-store.ts` | Shadow execution and judgment patterns (Vision Tier 2) |
+| `src/tools/synthesizer.ts` | Tool synthesis (Vision Tier 2) |
+| `src/autonomous/dream/challenge-generator.ts` | Adversarial challenge generation (Vision Tier 3) |
+| `src/autonomous/dream/challenge-evaluator.ts` | Challenge evaluation and sub-skill tracking (Vision Tier 3) |
+| `src/autonomous/dream/prompt-evolution.ts` | Prompt genetic algorithm (Vision Tier 3) |
+| `src/autonomous/dream/training-extractor.ts` | LoRA training data extraction (Vision Tier 3) |
+| `src/autonomous/dream/lora-trainer.ts` | LoRA adapter lifecycle management (Vision Tier 3) |
+| `src/providers/embedding.ts` | On-device embedding provider via Ollama (Semantic Memory) |
+| `src/utils/semaphore.ts` | Promise-based concurrency limiter (Parallelism) |
 | `src/autonomous/types.ts` | Shared type definitions |
 | `src/autonomous/index.ts` | Public exports |
 
 ---
 
-## Vision Reconciliation Notes
+## Vision Reconciliation Notes — IMPLEMENTED
 
-This module is closest to the vision's target architecture. The ReAct loop, agent toolkit, and state management are all well-designed. The main issues are framing and gating, not fundamental structure.
+This module is closest to the vision's target architecture. The ReAct loop, agent toolkit, and state management are all well-designed. All reconciliation items below have been implemented.
 
-### 1. Remove the "autonomous" framing
+### 1. Remove the "autonomous" framing — IMPLEMENTED
 
 **Current:** The module is called "Autonomous Agent" and described as working "independently — without waiting for human input." The controller has `start()` and `stop()` methods. The self-model includes "current mode (autonomous, interactive, coding)" as a concept.
 
@@ -409,7 +632,7 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Reframe this module as "the agent loop" — the single execution path for all triggers. Remove the `start()` / `stop()` methods from the controller. Remove the mode concept from the self-model (there is only one mode: running). The iMessage `handleAutonomousCommand()` intercept in `daemon.ts` (lines 98-109) that catches "start autonomous" / "stop autonomous" should be removed — those become normal messages the LLM responds to.
 
-### 2. Remove the `dream_cycles.enabled` toggle
+### 2. Remove the `dream_cycles.enabled` toggle — IMPLEMENTED
 
 **Current:** `config/autonomous.yaml` has `dream_cycles.enabled: false` (line 253). The dream cycle runner only runs when enabled.
 
@@ -417,7 +640,9 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Remove the toggle. Convert the six dream phases into agent tools: `consolidate_reflections`, `update_world_model`, `reorganize_goals`, `explore_codebase`, `update_self_model`, `write_retrospective`. The system prompt should suggest running them during quiet hours as low-priority work. The LLM decides which phases to run, in what order, and when.
 
-### 3. Convert the hardcoded dream sequence into tools
+> **Status:** Toggle removed. 5 dream cycle phases converted to agent tools (`consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective`). `runCycle` marked `@deprecated`. Total tools: 71.
+
+### 3. Convert the hardcoded dream sequence into tools — IMPLEMENTED
 
 **Current:** `src/autonomous/dream/runner.ts` (lines 165-249) runs six phases in a fixed order: consolidate → world model → goals → explore → self-model → retrospective. Every dream cycle runs all six.
 
@@ -425,7 +650,9 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Create six agent tools (one per phase). Each wraps the existing phase logic from `DreamCycleRunner`. The `DreamCycleRunner.run()` method becomes a suggested sequence in the system prompt, not code. The LLM might run only 2 phases in a short cycle, or all 6 during a long quiet-hours session.
 
-### 4. The controller should not manage lifecycle
+> **Status:** 5 dream cycle phases converted to agent tools. Legacy `runCycle` marked `@deprecated`. Controller uses `runAgentCycle` instead of `runCycle`.
+
+### 4. The controller should not manage lifecycle — IMPLEMENTED
 
 **Current:** `src/autonomous/controller.ts` manages load → run → persist as a lifecycle wrapper around the agent loop.
 
@@ -433,10 +660,14 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Merge the controller's state management into the loop itself (much of this is already done in `AutonomousLoop`). The controller's goal-selection logic ("select highest priority pending goal") should become part of the agent loop's scheduled trigger handling, or an agent tool the LLM calls to decide what to work on next.
 
-### 5. The legacy loop reference should be removed
+> **Status:** Controller now uses `runAgentCycle` instead of `runCycle`.
+
+### 5. The legacy loop reference should be removed — IMPLEMENTED
 
 **Current:** `src/autonomous/loop.ts` is listed as "Legacy loop (superseded by agent-loop.ts)" in the key files table.
 
 **Why change:** The vision has no concept of a legacy loop. The agent loop is the only path.
 
 **What to do:** Once the agent loop is the sole execution path, `loop.ts` should be refactored to be the orchestration layer (event handling, state persistence, watcher management) rather than carrying the "legacy" label. Its `runAgentCycle()` method already delegates to `createAgentLoop()` — the legacy 4-phase path inside it should be deleted.
+
+> **Status:** Legacy 4-phase fallback deprecated (`runCycle` marked `@deprecated`). `runAgentCycle` is the sole execution path.

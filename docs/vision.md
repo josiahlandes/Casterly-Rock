@@ -503,26 +503,66 @@ Re-examine past execution traces step-by-step to identify failure patterns.
 
 These mechanisms are ordered by risk and dependency. Earlier mechanisms create the substrate that later mechanisms build on.
 
-**Tier 1 -- Low risk, high immediate value, minimal dependencies:**
+**Tier 1 -- Low risk, high immediate value, minimal dependencies: IMPLEMENTED**
 1. Memory crystallization -- directly addresses context quality, the most impactful lever for a local model
 2. Constitutional self-governance -- lightweight, additive, instantly useful
 3. Self-debugging replay -- read-only analysis, no mutation risk
 
-**Tier 2 -- Moderate complexity, requires Tier 1 insights to be most effective:**
+> **Implementation Status (Tier 1):** All three Tier 1 mechanisms are implemented as of 2026-02-19.
+>
+> | Mechanism | Source | Tools | Tests |
+> |-----------|--------|-------|-------|
+> | Memory Crystallization | `src/autonomous/crystal-store.ts` | `crystallize`, `dissolve`, `list_crystals` | `tests/crystal-store.test.ts` (17 tests) |
+> | Constitutional Self-Governance | `src/autonomous/constitution-store.ts` | `create_rule`, `update_rule`, `list_rules` | `tests/constitution-store.test.ts` (17 tests) |
+> | Self-Debugging Replay | `src/autonomous/trace-replay.ts` | `replay`, `compare_traces`, `search_traces` | `tests/trace-replay.test.ts` (18 tests) |
+>
+> Integration points:
+> - Identity prompt (`identity.ts`) includes crystals and constitution in the hot tier
+> - Dream cycle runner (`dream/runner.ts`) prunes crystals, rules, and traces during maintenance phases
+> - Agent toolkit (`agent-tools.ts`) exposes 9 new tools (34 total, up from 25)
+> - Configuration in `config/autonomous.yaml` under `self_knowledge` section
+
+**Tier 2 -- Moderate complexity, requires Tier 1 insights to be most effective: IMPLEMENTED**
 4. Self-modifying prompts -- builds on constitutional rules and crystals as evidence for what to change
 5. Shadow execution -- lightweight to implement, but most valuable once the constitution and crystals provide a framework for interpreting shadows
 6. Tool synthesis -- requires stable tool runtime and good self-awareness of repetitive patterns
 
-**Tier 3 -- High complexity, high ceiling, requires Tier 1-2 as training signal:**
+> **Implementation Status (Tier 2):** All three Tier 2 mechanisms are implemented as of 2026-02-19.
+>
+> | Mechanism | Source | Tools | Tests |
+> |-----------|--------|-------|-------|
+> | Self-Modifying Prompts | `src/autonomous/prompt-store.ts` | `edit_prompt`, `revert_prompt`, `get_prompt` | `tests/prompt-store.test.ts` (14 tests) |
+> | Shadow Execution | `src/autonomous/shadow-store.ts` | `shadow`, `list_shadows` | `tests/shadow-store.test.ts` (15 tests) |
+> | Tool Synthesis | `src/tools/synthesizer.ts` | `create_tool`, `manage_tools`, `list_custom_tools` | `tests/tool-synthesizer.test.ts` (23 tests) |
+>
+> Integration points:
+> - Dream cycle runner (`dream/runner.ts`) adds Phase 7a (shadow analysis/pruning) and Phase 7b (tool inventory/unused tool archival)
+> - Agent toolkit (`agent-tools.ts`) exposes 8 new tools (42 total, up from 34)
+> - Configuration in `config/autonomous.yaml` under `self_improvement` section
+
+**Tier 3 -- High complexity, high ceiling, requires Tier 1-2 as training signal: IMPLEMENTED**
 7. Adversarial dual-model self-testing -- requires granular self-model (from Tier 1-2) to know what to test
 8. Prompt genetic algorithm -- requires benchmarks (from adversarial testing) as the fitness function
 9. LoRA fine-tuning -- highest ceiling but most complex; needs substantial journal data and the benchmark infrastructure from earlier tiers
+
+> **Implementation Status (Tier 3):** All three Tier 3 mechanisms are implemented as of 2026-02-19.
+>
+> | Mechanism | Source | Tools | Tests |
+> |-----------|--------|-------|-------|
+> | Adversarial Self-Testing | `src/autonomous/dream/challenge-generator.ts`, `src/autonomous/dream/challenge-evaluator.ts` | `run_challenges`, `challenge_history` | `tests/challenge-generator.test.ts` (22 tests) |
+> | Prompt Genetic Algorithm | `src/autonomous/dream/prompt-evolution.ts` | `evolve_prompt`, `evolution_status` | `tests/prompt-evolution.test.ts` (18 tests) |
+> | LoRA Fine-Tuning | `src/autonomous/dream/training-extractor.ts`, `src/autonomous/dream/lora-trainer.ts` | `extract_training_data`, `list_adapters`, `load_adapter` | `tests/lora-trainer.test.ts` (26 tests) |
+>
+> Integration points:
+> - Dream cycle runner (`dream/runner.ts`) adds Phase 8a (adversarial challenges), Phase 8b (prompt evolution), Phase 8c (training data extraction)
+> - Agent toolkit (`agent-tools.ts`) exposes 7 new tools (49 total, up from 42)
+> - Configuration in `config/autonomous.yaml` under `advanced_self_improvement` section
 
 ## Roadmap: The Transition to LLM-Driven Architecture
 
 The roadmap is organized around a single goal: moving from "system that uses an LLM" to "LLM that uses a system." Each phase loosens the hardcoded pipeline and gives the LLM more control, while the supporting work (semantic memory, parallelism) provides the infrastructure the LLM needs to make good decisions.
 
-### Phase 1: Loosen the Pipeline
+### Phase 1: Loosen the Pipeline — IMPLEMENTED
 
 Make the current pipeline optional rather than mandatory. The pipeline (classify → plan → execute → verify) remains the default, but the LLM gains the ability to override it.
 
@@ -538,7 +578,7 @@ Make the current pipeline optional rather than mandatory. The pipeline (classify
 - The classifier (`src/tasks/classifier.ts`), planner (`src/tasks/planner.ts`), runner (`src/tasks/runner.ts`), and verifier (`src/tasks/verifier.ts`) are separable modules that can be invoked as tools.
 - The journal and self-model already track success/failure patterns.
 
-### Phase 2: Promote the ReAct Loop
+### Phase 2: Promote the ReAct Loop — IMPLEMENTED
 
 Make the agent loop the only execution path. Classification, planning, and verification become tools the LLM calls when it judges they're needed, rather than mandatory stages.
 
@@ -555,7 +595,7 @@ Make the agent loop the only execution path. Classification, planning, and verif
 
 **Key change:** The system prompt becomes the architecture document. It describes the default workflow, when to deviate, and how to self-correct. The LLM follows the prompt's guidance -- not because the code forces it to, but because the prompt is well-written and the model is capable enough to follow it.
 
-### Phase 3: Introspection Tools
+### Phase 3: Introspection Tools — IMPLEMENTED
 
 Give the model visibility into things the system currently hides. Self-awareness enables self-correction.
 
@@ -573,7 +613,7 @@ Give the model visibility into things the system currently hides. Self-awareness
 - The self-model exists but is only loaded into the hot tier passively.
 - Context tier contents are not queryable from the LLM's perspective.
 
-### Phase 4: LLM-Controlled Context
+### Phase 4: LLM-Controlled Context — IMPLEMENTED
 
 Replace hardcoded token budgets with a model-controlled context manager. The model decides what to load and what to evict.
 
@@ -588,7 +628,7 @@ Replace hardcoded token budgets with a model-controlled context manager. The mod
 - The `note`, `archive`, `recall`, and `recall_journal` tools already give the LLM read/write access.
 - The missing piece is explicit eviction and loading controls.
 
-### Phase 5: LLM-Initiated Triggers
+### Phase 5: LLM-Initiated Triggers — IMPLEMENTED
 
 Give the model the ability to create its own triggers. The model becomes proactive, not just reactive.
 
@@ -604,7 +644,7 @@ Give the model the ability to create its own triggers. The model becomes proacti
 
 ---
 
-### Supporting Work: Semantic Memory
+### Supporting Work: Semantic Memory — IMPLEMENTED
 
 On-device embeddings for richer recall beyond keyword matching. This directly supports the LLM-driven architecture -- the better the model's memory, the better its judgment.
 
@@ -625,7 +665,7 @@ On-device embeddings for richer recall beyond keyword matching. This directly su
 
 ---
 
-### Supporting Work: Parallelism
+### Supporting Work: Parallelism — IMPLEMENTED
 
 Wire the existing `ConcurrentProvider` into the agent loop so the LLM can use multi-model inference as a strategy.
 
@@ -652,3 +692,39 @@ Across all phases: **the system provides capability, the LLM provides judgment.*
 The 120b model will make worse decisions than a frontier model at each step. But with free tokens, it gets to make more of them, correct its mistakes, and learn from its history. Over time, the self-knowledge system captures which strategies work, and the model's effective capability rises above its raw parameter count.
 
 That's the unique advantage of local-first: you can afford to let the model be wrong, try again, and get better -- without worrying about the bill.
+
+---
+
+> **Roadmap Implementation Status**
+>
+> All roadmap phases and supporting work are implemented. 17 new tools bring the total to 66.
+>
+> | Phase | Tools Added | Status |
+> |-------|------------|--------|
+> | Phase 1: Loosen the Pipeline | `meta` | Implemented |
+> | Phase 2: Promote the ReAct Loop | `classify`, `plan`, `verify` | Implemented |
+> | Phase 3: Introspection Tools | `peek_queue`, `check_budget`, `list_context`, `review_steps`, `assess_self` | Implemented |
+> | Phase 4: LLM-Controlled Context | `load_context`, `evict_context`, `set_budget` | Implemented |
+> | Phase 5: LLM-Initiated Triggers | `schedule`, `list_schedules`, `cancel_schedule` | Implemented |
+> | Semantic Memory | `semantic_recall` | Implemented |
+> | Parallelism | `parallel_reason` | Implemented |
+>
+> **New files:** `src/providers/embedding.ts`, `src/utils/semaphore.ts`
+> **Modified files:** `src/autonomous/agent-tools.ts`, `src/autonomous/agent-loop.ts`, `src/autonomous/loop.ts`, `src/autonomous/context-store.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/debug.ts`
+
+> **Reconciliation Implementation Status**
+>
+> All vision reconciliation items are implemented. 5 new dream cycle phase tools bring the total to 71.
+>
+> | Reconciliation Item | Status |
+> |---------------------|--------|
+> | Removed `enabled` toggles (`events`, `agent_loop`, `autonomous`, `dream_cycles`) | IMPLEMENTED |
+> | Removed quiet hours hard gate -- converted to soft prompt preference | IMPLEMENTED |
+> | Deprecated legacy 4-phase fallback (`runCycle` marked `@deprecated`) | IMPLEMENTED |
+> | Converted 5 dream cycle phases to agent tools (`consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective`) | IMPLEMENTED |
+> | Route iMessage through trigger system (`user_message` events emitted to EventBus) | IMPLEMENTED |
+> | Deprecated hardcoded task-type model routing (`forTask` returns local for all) | IMPLEMENTED |
+> | Deprecated legacy `AutonomousProvider` interface | IMPLEMENTED |
+> | Controller uses `runAgentCycle` instead of `runCycle` | IMPLEMENTED |
+>
+> **Total tools: 71**

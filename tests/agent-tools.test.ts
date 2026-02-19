@@ -93,9 +93,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 25 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(25);
-    expect(toolkit.toolNames).toHaveLength(25);
+  it('exposes all 71 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(71);
+    expect(toolkit.toolNames).toHaveLength(71);
   });
 
   it('includes all expected tool names', () => {
@@ -110,6 +110,28 @@ describe('AgentToolkit — Schema Validation', () => {
       'recall', 'archive',
       'adversarial_test', 'update_world_model',
       'recall_journal', 'consolidate',
+      // Vision Tier 1
+      'crystallize', 'dissolve', 'list_crystals',
+      'create_rule', 'update_rule', 'list_rules',
+      'replay', 'compare_traces', 'search_traces',
+      // Vision Tier 2
+      'edit_prompt', 'revert_prompt', 'get_prompt',
+      'shadow', 'list_shadows',
+      'create_tool', 'manage_tools', 'list_custom_tools',
+      // Vision Tier 3
+      'run_challenges', 'challenge_history', 'evolve_prompt',
+      'evolution_status', 'extract_training_data', 'list_adapters',
+      'load_adapter',
+      // Roadmap Phases 1-5 + Supporting
+      'meta',
+      'classify', 'plan', 'verify',
+      'peek_queue', 'check_budget', 'list_context', 'review_steps', 'assess_self',
+      'load_context', 'evict_context', 'set_budget',
+      'schedule', 'list_schedules', 'cancel_schedule',
+      'semantic_recall', 'parallel_reason',
+      // Reconciliation: Dream Cycle Phases
+      'consolidate_reflections', 'reorganize_goals', 'explore_codebase',
+      'rebuild_self_model', 'write_retrospective',
     ];
     for (const name of expected) {
       expect(names).toContain(name);

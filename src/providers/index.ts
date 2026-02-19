@@ -45,7 +45,12 @@ export interface ProviderRegistry {
   get(name: string): LlmProvider;
 }
 
-/** Task types that should use the coding model */
+/**
+ * @deprecated Task-type routing is superseded by the delegate agent tool.
+ * The LLM decides which model handles a subtask at runtime. The static
+ * lookup table is retained for backward compatibility but forTask() now
+ * always returns the local provider. See docs/vision.md.
+ */
 const CODING_TASK_TYPES = new Set([
   'coding', 'file_operation', 'code', 'review', 'implement', 'validate',
 ]);
@@ -71,10 +76,12 @@ export function buildProviders(config: AppConfig): ProviderRegistry {
   return {
     local,
     coding,
-    forTask(taskType?: string): LlmProvider {
-      if (taskType && CODING_TASK_TYPES.has(taskType)) {
-        return coding;
-      }
+    /**
+     * @deprecated Model selection is now the LLM's decision via the
+     * delegate tool. forTask() returns the local provider for all tasks.
+     * The coding provider is still available via get('coding').
+     */
+    forTask(_taskType?: string): LlmProvider {
       return local;
     },
     /**

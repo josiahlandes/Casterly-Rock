@@ -1,8 +1,8 @@
 # Memory & State
 
-> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/tasks/execution-log.ts`
+> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/context-store.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/autonomous/prompt-store.ts`, `src/autonomous/shadow-store.ts`, `src/tools/synthesizer.ts`, `src/autonomous/dream/challenge-evaluator.ts`, `src/autonomous/dream/prompt-evolution.ts`, `src/autonomous/dream/training-extractor.ts`, `src/autonomous/dream/lora-trainer.ts`, `src/providers/embedding.ts`, `src/tasks/execution-log.ts`
 
-Casterly maintains persistent state across sessions through five subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
+Casterly maintains persistent state across sessions through sixteen subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
 
 ```
 ~/.casterly/
@@ -10,6 +10,26 @@ Casterly maintains persistent state across sessions through five subsystems, eac
 ├── world-model.yaml           ← Codebase health, stats, concerns
 ├── goals.yaml                 ← Priority queue of work items
 ├── issues.yaml                ← Problem tracker with attempt history
+├── crystals.yaml              ← Permanent high-value insights (Vision Tier 1)
+├── constitution.yaml          ← Self-authored operational rules (Vision Tier 1)
+├── traces/                    ← Execution trace archive (Vision Tier 1)
+│   ├── index.json             ← Lightweight trace index
+│   └── <cycleId>.json         ← Individual trace files
+├── system-prompt.md           ← Editable system prompt (Vision Tier 2)
+├── prompt-versions.json       ← Prompt version history (Vision Tier 2)
+├── shadow-analysis.json       ← Shadow execution data + judgment patterns (Vision Tier 2)
+├── tools/                     ← Synthesized tool store (Vision Tier 2)
+│   └── tools.json             ← Tool definitions and metadata
+├── challenge-history.json     ← Challenge evaluation history (Vision Tier 3)
+├── prompt-evolution/          ← Prompt genetic algorithm (Vision Tier 3)
+│   ├── metadata.json          ← Generation counter, elite index
+│   ├── variant-N.md           ← Prompt variant content
+│   └── variant-N.json         ← Variant metadata and fitness
+├── training-data.json         ← Extracted LoRA training data (Vision Tier 3)
+├── adapters/                  ← LoRA adapter registry (Vision Tier 3)
+│   └── registry.json          ← Adapter metadata and lifecycle state
+├── benchmarks/                ← Benchmark tasks per skill (Vision Tier 3)
+│   └── <skill>.json           ← Benchmark task definitions
 └── execution-log/
     └── log.jsonl              ← Task execution outcomes (operational memory)
 ```
@@ -243,6 +263,385 @@ When an attempt is recorded on an `open` issue, it auto-transitions to `investig
 - **Pruning**: Max 200 total issues. Oldest resolved/wontfix issues pruned first.
 - **Summary text**: Shows investigating (with next idea), open by priority, stale, stubborn (3+ failed attempts), and recently resolved.
 
+## Crystal Store (Vision Tier 1: Memory Crystallization)
+
+> **Source**: `src/autonomous/crystal-store.ts`
+> **Storage**: `~/.casterly/crystals.yaml` (JSON, full rewrite on save)
+
+Permanent, always-available insights that Tyrion has promoted from the warm/cool memory tiers. Crystals represent stable facts, patterns, and preferences that don't need to be re-derived from the journal each cycle.
+
+### Crystal Structure
+
+```typescript
+interface Crystal {
+  id: string;              // "crys-<timestamp>-<random>"
+  content: string;         // The insight — concise and actionable
+  sourceEntries: string[]; // IDs of memory/journal entries that motivated this crystal
+  formedDate: string;      // When first crystallized (ISO)
+  lastValidated: string;   // When last confirmed against recent experience (ISO)
+  recallCount: number;     // Times referenced
+  confidence: number;      // 0-1 score
+}
+```
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Formation** | Agent calls `crystallize` tool | New crystal added (if budget allows) |
+| **Validation** | Agent calls `validate` or re-crystallizes | Confidence increases slightly |
+| **Weakening** | Crystal contradicts recent experience | Confidence decreases |
+| **Pruning** | Dream cycle maintenance | Crystals below 0.3 confidence removed |
+| **Dissolution** | Agent calls `dissolve` tool | Crystal removed, dissolution logged to journal |
+
+### Key Behaviors
+
+- **Budget**: Max 30 crystals, 500 tokens total in the hot tier
+- **Deduplication**: Re-crystallizing the same content strengthens the existing crystal
+- **Eviction**: When at capacity, new high-confidence crystals evict the lowest-confidence existing crystal
+- **Hot tier**: `buildCrystalsPrompt()` produces text for inclusion in the identity prompt, sorted by confidence
+- **Privacy**: Only derived insights, never raw user content
+
+## Constitution Store (Vision Tier 1: Self-Governance)
+
+> **Source**: `src/autonomous/constitution-store.ts`
+> **Storage**: `~/.casterly/constitution.yaml` (JSON, full rewrite on save)
+
+Self-authored operational rules discovered through experience. These are tactical rules with evidence — distinct from the immutable safety boundary.
+
+### Rule Structure
+
+```typescript
+interface ConstitutionalRule {
+  id: string;              // "rule-<timestamp>-<random>"
+  rule: string;            // The directive — concise and actionable
+  added: string;           // When created (ISO)
+  motivation: string;      // Journal reference explaining why this rule exists
+  confidence: number;      // 0-1 score
+  invocations: number;     // Times the rule was relevant
+  successes: number;       // Times following the rule led to success
+  tags: string[];          // Categorization tags
+}
+```
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Creation** | Agent calls `create_rule` after observing a pattern | New rule added |
+| **Strengthening** | `recordSuccess()` — rule followed, positive outcome | Confidence +0.03 |
+| **Slight decay** | `recordFailure()` — rule followed, negative outcome | Confidence -0.02 |
+| **Strong decay** | `recordViolationSuccess()` — rule violated, succeeded anyway | Confidence -0.05 |
+| **Pruning** | Dream cycle maintenance | Rules below 0.3 confidence removed |
+| **Evolution** | Agent calls `update_rule` | Rule text refined based on new evidence |
+
+### Key Behaviors
+
+- **Budget**: Max 50 rules, 500 tokens total in the hot tier
+- **Deduplication**: Creating a duplicate rule strengthens the existing one
+- **Success tracking**: Each rule tracks invocations and successes for success rate reporting
+- **Search**: Rules searchable by keyword across text and tags
+- **Hot tier**: `buildConstitutionPrompt()` includes success rate in the prompt
+
+## Trace Replay (Vision Tier 1: Self-Debugging)
+
+> **Source**: `src/autonomous/trace-replay.ts`
+> **Storage**: `~/.casterly/traces/` (JSON files + index)
+
+Execution trace recording for post-mortem analysis. Each cycle's tool calls, parameters, results, and timing are stored as structured traces.
+
+### Trace Structure
+
+```typescript
+interface ExecutionTrace {
+  cycleId: string;
+  startedAt: string;
+  endedAt: string;
+  triggerType: string;
+  outcome: 'success' | 'failure' | 'partial';
+  steps: TraceStep[];     // Each tool call with params, result, reasoning, duration
+  totalDurationMs: number;
+  summary?: string;
+  error?: string;
+}
+```
+
+### Retention Policy
+
+| Outcome | Retention | Override |
+|---------|-----------|---------|
+| Success | 7 days | — |
+| Failure | 30 days | — |
+| Referenced (by crystal or rule) | Indefinite | `markReferenced()` |
+
+Max 500 traces. Retention enforced during dream cycles and when the limit is exceeded.
+
+### Key Capabilities
+
+- **Replay**: Step-by-step walkthrough with optional step range and tool filter
+- **Compare**: Side-by-side comparison of two traces — finds divergence point, unique tools, outcome differences
+- **Search**: Index-based search by outcome, trigger type, or tool used
+- **Format**: Human-readable narrative format for both traces and comparisons
+- **Auto-rebuild**: Index is rebuilt from trace files on first load if missing
+
+## Prompt Store (Vision Tier 2: Self-Modifying Prompts)
+
+> **Source**: `src/autonomous/prompt-store.ts`
+> **Storage**: `~/.casterly/system-prompt.md` (prompt content), `~/.casterly/prompt-versions.json` (version history)
+
+Versioned, editable system prompt that the LLM can modify during dream cycles to improve its own workflow guidance. Protected patterns (Safety Boundary, Path Guards, Redaction Rules, Security Invariants) cannot be removed.
+
+### Prompt Version Structure
+
+```typescript
+interface PromptVersion {
+  version: number;
+  timestamp: string;        // ISO
+  content: string;          // Full prompt text
+  rationale: string;        // Why this edit was made
+  cycleId?: string;         // Which cycle made the edit
+  metrics?: VersionMetrics; // Performance data for this version
+}
+```
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Edit** | Agent calls `edit_prompt` (search/replace with rationale) | New version created; protected patterns validated |
+| **Revert** | Agent calls `revert_prompt` with target version | Reverts to specified version, creates new version entry |
+| **Metrics** | Agent calls after cycles | Records success rate, turns, errors per version |
+| **Pruning** | Version count exceeds `maxVersions` | Oldest non-initial versions pruned |
+
+### Key Behaviors
+
+- **Protected patterns**: Edits that remove Safety Boundary, Path Guards, Redaction Rules, or Security Invariants are rejected
+- **Version control**: Every edit creates a new version with rationale and optional cycle ID
+- **Diffing**: `diffVersions()` compares any two versions for review during dream cycles
+- **Budget**: Max 20 versions (configurable). Pruning preserves the initial version
+- **Hot tier**: `buildPromptSection()` produces text for inclusion in the identity prompt
+
+## Shadow Store (Vision Tier 2: Shadow Execution)
+
+> **Source**: `src/autonomous/shadow-store.ts`
+> **Storage**: `~/.casterly/shadow-analysis.json` (shadows + judgment patterns)
+
+Records alternative approaches ("shadows") before executing the primary plan. During dream cycles, shadows are compared with primary outcomes to calibrate judgment over time.
+
+### Shadow Structure
+
+```typescript
+interface Shadow {
+  id: string;                    // "shadow-<timestamp>-<random>"
+  cycleId: string;               // Which cycle this shadow belongs to
+  strategy: string;              // The alternative approach
+  expectedSteps: string[];       // What steps the shadow would take
+  rationale: string;             // Why primary was chosen over this
+  primaryOutcome?: 'success' | 'failure' | 'partial';
+  shadowAssessment?: 'likely_better' | 'similar' | 'worse' | 'unknown';
+  tags?: string[];
+  createdAt: string;
+}
+```
+
+### Judgment Pattern Structure
+
+```typescript
+interface JudgmentPattern {
+  id: string;                    // "pattern-<timestamp>-<random>"
+  pattern: string;               // The insight about judgment
+  supportCount: number;          // Observations supporting this pattern
+  contradictCount: number;       // Observations contradicting it
+  confidence: number;            // supportCount / (supportCount + contradictCount)
+  firstSeen: string;
+  lastUpdated: string;
+  exampleCycleIds: string[];
+}
+```
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Recording** | Agent calls `shadow` before executing primary plan | Shadow stored with strategy and rationale |
+| **Outcome** | `recordPrimaryOutcome()` after cycle completes | Links outcome to all shadows for that cycle |
+| **Assessment** | Dream cycle analysis | Shadows assessed as `likely_better`, `similar`, `worse`, or `unknown` |
+| **Pattern extraction** | Dream cycle analysis | Recurring judgment insights promoted to patterns |
+| **Pruning** | Dream cycle or retention limit | Old shadows pruned by retention days; weak patterns pruned by confidence |
+
+### Key Behaviors
+
+- **Capacity**: Max 200 shadows (configurable). Oldest pruned when exceeded.
+- **Missed opportunities**: Shadows assessed as `likely_better` where primary failed — tracked for learning
+- **Established patterns**: Patterns with enough supporting observations (default: 5) for reliable guidance
+- **Dream integration**: Phase 7a prunes old shadows and weak patterns during dream cycles
+- **Privacy**: Only strategy descriptions, never raw user content
+
+## Tool Synthesizer (Vision Tier 2: Tool Synthesis)
+
+> **Source**: `src/tools/synthesizer.ts`
+> **Storage**: `~/.casterly/tools/` (tool definitions and metadata)
+
+LLM-authored custom tools with bash template implementations. The LLM synthesizes new tools when it notices repetitive multi-step operations, wrapping them into single-call tools.
+
+### Synthesized Tool Structure
+
+```typescript
+interface SynthesizedTool {
+  name: string;                  // Lowercase alphanumeric + underscores
+  description: string;
+  inputSchema: object;           // JSON Schema for parameters
+  implementation: {
+    type: 'bash_template';
+    template: string;            // Bash with {{param}} substitution
+    cwd?: string;
+  };
+  createdAt: string;
+  authorNotes: string;           // Why the LLM created this tool
+  usageCount: number;
+  lastUsed: string;
+  status: 'active' | 'archived';
+  version: number;
+}
+```
+
+### Security
+
+Templates are scanned against 13 dangerous patterns before creation:
+
+| Pattern | Blocks |
+|---------|--------|
+| `rm -rf` | Recursive deletion |
+| `process.exit` | Process termination |
+| `eval()` / `Function()` | Dynamic code execution |
+| `credentials` / `secrets` / `.env` | Sensitive file access |
+| `ssh` / `scp` | Remote operations |
+| Write to `/etc/` or `/usr/` | System modification |
+| `curl.*\|.*sh` | Pipe-to-shell attacks |
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Creation** | Agent calls `create_tool` with name, schema, template | Security scan → name validation → capacity check → creation |
+| **Usage** | Tool invoked during cycle | Usage count incremented, lastUsed updated |
+| **Archival** | Agent calls `manage_tools` or dream cycle flags unused | Status set to `archived`, excluded from active tools |
+| **Reactivation** | Agent calls `manage_tools` to reactivate | Status set back to `active` |
+| **Deletion** | Agent calls `manage_tools` to delete | Permanently removed from store |
+
+### Key Behaviors
+
+- **Name validation**: Lowercase alphanumeric + underscores, max 40 chars, not in reserved names (all 42 built-in tool names)
+- **Capacity**: Max 20 tools (configurable). Rejected when full.
+- **Template rendering**: `{{param}}` substitution with shell-safe single quote escaping
+- **Unused detection**: Tools unused for 30 days (configurable) flagged during dream cycles
+- **Dream integration**: Phase 7b auto-archives unused tools past threshold
+
+## Challenge Evaluator (Vision Tier 3: Adversarial Self-Testing)
+
+> **Source**: `src/autonomous/dream/challenge-evaluator.ts`
+> **Storage**: `~/.casterly/challenge-history.json` (JSON, full rewrite on save)
+
+Tracks results from adversarial dual-model self-testing. The challenge generator (`src/autonomous/dream/challenge-generator.ts`) creates domain-specific challenges based on self-model weaknesses; the evaluator records results and updates sub-skill assessments.
+
+### Sub-Skill Assessment Structure
+
+```typescript
+interface SubSkillAssessment {
+  key: string;                 // "regex.lookaheads"
+  skill: string;               // Parent skill
+  subSkill: string;            // Sub-skill name
+  challengeSuccessRate: number; // 0-1
+  challengeAttempts: number;
+  challengeSuccesses: number;
+  lastAssessed: string;        // ISO
+}
+```
+
+### Key Behaviors
+
+- **Sub-skill granularity**: Extends the self-model's 13 skills with fine-grained sub-skills (e.g., `regex.lookaheads`, `typescript.generics`, `security.injection`)
+- **Trend tracking**: `getSkillTrend()` shows pass rate over the last N batches
+- **Weakness identification**: `getWeakestSubSkills()` returns the lowest-performing sub-skills with minimum sample threshold
+- **Budget**: Max 50 batch records. Older batches pruned on insertion.
+- **Dream integration**: Phase 8a generates challenges, evaluates results, and records to history
+
+## Prompt Evolution (Vision Tier 3: Prompt Genetic Algorithm)
+
+> **Source**: `src/autonomous/dream/prompt-evolution.ts`
+> **Storage**: `~/.casterly/prompt-evolution/` (variant files + metadata)
+
+Evolves the system prompt through genetic algorithm selection pressure. Maintains a population of prompt variants, evaluates them against benchmarks, and produces new generations through mutation and crossover.
+
+### Prompt Variant Structure
+
+```typescript
+interface PromptVariant {
+  index: number;               // Position in population
+  content: string;             // Full prompt text
+  generation: number;
+  parents: number[];           // Parent variant indices
+  mutations: string[];         // Mutation types applied
+  fitness: number | null;      // Computed fitness score
+  metrics: FitnessMetrics | null;
+}
+```
+
+### Key Behaviors
+
+- **Protected sections**: Safety Boundary, Path Guards, and other protected patterns are preserved through all genetic operations
+- **Elite strategy**: Best-performing variant always preserved in next generation
+- **Mutation types**: reorder_rules, adjust_threshold, add_guidance, remove_guidance, rephrase
+- **Crossover**: Combines sections from two parents using markdown headers as boundaries
+- **Fitness weights**: completionRate (40%), avgTurns (25%), avgToolCalls (15%), errorRate (20%)
+- **Population size**: Default 8 variants. Each variant stored as `.md` (content) + `.json` (metadata)
+- **Dream integration**: Phase 8b evolves population when 2+ variants have fitness data
+
+## Training Extractor (Vision Tier 3: LoRA Training Data)
+
+> **Source**: `src/autonomous/dream/training-extractor.ts`
+> **Storage**: `~/.casterly/training-data.json` (JSON, full rewrite on save)
+
+Extracts decision-outcome pairs from the journal and issue log, formats them as training examples for LoRA fine-tuning. Examples are grouped by skill domain.
+
+### Data Formats
+
+- **Instruction/completion pairs**: From journal reflections/handoffs — supervised fine-tuning format
+- **Preference pairs (DPO)**: From issue attempts — successful vs failed approaches paired
+
+### Key Behaviors
+
+- **Skill classification**: SKILL_PATTERNS map content to 12 skill domains (regex, typescript, testing, etc.)
+- **Lookback**: Default 90 days. Only recent data used for training.
+- **Budget**: Max 100 examples per skill domain. Content truncated at 2000 chars.
+- **Dream integration**: Phase 8c extracts training data and saves dataset
+
+## LoRA Trainer (Vision Tier 3: Local Fine-Tuning)
+
+> **Source**: `src/autonomous/dream/lora-trainer.ts`
+> **Storage**: `~/.casterly/adapters/registry.json` (JSON, full rewrite on save), `~/.casterly/benchmarks/` (JSON per skill)
+
+Manages the lifecycle of LoRA adapters: creation, evaluation, activation, and retirement. Each adapter targets a specific skill domain.
+
+### Adapter Lifecycle
+
+| Status | Meaning |
+|--------|---------|
+| `training` | Adapter created, training in progress |
+| `evaluating` | Training complete, running benchmarks |
+| `active` | Passed evaluation, loaded for inference |
+| `discarded` | Failed evaluation (below improvement threshold) |
+| `archived` | Previously active, superseded by newer version |
+
+### Key Behaviors
+
+- **Improvement threshold**: Minimum 5% improvement over baseline to accept an adapter
+- **Versioning**: Creating a new adapter for an existing skill increments version and archives the old one
+- **Capacity**: Max 20 adapters. Excess must be archived or discarded.
+- **Benchmark tasks**: Loaded from `~/.casterly/benchmarks/*.json` on startup
+- **Trainable skills**: `getTrainableSkills()` identifies skills with sufficient training data but no active adapter
+- **Privacy**: All training data comes from the local journal and issue log only
+
 ## Context Manager (Tiered Memory)
 
 > **Source**: `src/autonomous/context-manager.ts`
@@ -251,7 +650,7 @@ Manages what Tyrion can "see" during a cycle. Four tiers:
 
 | Tier | Budget | Content | Persistence |
 |------|--------|---------|-------------|
-| **Hot** | ~2k tokens | Identity prompt (always in context) | Rebuilt each cycle from live state |
+| **Hot** | ~2k tokens | Identity prompt + crystals + constitution (always in context) | Rebuilt each cycle from live state |
 | **Warm** | ~20k tokens | Tool results, working notes, snippets | In-memory only (cleared between cycles) |
 | **Cool** | On-demand | Past 30 days of archived notes | Disk (JSONL store, queried via `recall` tool) |
 | **Cold** | Archive | Full historical archive | Disk (JSONL store, queried via `recall` tool) |
@@ -281,7 +680,10 @@ Cycle start
     ├── journal.load()           ← Read JSONL, cache last 200
     ├── worldModel.load()        ← Read YAML
     ├── goalStack.load()         ← Read YAML
-    └── issueLog.load()          ← Read YAML
+    ├── issueLog.load()          ← Read YAML
+    ├── crystalStore.load()      ← Read JSON (Vision Tier 1)
+    ├── constitutionStore.load() ← Read JSON (Vision Tier 1)
+    └── traceReplay.initialize() ← Load trace index (Vision Tier 1)
          (all in parallel)
     │
     ▼
@@ -291,6 +693,16 @@ During cycle
     ├── World model: addActivity(), addConcern(), updateHealth()
     ├── Goal stack: recordAttempt(), updateNotes(), completeGoal()
     ├── Issue log: fileIssue(), recordAttempt(), resolveIssue()
+    ├── Crystal store: crystallize(), dissolve(), validate(), weaken()
+    ├── Constitution: createRule(), recordSuccess/Failure/ViolationSuccess()
+    ├── Trace replay: record() (at cycle end)
+    ├── Prompt store: editPrompt(), revertPrompt(), recordMetrics() (Vision Tier 2)
+    ├── Shadow store: recordShadow(), recordPrimaryOutcome(), assessShadow() (Vision Tier 2)
+    ├── Tool synthesizer: createTool(), recordUsage(), archiveTool() (Vision Tier 2)
+    ├── Challenge evaluator: recordBatch(), updateSubSkill() (Vision Tier 3)
+    ├── Prompt evolution: recordFitness(), evolve(), mutate(), crossover() (Vision Tier 3)
+    ├── Training extractor: extract(), saveDataset() (Vision Tier 3)
+    ├── LoRA trainer: createAdapter(), recordEvaluation(), recordLoad() (Vision Tier 3)
     └── Context manager: addToWarmTier() (auto from tool results)
     │
     ▼
@@ -299,7 +711,15 @@ Cycle end
     ├── journal.append(handoff)  ← Write-through (immediate)
     ├── worldModel.save()        ← Only if dirty
     ├── goalStack.save()         ← Only if dirty
-    └── issueLog.save()          ← Only if dirty
+    ├── issueLog.save()          ← Only if dirty
+    ├── crystalStore.save()      ← Only if dirty (Vision Tier 1)
+    ├── constitutionStore.save() ← Only if dirty (Vision Tier 1)
+    ├── promptStore.save()       ← Only if dirty (Vision Tier 2)
+    ├── shadowStore.save()       ← Only if dirty (Vision Tier 2)
+    ├── toolSynthesizer.save()   ← Only if dirty (Vision Tier 2)
+    ├── challengeEvaluator.save() ← Only if dirty (Vision Tier 3)
+    ├── promptEvolution.save()   ← Only if dirty (Vision Tier 3)
+    └── loraTrainer.save()       ← Only if dirty (Vision Tier 3)
 ```
 
 ## Privacy Guarantees
@@ -311,6 +731,16 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 - Goals: Task descriptions and codebase references only
 - Issues: Technical descriptions, fix approaches, file paths only
 - User model: Derived preferences (e.g. "prefers brief responses"), never quotes
+- Crystals: Only derived insights, never raw user content
+- Constitution: Only empirical rules from journal references, never user data
+- Traces: Execution sequences and tool parameters only, no raw sensitive content
+- Prompt store: Only workflow guidance and strategy text, never user data
+- Shadow store: Only strategy descriptions and rationale, never raw user content
+- Tool synthesizer: Only tool definitions and bash templates, never sensitive data
+- Challenge evaluator: Only synthetic challenge results and aggregate statistics, no user data
+- Prompt evolution: Only prompt variant text and fitness scores, no user data
+- Training extractor: Only decision-outcome pairs from Tyrion's own reasoning, never user content
+- LoRA trainer: Only adapter metadata and benchmark scores, no user data
 
 ## Key Files
 
@@ -321,4 +751,15 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 | `src/autonomous/goal-stack.ts` | Priority queue with capacity management (731 lines) |
 | `src/autonomous/issue-log.ts` | Problem tracker with attempt history (729 lines) |
 | `src/autonomous/context-manager.ts` | 4-tier memory hierarchy (150+ lines) |
+| `src/autonomous/crystal-store.ts` | Permanent insights with confidence tracking (Vision Tier 1) |
+| `src/autonomous/constitution-store.ts` | Self-authored rules with evidence (Vision Tier 1) |
+| `src/autonomous/trace-replay.ts` | Execution trace recording and replay (Vision Tier 1) |
+| `src/autonomous/prompt-store.ts` | Versioned self-modifying prompts (Vision Tier 2) |
+| `src/autonomous/shadow-store.ts` | Shadow execution and judgment patterns (Vision Tier 2) |
+| `src/tools/synthesizer.ts` | LLM-authored tool synthesis (Vision Tier 2) |
+| `src/autonomous/dream/challenge-generator.ts` | Adversarial challenge generation (Vision Tier 3) |
+| `src/autonomous/dream/challenge-evaluator.ts` | Challenge evaluation and sub-skill tracking (Vision Tier 3) |
+| `src/autonomous/dream/prompt-evolution.ts` | Prompt genetic algorithm (Vision Tier 3) |
+| `src/autonomous/dream/training-extractor.ts` | LoRA training data extraction (Vision Tier 3) |
+| `src/autonomous/dream/lora-trainer.ts` | LoRA adapter lifecycle management (Vision Tier 3) |
 | `src/tasks/execution-log.ts` | Bounded task outcome log (248 lines) |

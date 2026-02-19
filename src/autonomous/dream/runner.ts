@@ -31,6 +31,19 @@ import type { ContextManager } from '../context-manager.js';
 import { SelfModel } from './self-model.js';
 import { CodeArchaeologist } from './archaeology.js';
 import type { FragileFile } from './archaeology.js';
+import type { CrystalStore } from '../crystal-store.js';
+import type { ConstitutionStore } from '../constitution-store.js';
+import type { TraceReplay } from '../trace-replay.js';
+import type { PromptStore } from '../prompt-store.js';
+import type { ShadowStore } from '../shadow-store.js';
+import type { ToolSynthesizer } from '../../tools/synthesizer.js';
+import type { ChallengeGenerator } from './challenge-generator.js';
+import type { ChallengeEvaluator } from './challenge-evaluator.js';
+import type { PromptEvolution } from './prompt-evolution.js';
+import type { TrainingExtractor } from './training-extractor.js';
+import type { LoraTrainer } from './lora-trainer.js';
+import type { Journal } from '../journal.js';
+import type { IssueLog as IssueLogType } from '../issue-log.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -90,6 +103,36 @@ export interface DreamOutcome {
   /** Whether the self-model was rebuilt */
   selfModelRebuilt: boolean;
 
+  /** Number of crystals pruned */
+  crystalsPruned: number;
+
+  /** Number of constitutional rules pruned */
+  rulesPruned: number;
+
+  /** Number of traces cleaned up */
+  tracesCleaned: number;
+
+  /** Number of shadows analyzed (Vision Tier 2) */
+  shadowsAnalyzed: number;
+
+  /** Number of old shadows pruned (Vision Tier 2) */
+  shadowsPruned: number;
+
+  /** Number of unused tools flagged (Vision Tier 2) */
+  unusedToolsFlagged: number;
+
+  /** Number of challenges generated (Vision Tier 3) */
+  challengesGenerated: number;
+
+  /** Number of challenges passed (Vision Tier 3) */
+  challengesPassed: number;
+
+  /** Whether prompt evolution ran (Vision Tier 3) */
+  promptEvolutionRan: boolean;
+
+  /** Number of training examples extracted (Vision Tier 3) */
+  trainingExamplesExtracted: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -142,6 +185,18 @@ export class DreamCycleRunner {
     issueLog: IssueLog,
     reflector: Reflector,
     contextManager?: ContextManager,
+    crystalStore?: CrystalStore,
+    constitutionStore?: ConstitutionStore,
+    traceReplay?: TraceReplay,
+    promptStore?: PromptStore,
+    shadowStore?: ShadowStore,
+    toolSynthesizer?: ToolSynthesizer,
+    challengeGenerator?: ChallengeGenerator,
+    challengeEvaluator?: ChallengeEvaluator,
+    promptEvolution?: PromptEvolution,
+    trainingExtractor?: TrainingExtractor,
+    loraTrainer?: LoraTrainer,
+    journal?: Journal,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -158,6 +213,16 @@ export class DreamCycleRunner {
         goalsReorganized: 0,
         retrospectiveWritten: false,
         selfModelRebuilt: false,
+        crystalsPruned: 0,
+        rulesPruned: 0,
+        tracesCleaned: 0,
+        shadowsAnalyzed: 0,
+        shadowsPruned: 0,
+        unusedToolsFlagged: 0,
+        challengesGenerated: 0,
+        challengesPassed: 0,
+        promptEvolutionRan: false,
+        trainingExamplesExtracted: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -232,7 +297,151 @@ export class DreamCycleRunner {
         outcome.phasesSkipped.push('updateSelfModel');
       }
 
-      // Phase 6: Write retrospective
+      // Phase 6a: Crystal maintenance (Vision Tier 1)
+      if (crystalStore) {
+        try {
+          const prunedCrystals = crystalStore.prune();
+          outcome.crystalsPruned = prunedCrystals.length;
+          if (prunedCrystals.length > 0) {
+            await crystalStore.save();
+          }
+          outcome.phasesCompleted.push('crystalMaintenance');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Crystal maintenance failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('crystalMaintenance');
+        }
+      }
+
+      // Phase 6b: Constitution pruning (Vision Tier 1)
+      if (constitutionStore) {
+        try {
+          const prunedRules = constitutionStore.prune();
+          outcome.rulesPruned = prunedRules.length;
+          if (prunedRules.length > 0) {
+            await constitutionStore.save();
+          }
+          outcome.phasesCompleted.push('constitutionPruning');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Constitution pruning failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('constitutionPruning');
+        }
+      }
+
+      // Phase 6c: Trace retention cleanup (Vision Tier 1)
+      if (traceReplay) {
+        try {
+          outcome.tracesCleaned = await traceReplay.enforceRetentionPolicy();
+          outcome.phasesCompleted.push('traceCleanup');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Trace cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('traceCleanup');
+        }
+      }
+
+      // Phase 7a: Shadow analysis (Vision Tier 2)
+      if (shadowStore) {
+        try {
+          const unassessed = shadowStore.getUnassessedShadows();
+          outcome.shadowsAnalyzed = unassessed.length;
+
+          // Prune old shadows
+          outcome.shadowsPruned = shadowStore.pruneOldShadows();
+
+          // Prune weak patterns
+          shadowStore.pruneWeakPatterns();
+
+          if (outcome.shadowsAnalyzed > 0 || outcome.shadowsPruned > 0) {
+            await shadowStore.save();
+          }
+          outcome.phasesCompleted.push('shadowAnalysis');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Shadow analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('shadowAnalysis');
+        }
+      }
+
+      // Phase 7b: Tool inventory management (Vision Tier 2)
+      if (toolSynthesizer) {
+        try {
+          const unused = toolSynthesizer.getUnusedTools();
+          outcome.unusedToolsFlagged = unused.length;
+
+          // Auto-archive tools unused for the threshold period
+          for (const tool of unused) {
+            toolSynthesizer.archiveTool(tool.name);
+            tracer.log('dream', 'info', `Archived unused tool: ${tool.name}`);
+          }
+
+          if (unused.length > 0) {
+            await toolSynthesizer.save();
+          }
+          outcome.phasesCompleted.push('toolInventory');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Tool inventory failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('toolInventory');
+        }
+      }
+
+      // Phase 8a: Adversarial challenge generation (Vision Tier 3)
+      if (challengeGenerator && challengeEvaluator) {
+        try {
+          const cycleId = `dream-${Date.now()}`;
+          const batch = challengeGenerator.generateBatch(this.selfModel, cycleId);
+          outcome.challengesGenerated = batch.challenges.length;
+
+          // Summarize results (in a real run, challenges would be executed)
+          if (batch.results.length > 0) {
+            const summary = challengeGenerator.summarizeBatch(batch);
+            challengeEvaluator.recordBatch(batch, summary);
+            outcome.challengesPassed = summary.passed;
+            await challengeEvaluator.save();
+          }
+
+          outcome.phasesCompleted.push('adversarialChallenges');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Adversarial challenges failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('adversarialChallenges');
+        }
+      }
+
+      // Phase 8b: Prompt evolution generation (Vision Tier 3)
+      if (promptEvolution) {
+        try {
+          if (promptEvolution.isInitialized()) {
+            // Only evolve if we have fitness data
+            const pop = promptEvolution.getPopulation();
+            const evaluated = pop.filter((v) => v.fitness !== null);
+            if (evaluated.length >= 2) {
+              promptEvolution.evolve();
+              await promptEvolution.save();
+              outcome.promptEvolutionRan = true;
+            }
+          }
+          outcome.phasesCompleted.push('promptEvolution');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Prompt evolution failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('promptEvolution');
+        }
+      }
+
+      // Phase 8c: Training data extraction (Vision Tier 3)
+      if (trainingExtractor && journal) {
+        try {
+          const dataset = await trainingExtractor.extract(journal, issueLog);
+          outcome.trainingExamplesExtracted = dataset.totalExamples;
+
+          if (dataset.totalExamples > 0) {
+            await trainingExtractor.saveDataset(dataset);
+          }
+
+          outcome.phasesCompleted.push('trainingDataExtraction');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Training data extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('trainingDataExtraction');
+        }
+      }
+
+      // Phase 9: Write retrospective
       try {
         outcome.retrospectiveWritten = await this.writeRetrospective(
           reflector,
@@ -480,10 +689,11 @@ export class DreamCycleRunner {
   }
 
   /**
-   * Check if dream cycles are enabled.
+   * Dream cycles are always available — the LLM decides when to run
+   * them as low-priority goals. There is no toggle.
    */
   isEnabled(): boolean {
-    return this.config.enabled;
+    return true;
   }
 }
 

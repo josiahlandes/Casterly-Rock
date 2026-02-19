@@ -23,8 +23,11 @@ import type {
 // ============================================================================
 
 /**
- * Abstract interface for autonomous improvement providers.
- * Implementations handle the actual LLM calls for each phase of the improvement cycle.
+ * @deprecated Legacy provider for the 4-phase pipeline (analyze → hypothesize →
+ * implement → reflect). Superseded by the standard LlmProvider interface used
+ * by the ReAct agent loop. All inference now goes through LlmProvider.
+ * Retained temporarily for type compatibility during migration.
+ * See docs/vision.md — "Providers & Routing" reconciliation notes.
  */
 export interface AutonomousProvider {
   /** Provider name for logging */

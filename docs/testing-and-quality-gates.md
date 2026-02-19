@@ -130,7 +130,7 @@ Tests are organized by module area:
 | **Session** | `session-manager.test.ts`, `session-memory-manager.test.ts`, `session-memory-persistence.test.ts` |
 | **Skills** | `skills-loader.test.ts`, `skills-registry.test.ts` |
 | **Autonomous** | `autonomous-loop.test.ts`, `autonomous-provider.test.ts`, `autonomous-controller.test.ts`, `autonomous-validator.test.ts`, `autonomous-approval.test.ts`, `autonomous-reflector.test.ts`, `autonomous-backlog.test.ts`, `autonomous-context-manager.test.ts` |
-| **Agent** | `agent-loop.test.ts`, `agent-tools.test.ts`, `identity.test.ts`, `journal.test.ts`, `memory-config.test.ts` |
+| **Agent** | `agent-loop.test.ts`, `agent-tools.test.ts`, `identity.test.ts`, `journal.test.ts`, `memory-config.test.ts`, `crystal-store.test.ts`, `constitution-store.test.ts`, `trace-replay.test.ts`, `prompt-store.test.ts`, `shadow-store.test.ts`, `tool-synthesizer.test.ts`, `challenge-generator.test.ts`, `prompt-evolution.test.ts`, `lora-trainer.test.ts`, `roadmap-tools.test.ts`, `embedding-provider.test.ts`, `semaphore.test.ts`, `hybrid-recall.test.ts` |
 | **Events** | `events.test.ts`, `watchers.test.ts`, `trigger-router.test.ts` |
 | **Coding** | `coding-tools.test.ts`, `coding-read.test.ts`, `coding-write.test.ts`, `coding-edit.test.ts`, `coding-grep.test.ts`, `coding-glob.test.ts`, `mode-definitions.test.ts` |
 | **Benchmarks** | `benchmark-suite.test.ts`, `benchmark-scorer.test.ts`, `benchmark-judge.test.ts`, `benchmark-store.test.ts`, `benchmark-report.test.ts`, `benchmark-agent-suite.test.ts`, `benchmark-agent-scorer.test.ts` |

@@ -258,6 +258,87 @@ export type {
   DreamOutcome,
 } from './dream/runner.js';
 
+// ── Vision Tier 2: Self-Improvement ──────────────────────────────────────────
+
+// Prompt store (self-modifying prompts)
+export { PromptStore, createPromptStore } from './prompt-store.js';
+export type {
+  PromptVersion,
+  VersionMetrics,
+  EditResult,
+  PromptStoreConfig,
+} from './prompt-store.js';
+
+// Shadow store (shadow execution)
+export { ShadowStore, createShadowStore } from './shadow-store.js';
+export type {
+  Shadow,
+  JudgmentPattern,
+  ShadowAnalysis,
+  ShadowStoreConfig,
+} from './shadow-store.js';
+
+// Tool synthesizer (re-exported from tools)
+export { ToolSynthesizer, createToolSynthesizer } from '../tools/synthesizer.js';
+export type {
+  SynthesizedTool,
+  ToolImplementation,
+  CreateToolResult,
+  ToolSynthesizerConfig,
+} from '../tools/synthesizer.js';
+
+// ── Vision Tier 3: Advanced Self-Improvement ─────────────────────────────────
+
+// Challenge generator (adversarial dual-model self-testing)
+export { ChallengeGenerator, createChallengeGenerator } from './dream/challenge-generator.js';
+export type {
+  Challenge,
+  ChallengeType,
+  ChallengeResult,
+  ChallengeBatch,
+  ChallengeBatchSummary,
+  ChallengeGeneratorConfig,
+} from './dream/challenge-generator.js';
+
+// Challenge evaluator (sub-skill tracking)
+export { ChallengeEvaluator, createChallengeEvaluator } from './dream/challenge-evaluator.js';
+export type {
+  SubSkillAssessment,
+  EvaluationHistory,
+  EvaluationRecord,
+  ChallengeEvaluatorConfig,
+} from './dream/challenge-evaluator.js';
+
+// Prompt evolution (genetic algorithm)
+export { PromptEvolution, createPromptEvolution } from './dream/prompt-evolution.js';
+export type {
+  PromptVariant,
+  FitnessMetrics,
+  EvolutionMetadata,
+  MutationType,
+  PromptEvolutionConfig,
+} from './dream/prompt-evolution.js';
+
+// Training extractor (LoRA data extraction)
+export { TrainingExtractor, createTrainingExtractor } from './dream/training-extractor.js';
+export type {
+  TrainingExample,
+  PreferencePair,
+  TrainingDataset,
+  TrainingExtractorConfig,
+} from './dream/training-extractor.js';
+
+// LoRA trainer (adapter management)
+export { LoraTrainer, createLoraTrainer } from './dream/lora-trainer.js';
+export type {
+  LoraAdapter,
+  LoraTrainingParams,
+  AdapterRegistry,
+  BenchmarkTask,
+  AdapterEvaluation,
+  LoraTrainerConfig,
+} from './dream/lora-trainer.js';
+
 // ── Phase 7: Communication ───────────────────────────────────────────────────
 
 // Message policy
