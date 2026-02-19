@@ -66,15 +66,15 @@ describe('config/models.yaml', () => {
   });
 
   it('primary model is gpt-oss:120b', () => {
-    expect(models.primary.model).toBe('gpt-oss:120b');
+    expect(models.primary!.model).toBe('gpt-oss:120b');
   });
 
   it('coding model is qwen3-coder-next:latest', () => {
-    expect(models.coding.model).toBe('qwen3-coder-next:latest');
+    expect(models.coding!.model).toBe('qwen3-coder-next:latest');
   });
 
   it('autonomous model references a valid model', () => {
-    const autoModel = models.autonomous.model as string;
+    const autoModel = models.autonomous!.model as string;
     expect(autoModel).toBeTruthy();
     // Should be either the coding model or primary model
     expect(['qwen3-coder-next:latest', 'gpt-oss:120b']).toContain(autoModel);
@@ -129,7 +129,7 @@ describe('config/autonomous.yaml', () => {
   it('autonomous model matches models.yaml autonomous entry', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const autoYaml = loadYaml('config/autonomous.yaml');
-    const modelsAutoModel = ((modelsYaml.models as Record<string, Record<string, unknown>>).autonomous.model);
+    const modelsAutoModel = ((modelsYaml.models as Record<string, Record<string, unknown>>).autonomous!.model);
     const configAutoModel = (autoYaml.autonomous as Record<string, unknown>).model;
     expect(configAutoModel).toBe(modelsAutoModel);
   });
@@ -176,7 +176,7 @@ describe('config/autonomous.yaml', () => {
   it('agent loop reasoning model is consistent with models.yaml primary', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const autoYaml = loadYaml('config/autonomous.yaml');
-    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary.model;
+    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary!.model;
     const agentLoop = autoYaml.agent_loop as Record<string, unknown>;
     expect(agentLoop.reasoning_model).toBe(primaryModel);
   });
@@ -184,7 +184,7 @@ describe('config/autonomous.yaml', () => {
   it('agent loop coding model is consistent with models.yaml coding entry', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const autoYaml = loadYaml('config/autonomous.yaml');
-    const codingModel = (modelsYaml.models as Record<string, Record<string, unknown>>).coding.model;
+    const codingModel = (modelsYaml.models as Record<string, Record<string, unknown>>).coding!.model;
     const agentLoop = autoYaml.agent_loop as Record<string, unknown>;
     expect(agentLoop.coding_model).toBe(codingModel);
   });
@@ -192,7 +192,7 @@ describe('config/autonomous.yaml', () => {
   it('bestofn judge model matches models.yaml primary', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const autoYaml = loadYaml('config/autonomous.yaml');
-    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary.model;
+    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary!.model;
     const hardware = autoYaml.hardware as Record<string, unknown>;
     expect(hardware.bestofn_judge_model).toBe(primaryModel);
   });
@@ -206,7 +206,7 @@ describe('config/default.yaml', () => {
   it('primary model matches models.yaml', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const defaultYaml = loadYaml('config/default.yaml');
-    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary.model;
+    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary!.model;
     const local = defaultYaml.local as Record<string, unknown>;
     expect(local.model).toBe(primaryModel);
   });
@@ -214,7 +214,7 @@ describe('config/default.yaml', () => {
   it('coding model matches models.yaml', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const defaultYaml = loadYaml('config/default.yaml');
-    const codingModel = (modelsYaml.models as Record<string, Record<string, unknown>>).coding.model;
+    const codingModel = (modelsYaml.models as Record<string, Record<string, unknown>>).coding!.model;
     const local = defaultYaml.local as Record<string, unknown>;
     expect(local.codingModel).toBe(codingModel);
   });
@@ -245,7 +245,7 @@ describe('config/default.yaml', () => {
   it('bestofn judge model matches models.yaml primary', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const defaultYaml = loadYaml('config/default.yaml');
-    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary.model;
+    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary!.model;
     const hardware = defaultYaml.hardware as Record<string, unknown>;
     expect(hardware.bestofn_judge_model).toBe(primaryModel);
   });
@@ -291,7 +291,7 @@ describe('cross-config consistency', () => {
     const autoYaml = loadYaml('config/autonomous.yaml');
     const defaultYaml = loadYaml('config/default.yaml');
 
-    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary.model as string;
+    const primaryModel = (modelsYaml.models as Record<string, Record<string, unknown>>).primary!.model as string;
 
     // default.yaml
     expect((defaultYaml.local as Record<string, unknown>).model).toBe(primaryModel);
