@@ -146,7 +146,7 @@ The LLM is instructed to prefer native tools over bash equivalents. Bash goes th
 
 All 13 native executors are registered in `registerNativeExecutors()`:
 
-```
+```text
 Core file:    read_file, write_file, list_files, search_files, read_document
 Coding:       edit_file, glob_files, grep_files, validate_files
 Messaging:    send_message
