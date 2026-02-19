@@ -156,6 +156,364 @@ Dream cycles are configured with intervals, budgets, and lookback windows in `co
 
 Periodic self-reflection where Casterly rebuilds its understanding of its own strengths, weaknesses, and working patterns from journal history. The self-model (`src/autonomous/dream/self-model.ts`) tracks 13 skills (regex, TypeScript, testing, refactoring, security, performance, concurrency, parsing, config, git, bug-fixing, documentation) with success rates and sample sizes. The model is stored in `~/.casterly/self-model.yaml` and rebuilt every 48 hours from the issue log and reflections. This replaces telemetry-based metrics with genuine self-knowledge: "I tend to over-complicate refactors" rather than "successRate: 0.7."
 
+## Self-Improvement Mechanisms
+
+The 120b model's raw capability is fixed. Its weights don't change between sessions. But its *effective* capability -- the combination of weights, prompt, tools, context, accumulated operational knowledge, and learned behavioral rules -- is not fixed. Every mechanism below raises the effective capability ceiling without changing the underlying model. Free tokens and local hardware make all of them feasible.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    EFFECTIVE CAPABILITY                          │
+│                                                                 │
+│   Raw Weights (fixed)                                           │
+│     + Evolved System Prompt (self-modifying prompts)            │
+│     + Synthesized Tools (tool synthesis)                        │
+│     + Skill Adapters (local fine-tuning / LoRA)                 │
+│     + Operational Rules (constitutional self-governance)        │
+│     + Crystallized Knowledge (memory crystallization)           │
+│     + Calibrated Judgment (shadow execution)                    │
+│     + Tested Weaknesses (adversarial self-testing)              │
+│     + Optimized Instructions (prompt genetic algorithm)         │
+│     + Failure Analysis (self-debugging replay)                  │
+│                                                                 │
+│   = A system that gets better every day                         │
+│     without changing a single weight                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Self-Modifying Prompts
+
+The system prompt is the architecture. Modifying the prompt is self-modification.
+
+**Concept:** The LLM maintains its system prompt as a versioned file (`~/.casterly/system-prompt.md`). During dream cycles, it reviews its journal for behavioral patterns -- what worked, what failed, what it keeps having to re-learn -- and proposes edits to its own prompt. Each revision is committed with a journal entry explaining the rationale.
+
+**What the LLM can modify:**
+- Workflow guidance ("after modifying more than 2 files, run tests before reporting success")
+- Default strategies ("skip planning for single-file edits")
+- Tool preferences ("prefer recall_journal over recall for debugging context")
+- Context management heuristics ("load full file contents for refactoring tasks")
+- Self-correction triggers ("if I'm unsure about a regex, test it before using it")
+
+**What the LLM cannot modify:** The safety boundary, path guards, redaction rules, and security invariants. These are the only immutable layer.
+
+**Version control:** Every prompt revision gets a version number, a journal entry with rationale, and a link to the performance data that motivated it. If performance degrades after a change, the LLM can diff against previous versions during the next dream cycle and revert. The self-knowledge system tracks metrics per prompt version.
+
+**What exists today:**
+- The identity prompt (`src/autonomous/identity.ts`) is built dynamically from workspace files and the world model.
+- The journal already captures decision patterns and outcomes.
+- The self-model tracks performance metrics that can motivate prompt changes.
+
+**Implementation plan:**
+1. **Prompt file and loader** -- Create `~/.casterly/system-prompt.md` as the editable prompt source. Modify `buildIdentityPrompt()` to incorporate it alongside the existing workspace files. Version metadata stored in `~/.casterly/prompt-versions.yaml`.
+2. **`edit_prompt` tool** -- Agent tool that lets the LLM propose a prompt edit: old text, new text, rationale. The edit is applied, versioned, and journaled. A `revert_prompt` tool rolls back to a specified version.
+3. **Performance tracking per version** -- Extend the self-model to tag outcomes with the active prompt version. Dream cycle analysis can then compare success rates across versions.
+4. **Dream cycle integration** -- Add a "review prompt effectiveness" phase to dream cycles. The LLM examines recent failures and considers whether a prompt edit would prevent them. This is advisory -- the LLM decides whether to act on it.
+5. **Tests** -- Versioning roundtrip (edit, revert, re-edit). Prompt file loading. Safety boundary immutability (attempts to modify protected patterns are rejected).
+
+**Files touched:** `~/.casterly/system-prompt.md` (new runtime file), `~/.casterly/prompt-versions.yaml` (new), `src/autonomous/identity.ts`, `src/autonomous/agent-tools.ts`, `src/autonomous/dream/runner.ts`.
+
+---
+
+### 2. Tool Synthesis
+
+The LLM writes new tools for itself.
+
+**Concept:** When the LLM notices it repeatedly performs the same multi-step operation, it can synthesize a new tool that wraps the workflow. The tool is written in TypeScript, compiled by the system, and registered with the tool runtime. The next cycle, the tool is available.
+
+**Examples of synthesized tools:**
+- `check_and_summarize_diff` -- reads git diff, classifies change type, updates world model. Previously required 3 separate tool calls.
+- `validate_regex` -- takes a regex pattern and test cases, runs them, returns pass/fail. Previously required the LLM to reason about regex correctness.
+- `quick_test` -- runs only the test files related to recently modified source files. Previously required the LLM to identify relevant tests and invoke the test runner manually.
+
+**Safety:** Synthesized tools run inside the same sandbox as all other tools. They cannot bypass path guards, redaction, or command blockers. The `create_tool` meta-tool runs the implementation through the security scanner before registration. Failed tools are logged to the issue tracker with the compilation or security error.
+
+**What exists today:**
+- The tool registry (`src/tools/index.ts`) and executor (`src/tools/executor.ts`) support dynamic tool schemas.
+- Tool schemas are already defined as structured objects the LLM can read.
+- The security scanner (`scripts/guardrails.mjs`) can review tool implementations for dangerous patterns.
+
+**Implementation plan:**
+1. **`create_tool` meta-tool** -- Takes name, description, parameter schema (JSON Schema), and TypeScript implementation body. The system wraps it in the standard tool interface, compiles with `esbuild` or `tsx`, and runs the security scanner.
+2. **Synthesized tool store** -- Tools saved to `~/.casterly/tools/` as `.ts` files with companion `.schema.json`. Loaded at session start alongside built-in tools.
+3. **Tool lifecycle** -- Synthesized tools have usage counters. Tools unused for 30 days get flagged during dream cycles. The LLM can archive or delete them via a `manage_tools` tool.
+4. **`list_custom_tools` tool** -- Shows all synthesized tools with usage stats, creation date, and last-used date. Helps the LLM manage its own tool inventory.
+5. **Tests** -- Tool creation roundtrip (create, invoke, verify result). Security scanner rejection for dangerous patterns (e.g., `fs.rm`, `process.exit`). Schema validation. Compilation error handling.
+
+**Files touched:** `src/tools/synthesizer.ts` (new), `src/tools/index.ts`, `src/autonomous/agent-tools.ts`, `~/.casterly/tools/` (new runtime directory).
+
+---
+
+### 3. Local Fine-Tuning and LoRA Adapters
+
+The model literally gets better at tasks it encounters, using its own experience as training data.
+
+**Concept:** The journal captures every decision and outcome. That's training data. During dream cycles, the LLM extracts decision-outcome pairs, formats them as training examples, and triggers a LoRA fine-tuning job. The resulting adapter is loaded and evaluated against a benchmark. If it improves performance, it's kept. If not, it's discarded.
+
+**LoRA adapters per skill domain:** Rather than one monolithic fine-tune, maintain separate adapters: `regex.lora`, `refactoring.lora`, `security-review.lora`, `typescript.lora`. The self-model tracks which skills are weak. Dream cycles prioritize generating training data for weak skills. The executive model requests the relevant adapter when it encounters a task in that domain.
+
+**Why this is feasible locally:**
+- LoRA adapters are small (tens of MB each). Dozens can coexist in memory alongside the base model.
+- Ollama supports adapter loading via model variants.
+- Training uses the GPU during idle time (dream cycles run at night).
+- 128GB provides ample memory for training + inference on the same hardware.
+
+**Risk mitigation:** Fine-tuning on your own outputs can cause drift or mode collapse. Every adapter is evaluated against a stable benchmark suite before acceptance. The self-model tracks pre- and post-adapter performance. Adapters that degrade performance are logged and discarded. A `max_adapters` limit prevents unbounded growth.
+
+**What exists today:**
+- The journal (`src/autonomous/journal.ts`) stores structured entries with outcomes.
+- The issue log (`src/autonomous/issue-log.ts`) tracks attempt histories with success/failure.
+- The self-model tracks skill-level performance metrics.
+- Ollama runs locally with full model management capabilities.
+
+**Implementation plan:**
+1. **Training data extractor** -- `src/autonomous/dream/training-extractor.ts`. Scans journal and issue log for decision-outcome pairs. Formats as instruction/completion pairs for supervised fine-tuning, or as preference pairs (chosen/rejected) for DPO. Groups by skill domain using the self-model's skill taxonomy.
+2. **Training orchestrator** -- `src/autonomous/dream/lora-trainer.ts`. Wraps `unsloth` or `llama.cpp`'s fine-tuning capabilities. Configurable: rank, alpha, target modules, learning rate, epochs. Runs during dream cycles with a configurable GPU time budget.
+3. **Adapter registry** -- `~/.casterly/adapters/` directory with metadata in `adapters.yaml`. Each adapter tracks: skill domain, training data size, creation date, benchmark score, active status.
+4. **Benchmark suite** -- `~/.casterly/benchmarks/` containing representative tasks per skill domain with known-good outcomes. The LLM generates benchmark tasks during dream cycles. Adapters are evaluated against these before activation.
+5. **`load_adapter` tool** -- Lets the executive model request a specific adapter for the current task. Wraps Ollama's model variant loading.
+6. **Tests** -- Training data extraction from mock journal entries. Adapter lifecycle (create, evaluate, activate, deactivate, discard). Benchmark scoring. Graceful degradation when no adapters exist.
+
+**Files touched:** `src/autonomous/dream/training-extractor.ts` (new), `src/autonomous/dream/lora-trainer.ts` (new), `src/autonomous/agent-tools.ts`, `config/autonomous.yaml`, `~/.casterly/adapters/` (new runtime directory), `~/.casterly/benchmarks/` (new runtime directory).
+
+---
+
+### 4. Adversarial Dual-Model Self-Testing
+
+Use the two models against each other to discover and strengthen weaknesses.
+
+**Concept:** During dream cycles, the coding model generates challenges in domains where the self-model reports low confidence. The reasoning model attempts the challenges. Results feed back into the self-model with higher fidelity than real-task tracking (which is sparse and noisy). This creates a training signal from nothing -- the model practices its weaknesses proactively rather than waiting for real tasks to expose them.
+
+**Modes of adversarial testing:**
+
+1. **Challenge generation.** "Self-model says I'm at 40% on regex. Coding model generates 20 regex challenges of increasing difficulty. I attempt them. I pass 14/20. The 6 failures are analyzed: all involve nested lookaheads. Updated self-model: regex-general (70%), regex-lookaheads (15%)."
+
+2. **Adversarial code review.** The coding model writes an implementation with intentional subtle bugs. The reasoning model tries to find them. Missed bugs are logged. Over time, the reasoning model learns what kinds of bugs the coding model tends to introduce, and the coding model learns what the reasoning model tends to miss.
+
+3. **Strategy debate.** Both models propose approaches to a problem. Each critiques the other's approach. The exchange is logged as a learning experience. This builds the LLM's understanding of when each model's strengths are relevant.
+
+**What exists today:**
+- `ConcurrentProvider` (`src/providers/concurrent.ts`) can invoke both models on the same prompt.
+- The self-model tracks skill-level performance with success rates and sample sizes.
+- Dream cycles already have an "exploration" phase that can host adversarial testing.
+
+**Implementation plan:**
+1. **Challenge generator** -- `src/autonomous/dream/challenge-generator.ts`. Uses the coding model to generate domain-specific challenges based on self-model weakness data. Challenge types: code completion, bug detection, regex construction, refactoring decisions, security review.
+2. **Challenge evaluator** -- `src/autonomous/dream/challenge-evaluator.ts`. Runs the reasoning model against challenges, evaluates results against known answers, and updates the self-model with granular skill data.
+3. **Adversarial review mode** -- Extension to the challenge generator where the coding model intentionally writes buggy code and the reasoning model reviews it. Scoring: bugs found / bugs planted.
+4. **Self-model granularity** -- Extend `self-model.ts` to support sub-skills (e.g., `regex.lookaheads`, `typescript.generics`, `security.injection`). The adversarial testing reveals which sub-skills are weak.
+5. **Dream cycle integration** -- Add adversarial testing as an optional dream phase, configured with a challenge budget (default: 20 challenges per cycle) and domain selection (prioritize weakest skills).
+6. **Tests** -- Challenge generation produces valid, solvable problems. Evaluation scoring is correct. Self-model updates reflect challenge outcomes. Budget limits are respected.
+
+**Files touched:** `src/autonomous/dream/challenge-generator.ts` (new), `src/autonomous/dream/challenge-evaluator.ts` (new), `src/autonomous/dream/self-model.ts`, `src/autonomous/dream/runner.ts`, `config/autonomous.yaml`.
+
+---
+
+### 5. Shadow Execution
+
+For every non-trivial task, generate an alternative approach but only execute one. Learn from the comparison.
+
+**Concept:** Before executing a plan, the LLM generates a second approach -- the "shadow." Only the primary plan is executed. After the cycle completes, the shadow is stored alongside the outcome. During dream cycles, the LLM compares executed plans with their shadows: when the executed approach succeeded, was the shadow also viable? When it failed, would the shadow have worked?
+
+**Why this matters for a 120b model:** The model's biggest weakness is judgment -- choosing the right approach on the first try. Shadow execution gives it data on the approaches it *didn't* take. Over time, the LLM learns to recognize which types of problems call for which types of approaches. This calibrates judgment without requiring real failures to learn from.
+
+**What exists today:**
+- The agent loop already produces a plan (implicitly, through its ReAct reasoning).
+- The journal captures outcomes.
+- Dream cycle phase 1 (consolidate reflections) already reviews outcomes.
+
+**Implementation plan:**
+1. **`shadow` tool** -- Agent tool that records an alternative approach before execution begins. Takes a structured description: strategy, expected steps, rationale for why the primary approach was chosen over this one.
+2. **Shadow storage** -- Shadows stored as companion entries in the journal, linked to the cycle's primary journal entry by cycle ID. Schema: `{ type: 'shadow', cycleId, strategy, steps, rationale }`.
+3. **Shadow analysis in dream cycles** -- Extend consolidation phase: for failed cycles, load the shadow and evaluate whether it would have succeeded. For successful cycles, note whether the shadow was a viable alternative. Results feed into a `shadow-analysis.yaml` that tracks which judgment patterns are reliable.
+4. **Judgment calibration** -- The shadow analysis produces insights like: "When I chose a single-file approach over a multi-file approach, the single-file approach failed 60% of the time for refactoring tasks." These insights get promoted to the constitution or the system prompt.
+5. **Tests** -- Shadow creation and retrieval. Dream cycle shadow analysis with mock data. Journal schema compatibility. Judgment pattern extraction.
+
+**Files touched:** `src/autonomous/agent-tools.ts`, `src/autonomous/journal.ts` (schema extension), `src/autonomous/dream/runner.ts`, `~/.casterly/shadow-analysis.yaml` (new runtime file).
+
+---
+
+### 6. Prompt Genetic Algorithm
+
+Evolve the system prompt through selection pressure.
+
+**Concept:** Maintain a population of system prompt variants. Each variant is tested against a benchmark suite. The best-performing prompts "reproduce" -- combine elements from the strongest variants. Over generations, the system prompt evolves toward optimal performance for the specific model, hardware, and use patterns.
+
+**Why free tokens make this feasible:** Each variant needs to run through a benchmark, meaning dozens of inference calls per generation. Cloud architectures can't afford this. Locally, it's just idle GPU time during dream cycles. A population of 8 variants running 10 benchmark tasks each is 80 inference calls -- trivial when tokens are free.
+
+**What it optimizes for:** Not task correctness (that's binary) but decision quality: turns-to-completion, unnecessary tool calls, errors caught by verification, context management efficiency, judgment accuracy (measured via shadow execution data).
+
+**The meta-insight:** The LLM is evolving its own instructions. It's not just following a prompt -- it's searching for the *best* prompt for its specific capability level. A 120b model might need very different prompt engineering than a 200b model, and the genetic algorithm discovers the right engineering automatically.
+
+**What exists today:**
+- The self-modifying prompt mechanism (above) provides the substrate -- versioned prompts with performance tracking.
+- The benchmark suite (from LoRA adapters) provides the fitness function.
+- Dream cycles provide the execution window.
+
+**Implementation plan:**
+1. **Prompt population** -- `~/.casterly/prompt-evolution/` directory containing N prompt variants (default: 8). Each variant is a full `system-prompt.md` with metadata: generation number, parent variants, fitness scores.
+2. **Mutation operators** -- `src/autonomous/dream/prompt-evolution.ts`. Operators: reorder rules, adjust thresholds, add/remove guidance, merge rules, split compound rules. The LLM generates mutations via a meta-prompt ("Given this system prompt and these recent failures, suggest 3 small modifications").
+3. **Crossover** -- Combine sections from two high-performing variants. Section boundaries are defined by markdown headers. Crossover preserves the safety-critical sections unchanged.
+4. **Fitness evaluation** -- Run each variant against the benchmark suite. Score on: turns-to-completion, tool call efficiency, error rate, verification effectiveness. Fitness is a weighted sum.
+5. **Selection and reproduction** -- Top 4 variants produce the next generation through crossover and mutation. The current active prompt is always included as an "elite" to prevent regression.
+6. **Generational logging** -- Each generation is logged with variant scores, selected parents, and mutations applied. Enables rollback to any previous generation.
+7. **Tests** -- Mutation produces valid prompts. Crossover preserves safety sections. Fitness evaluation runs against mock benchmark. Selection preserves elite. Population size stays bounded.
+
+**Files touched:** `src/autonomous/dream/prompt-evolution.ts` (new), `src/autonomous/dream/runner.ts`, `config/autonomous.yaml`, `~/.casterly/prompt-evolution/` (new runtime directory).
+
+---
+
+### 7. Memory Crystallization
+
+Promote high-value learned knowledge to permanent, always-available context.
+
+**Concept:** Not all memory is equal. Some things the LLM learns are universally true and always useful. These should be "crystallized" -- promoted from the warm/cool tiers to a permanent `crystals.yaml` that is always loaded into the hot tier. Crystals are cached conclusions the LLM doesn't have to re-derive from the journal.
+
+**Examples of crystals:**
+- "The user prefers functional patterns over class hierarchies."
+- "Tests in this repo use Vitest with the `vi.fn()` mock pattern."
+- "The provider interface is stable -- changes require updating 4+ consumers."
+- "I perform better on refactoring tasks when I read the full file before planning."
+- "The iMessage daemon polls every 2 seconds; don't schedule triggers faster than that."
+
+**Crystal lifecycle:**
+- **Formation:** During dream cycles, the LLM reviews warm and cool memory for entries that have been recalled more than N times, are referenced across multiple successful completions, or represent stable facts about the codebase/user/environment.
+- **Validation:** A candidate crystal is tested against recent experience. Does it still hold? Has anything contradicted it?
+- **Invalidation:** If a crystal contradicts a recent experience, it gets flagged for review. The LLM decides whether to update or dissolve it during the next dream cycle.
+- **Budget:** Crystals share the hot tier token budget. A `max_crystals` limit (default: 30) prevents the hot tier from being consumed by crystallized knowledge. The LLM prioritizes the most impactful crystals.
+
+**What exists today:**
+- The context manager (`src/autonomous/context-manager.ts`) manages the 4-tier hierarchy with the hot tier rebuilt every cycle.
+- The `recall` tool already surfaces high-recall entries.
+- The identity prompt builder (`src/autonomous/identity.ts`) loads workspace files into the hot tier.
+
+**Implementation plan:**
+1. **Crystal store** -- `~/.casterly/crystals.yaml`. Schema: `{ content, source_entries[], formed_date, last_validated, recall_count, confidence }`. Loaded into the hot tier by `buildIdentityPrompt()`.
+2. **`crystallize` tool** -- Agent tool that promotes an insight to a crystal. Takes content, source evidence, and confidence. Checks against `max_crystals` limit.
+3. **`dissolve` tool** -- Removes or updates a crystal. Logs the dissolution reason to the journal.
+4. **Dream cycle integration** -- Add a crystallization phase: review warm/cool tiers for high-recall entries, propose new crystals, validate existing ones against recent experience.
+5. **Hot tier budgeting** -- Add a `crystals_budget` to the context manager config (default: 500 tokens). Crystals are loaded after identity files but before the world model summary.
+6. **Tests** -- Crystal creation and loading. Budget enforcement. Validation against mock recent experience. Dissolution logging. Hot tier integration.
+
+**Files touched:** `~/.casterly/crystals.yaml` (new runtime file), `src/autonomous/identity.ts`, `src/autonomous/agent-tools.ts`, `src/autonomous/dream/runner.ts`, `src/autonomous/context-manager.ts`, `config/autonomous.yaml`.
+
+---
+
+### 8. Constitutional Self-Governance
+
+The LLM writes its own operational rules, versioned and decayable.
+
+**Concept:** A `constitution.yaml` file stores rules the LLM has authored about its own behavior. Not safety rules (those are immutable in the safety boundary), but tactical operational rules discovered through experience. Rules are versioned, timestamped, linked to the journal entries that motivated them, and have confidence scores that decay or strengthen based on outcomes.
+
+**Example rules:**
+```yaml
+- rule: "For tasks touching 3+ files, generate a plan before starting."
+  added: 2026-02-15
+  motivation: "journal#2847: skipped planning on a 5-file refactor, introduced a circular dependency"
+  confidence: 0.85
+  invocations: 12
+  successes: 10
+
+- rule: "When the coding model returns TypeScript with `any` type, flag for review."
+  added: 2026-02-18
+  motivation: "journal#3012: accepted code with `any` that later caused a runtime error"
+  confidence: 0.92
+  invocations: 8
+  successes: 8
+
+- rule: "Prefer recall_journal over recall for debugging-related context."
+  added: 2026-02-19
+  motivation: "journal#3098: recall returned stale memory notes, journal had the actual fix"
+  confidence: 0.7
+  invocations: 5
+  successes: 3
+```
+
+**Rule lifecycle:**
+- **Creation:** The LLM observes a pattern (usually a failure) and creates a rule via the `create_rule` tool, with a journal reference.
+- **Strengthening:** When following a rule leads to success, confidence increases.
+- **Decay:** When the LLM violates a rule and succeeds anyway, confidence decreases. Rules below a threshold (default: 0.3) are pruned during dream cycles.
+- **Evolution:** Rules can be refined. "Plan for 3+ file changes" might evolve to "plan for 3+ file changes in different modules, but not for 3 files in the same module."
+
+**Difference from self-modifying prompts:** The prompt describes *how to think* (strategy, workflow, heuristics). The constitution describes *what to do and not do* (concrete rules with evidence). The prompt is strategic and philosophical. The constitution is tactical and empirical.
+
+**What exists today:**
+- The journal captures the failure patterns that motivate rules.
+- The self-model tracks skill-level performance.
+- Dream cycles already consolidate reflections.
+
+**Implementation plan:**
+1. **Constitution store** -- `~/.casterly/constitution.yaml`. Schema per rule: `{ rule, added, motivation, confidence, invocations, successes }`. Loaded into the hot tier after crystals.
+2. **`create_rule` tool** -- Agent tool to add a new rule. Requires: rule text, journal reference, initial confidence.
+3. **`update_rule` tool** -- Modify rule text or adjust confidence manually. Logs the change.
+4. **Rule evaluation** -- After each cycle, the LLM (or dream cycle) checks which rules were relevant, whether they were followed, and whether the outcome was positive. Updates confidence scores accordingly.
+5. **Dream cycle pruning** -- Remove rules below confidence threshold. Log pruned rules to the journal with the reason.
+6. **Hot tier integration** -- Constitution loaded into the identity prompt. Budget: shared with crystals under a `self_knowledge_budget` allocation.
+7. **Tests** -- Rule creation, confidence update, pruning. Constitution loading into identity prompt. Budget enforcement. Rule evolution (modification preserves history).
+
+**Files touched:** `~/.casterly/constitution.yaml` (new runtime file), `src/autonomous/identity.ts`, `src/autonomous/agent-tools.ts`, `src/autonomous/dream/runner.ts`, `config/autonomous.yaml`.
+
+---
+
+### 9. Self-Debugging Replay
+
+Re-examine past execution traces step-by-step to identify failure patterns.
+
+**Concept:** Every agent cycle's tool calls, results, and reasoning are logged via the debug tracer. The `replay` tool lets the LLM load a past cycle and walk through it step-by-step, seeing exactly what it did, what each tool returned, and where things went wrong. This is qualitatively different from reading the journal -- the journal captures high-level reflections, while replay captures the actual execution trace.
+
+**Use cases:**
+- **Post-mortem analysis.** "Replay the last 5 failed cycles. For each, identify the decision point where the failure originated. Write a constitutional rule to prevent that class of failure."
+- **Strategy comparison.** "Replay my last two refactoring tasks. Compare the tool call sequences. Identify which patterns led to success."
+- **Context debugging.** "Replay cycle #3847. What was in my context at the point where I made the wrong tool call? Did I have the information I needed?"
+
+**What exists today:**
+- The debug tracer (`src/debug/`) logs detailed execution traces.
+- The journal captures cycle-level outcomes.
+- Agent tools already provide structured access to state stores.
+
+**Implementation plan:**
+1. **Trace indexing** -- Ensure debug traces are indexed by cycle ID and searchable by date range, outcome (success/failure), and tool types used. Store index in `~/.casterly/traces/index.yaml`.
+2. **`replay` tool** -- Agent tool that loads a past cycle's trace and presents it as a structured sequence: `[{ step, tool_called, parameters, result, reasoning, timestamp }]`. Supports filtering by step range or tool type.
+3. **`compare_traces` tool** -- Takes two cycle IDs and produces a side-by-side diff of the execution strategies. Highlights divergence points.
+4. **Dream cycle integration** -- Add a "failure replay" phase: automatically replay the N most recent failed cycles, identify common failure patterns, and propose constitutional rules or prompt edits.
+5. **Trace retention policy** -- Successful traces retained for 7 days (configurable). Failed traces retained for 30 days. Traces referenced by constitutional rules or crystals retained indefinitely.
+6. **Tests** -- Trace indexing and retrieval. Replay formatting. Comparison diff generation. Retention policy enforcement.
+
+**Files touched:** `src/autonomous/agent-tools.ts`, `src/debug/` (trace indexing), `src/autonomous/dream/runner.ts`, `~/.casterly/traces/index.yaml` (new runtime file), `config/autonomous.yaml`.
+
+---
+
+### Self-Improvement Summary
+
+| Mechanism | What Gets Modified | Feedback Loop | Dream Cycle Phase |
+|-----------|-------------------|---------------|-------------------|
+| Self-modifying prompts | How the LLM thinks | Journal → analysis → prompt edit → next session | Review prompt effectiveness |
+| Tool synthesis | What the LLM can do | Repeated pattern → new tool → faster execution | Tool inventory review |
+| LoRA fine-tuning | The LLM's weights | Journal → training data → adapter → evaluation | Training data extraction |
+| Adversarial self-testing | The LLM's self-awareness | Challenge → attempt → granular skill update | Adversarial challenge phase |
+| Shadow execution | The LLM's judgment | Shadow comparison → insight → better choices | Shadow analysis |
+| Prompt genetic algorithm | The LLM's instructions | Population → benchmark → selection → evolution | Prompt evolution generation |
+| Memory crystallization | What the LLM knows | High-recall entries → permanent context | Crystallization review |
+| Constitutional self-governance | What the LLM rules | Outcome tracking → rule creation/decay | Rule pruning and creation |
+| Self-debugging replay | The LLM's self-understanding | Trace replay → failure analysis → targeted fix | Failure replay |
+
+### Implementation Priority
+
+These mechanisms are ordered by risk and dependency. Earlier mechanisms create the substrate that later mechanisms build on.
+
+**Tier 1 -- Low risk, high immediate value, minimal dependencies:**
+1. Memory crystallization -- directly addresses context quality, the most impactful lever for a local model
+2. Constitutional self-governance -- lightweight, additive, instantly useful
+3. Self-debugging replay -- read-only analysis, no mutation risk
+
+**Tier 2 -- Moderate complexity, requires Tier 1 insights to be most effective:**
+4. Self-modifying prompts -- builds on constitutional rules and crystals as evidence for what to change
+5. Shadow execution -- lightweight to implement, but most valuable once the constitution and crystals provide a framework for interpreting shadows
+6. Tool synthesis -- requires stable tool runtime and good self-awareness of repetitive patterns
+
+**Tier 3 -- High complexity, high ceiling, requires Tier 1-2 as training signal:**
+7. Adversarial dual-model self-testing -- requires granular self-model (from Tier 1-2) to know what to test
+8. Prompt genetic algorithm -- requires benchmarks (from adversarial testing) as the fitness function
+9. LoRA fine-tuning -- highest ceiling but most complex; needs substantial journal data and the benchmark infrastructure from earlier tiers
+
 ## Roadmap: The Transition to LLM-Driven Architecture
 
 The roadmap is organized around a single goal: moving from "system that uses an LLM" to "LLM that uses a system." Each phase loosens the hardcoded pipeline and gives the LLM more control, while the supporting work (semantic memory, parallelism) provides the infrastructure the LLM needs to make good decisions.
