@@ -150,6 +150,7 @@ Tool output is capped at 10,000 characters. See [docs/skills-and-tools.md](skill
 | Reasoning | `think` (no-op for explicit reasoning), `delegate` |
 | Memory | `recall`, `archive`, `recall_journal`, `consolidate`, `save_note` |
 | Self-knowledge | `crystallize`, `dissolve`, `list_crystals`, `create_rule`, `update_rule`, `list_rules`, `replay`, `compare_traces`, `search_traces` |
+| Self-improvement | `edit_prompt`, `revert_prompt`, `get_prompt`, `shadow`, `list_shadows`, `create_tool`, `manage_tools`, `list_custom_tools` |
 | World | `update_world_model`, `adversarial_test` |
 | Communication | `message_user` (placeholder) |
 
@@ -265,7 +266,7 @@ Overrideable by passing `Partial<AgentLoopConfig>` to the constructor.
 |------|---------|
 | `src/autonomous/agent-loop.ts` | `AgentLoop` class — the ReAct cycle engine (779 lines) |
 | `src/autonomous/loop.ts` | `AutonomousLoop` — orchestrates cycles, manages state persistence, handles events |
-| `src/autonomous/agent-tools.ts` | `AgentToolkit` — 34 tool schemas and executors |
+| `src/autonomous/agent-tools.ts` | `AgentToolkit` — 42 tool schemas and executors |
 | `src/autonomous/identity.ts` | Identity prompt builder |
 | `src/autonomous/context-manager.ts` | 4-tier memory hierarchy |
 | `src/autonomous/journal.ts` | Append-only JSONL journal |

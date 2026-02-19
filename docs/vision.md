@@ -522,10 +522,23 @@ These mechanisms are ordered by risk and dependency. Earlier mechanisms create t
 > - Agent toolkit (`agent-tools.ts`) exposes 9 new tools (34 total, up from 25)
 > - Configuration in `config/autonomous.yaml` under `self_knowledge` section
 
-**Tier 2 -- Moderate complexity, requires Tier 1 insights to be most effective:**
+**Tier 2 -- Moderate complexity, requires Tier 1 insights to be most effective: IMPLEMENTED**
 4. Self-modifying prompts -- builds on constitutional rules and crystals as evidence for what to change
 5. Shadow execution -- lightweight to implement, but most valuable once the constitution and crystals provide a framework for interpreting shadows
 6. Tool synthesis -- requires stable tool runtime and good self-awareness of repetitive patterns
+
+> **Implementation Status (Tier 2):** All three Tier 2 mechanisms are implemented as of 2026-02-19.
+>
+> | Mechanism | Source | Tools | Tests |
+> |-----------|--------|-------|-------|
+> | Self-Modifying Prompts | `src/autonomous/prompt-store.ts` | `edit_prompt`, `revert_prompt`, `get_prompt` | `tests/prompt-store.test.ts` (14 tests) |
+> | Shadow Execution | `src/autonomous/shadow-store.ts` | `shadow`, `list_shadows` | `tests/shadow-store.test.ts` (15 tests) |
+> | Tool Synthesis | `src/tools/synthesizer.ts` | `create_tool`, `manage_tools`, `list_custom_tools` | `tests/tool-synthesizer.test.ts` (23 tests) |
+>
+> Integration points:
+> - Dream cycle runner (`dream/runner.ts`) adds Phase 7a (shadow analysis/pruning) and Phase 7b (tool inventory/unused tool archival)
+> - Agent toolkit (`agent-tools.ts`) exposes 8 new tools (42 total, up from 34)
+> - Configuration in `config/autonomous.yaml` under `self_improvement` section
 
 **Tier 3 -- High complexity, high ceiling, requires Tier 1-2 as training signal:**
 7. Adversarial dual-model self-testing -- requires granular self-model (from Tier 1-2) to know what to test

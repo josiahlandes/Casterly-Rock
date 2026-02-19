@@ -321,6 +321,65 @@ self_knowledge:
     max_traces: 500
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SELF-IMPROVEMENT TIER 2 (Vision: Prompts, Shadows, Tool Synthesis)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+self_improvement:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SELF-MODIFYING PROMPTS
+  # ─────────────────────────────────────────────────────────────────────────────
+  prompts:
+    # Path to the editable system prompt
+    system_prompt_path: ~/.casterly/system-prompt.md
+
+    # Path to version history
+    versions_path: ~/.casterly/prompt-versions.json
+
+    # Maximum versions to retain
+    max_versions: 20
+
+    # Protected patterns that can never be removed from the prompt
+    protected_patterns:
+      - "Safety Boundary"
+      - "Path Guards"
+      - "Redaction Rules"
+      - "Security Invariants"
+      - "NEVER"
+      - "non-negotiable"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SHADOW EXECUTION
+  # ─────────────────────────────────────────────────────────────────────────────
+  shadows:
+    # Path to shadow analysis store
+    analysis_path: ~/.casterly/shadow-analysis.json
+
+    # Maximum shadows to retain
+    max_shadows: 200
+
+    # Minimum scenarios needed to form a judgment pattern
+    min_scenarios_for_pattern: 5
+
+    # Days to retain assessed shadows
+    retention_days: 90
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # TOOL SYNTHESIS
+  # ─────────────────────────────────────────────────────────────────────────────
+  tools:
+    # Directory for synthesized tool definitions
+    tools_directory: ~/.casterly/tools
+
+    # Maximum number of custom tools
+    max_tools: 20
+
+    # Maximum template body length in characters
+    max_template_length: 2000
+
+    # Days before unused tools are flagged for archival
+    unused_days_threshold: 30
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # COMMUNICATION (Phase 7: proactive user messaging)
 # ═══════════════════════════════════════════════════════════════════════════════
 

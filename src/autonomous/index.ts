@@ -258,6 +258,35 @@ export type {
   DreamOutcome,
 } from './dream/runner.js';
 
+// ── Vision Tier 2: Self-Improvement ──────────────────────────────────────────
+
+// Prompt store (self-modifying prompts)
+export { PromptStore, createPromptStore } from './prompt-store.js';
+export type {
+  PromptVersion,
+  VersionMetrics,
+  EditResult,
+  PromptStoreConfig,
+} from './prompt-store.js';
+
+// Shadow store (shadow execution)
+export { ShadowStore, createShadowStore } from './shadow-store.js';
+export type {
+  Shadow,
+  JudgmentPattern,
+  ShadowAnalysis,
+  ShadowStoreConfig,
+} from './shadow-store.js';
+
+// Tool synthesizer (re-exported from tools)
+export { ToolSynthesizer, createToolSynthesizer } from '../tools/synthesizer.js';
+export type {
+  SynthesizedTool,
+  ToolImplementation,
+  CreateToolResult,
+  ToolSynthesizerConfig,
+} from '../tools/synthesizer.js';
+
 // ── Phase 7: Communication ───────────────────────────────────────────────────
 
 // Message policy

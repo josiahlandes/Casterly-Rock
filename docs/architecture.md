@@ -56,7 +56,7 @@ Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
 | **Security & Privacy** | Sensitive data detection, redaction, safe logging, command gates | [security-and-privacy.md](security-and-privacy.md) |
 | **Configuration** | YAML + Zod validation, model routing, data layout | [configuration-and-environment.md](configuration-and-environment.md) |
 | **Testing & Quality Gates** | 5-gate pipeline, trace collection, test cases, benchmarking | [testing-and-quality-gates.md](testing-and-quality-gates.md) |
-| **Autonomous Agent** | ReAct loop, agent tools (34), budget controls, identity, dream cycles, self-knowledge (crystals, constitution, traces) | [autonomous-agent.md](autonomous-agent.md) |
+| **Autonomous Agent** | ReAct loop, agent tools (42), budget controls, identity, dream cycles, self-knowledge (crystals, constitution, traces), self-improvement (prompts, shadows, tools) | [autonomous-agent.md](autonomous-agent.md) |
 | **API Reference** | Provider interface, tool schemas, key function signatures | [api-reference.md](api-reference.md) |
 | **Error Codes** | Structured error system (E1xx–E9xx), auto-detection | [error-codes.md](error-codes.md) |
 | **Installation** | Prerequisites, setup, configuration | [install.md](install.md) |
@@ -87,6 +87,7 @@ src/
 ├── autonomous/               # Agent loop, tools, journal, world model,
 │                             # goal stack, issue log, context manager,
 │                             # events, triggers, identity, delegation,
-│                             # crystal store, constitution, trace replay
+│                             # crystal store, constitution, trace replay,
+│                             # prompt store, shadow store
 └── testing/                  # Trace collector, test cases, test runner
 ```

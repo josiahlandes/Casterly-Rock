@@ -93,9 +93,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 34 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(34);
-    expect(toolkit.toolNames).toHaveLength(34);
+  it('exposes all 42 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(42);
+    expect(toolkit.toolNames).toHaveLength(42);
   });
 
   it('includes all expected tool names', () => {
@@ -114,6 +114,10 @@ describe('AgentToolkit — Schema Validation', () => {
       'crystallize', 'dissolve', 'list_crystals',
       'create_rule', 'update_rule', 'list_rules',
       'replay', 'compare_traces', 'search_traces',
+      // Vision Tier 2
+      'edit_prompt', 'revert_prompt', 'get_prompt',
+      'shadow', 'list_shadows',
+      'create_tool', 'manage_tools', 'list_custom_tools',
     ];
     for (const name of expected) {
       expect(names).toContain(name);

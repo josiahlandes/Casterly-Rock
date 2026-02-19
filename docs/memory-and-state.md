@@ -1,8 +1,8 @@
 # Memory & State
 
-> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/tasks/execution-log.ts`
+> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/autonomous/prompt-store.ts`, `src/autonomous/shadow-store.ts`, `src/tools/synthesizer.ts`, `src/tasks/execution-log.ts`
 
-Casterly maintains persistent state across sessions through eight subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
+Casterly maintains persistent state across sessions through eleven subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
 
 ```
 ~/.casterly/
@@ -15,6 +15,11 @@ Casterly maintains persistent state across sessions through eight subsystems, ea
 ├── traces/                    ← Execution trace archive (Vision Tier 1)
 │   ├── index.json             ← Lightweight trace index
 │   └── <cycleId>.json         ← Individual trace files
+├── system-prompt.md           ← Editable system prompt (Vision Tier 2)
+├── prompt-versions.json       ← Prompt version history (Vision Tier 2)
+├── shadow-analysis.json       ← Shadow execution data + judgment patterns (Vision Tier 2)
+├── tools/                     ← Synthesized tool store (Vision Tier 2)
+│   └── tools.json             ← Tool definitions and metadata
 └── execution-log/
     └── log.jsonl              ← Task execution outcomes (operational memory)
 ```
@@ -369,6 +374,159 @@ Max 500 traces. Retention enforced during dream cycles and when the limit is exc
 - **Format**: Human-readable narrative format for both traces and comparisons
 - **Auto-rebuild**: Index is rebuilt from trace files on first load if missing
 
+## Prompt Store (Vision Tier 2: Self-Modifying Prompts)
+
+> **Source**: `src/autonomous/prompt-store.ts`
+> **Storage**: `~/.casterly/system-prompt.md` (prompt content), `~/.casterly/prompt-versions.json` (version history)
+
+Versioned, editable system prompt that the LLM can modify during dream cycles to improve its own workflow guidance. Protected patterns (Safety Boundary, Path Guards, Redaction Rules, Security Invariants) cannot be removed.
+
+### Prompt Version Structure
+
+```typescript
+interface PromptVersion {
+  version: number;
+  timestamp: string;        // ISO
+  content: string;          // Full prompt text
+  rationale: string;        // Why this edit was made
+  cycleId?: string;         // Which cycle made the edit
+  metrics?: VersionMetrics; // Performance data for this version
+}
+```
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Edit** | Agent calls `edit_prompt` (search/replace with rationale) | New version created; protected patterns validated |
+| **Revert** | Agent calls `revert_prompt` with target version | Reverts to specified version, creates new version entry |
+| **Metrics** | Agent calls after cycles | Records success rate, turns, errors per version |
+| **Pruning** | Version count exceeds `maxVersions` | Oldest non-initial versions pruned |
+
+### Key Behaviors
+
+- **Protected patterns**: Edits that remove Safety Boundary, Path Guards, Redaction Rules, or Security Invariants are rejected
+- **Version control**: Every edit creates a new version with rationale and optional cycle ID
+- **Diffing**: `diffVersions()` compares any two versions for review during dream cycles
+- **Budget**: Max 20 versions (configurable). Pruning preserves the initial version
+- **Hot tier**: `buildPromptSection()` produces text for inclusion in the identity prompt
+
+## Shadow Store (Vision Tier 2: Shadow Execution)
+
+> **Source**: `src/autonomous/shadow-store.ts`
+> **Storage**: `~/.casterly/shadow-analysis.json` (shadows + judgment patterns)
+
+Records alternative approaches ("shadows") before executing the primary plan. During dream cycles, shadows are compared with primary outcomes to calibrate judgment over time.
+
+### Shadow Structure
+
+```typescript
+interface Shadow {
+  id: string;                    // "shadow-<timestamp>-<random>"
+  cycleId: string;               // Which cycle this shadow belongs to
+  strategy: string;              // The alternative approach
+  expectedSteps: string[];       // What steps the shadow would take
+  rationale: string;             // Why primary was chosen over this
+  primaryOutcome?: 'success' | 'failure' | 'partial';
+  shadowAssessment?: 'likely_better' | 'similar' | 'worse' | 'unknown';
+  tags?: string[];
+  createdAt: string;
+}
+```
+
+### Judgment Pattern Structure
+
+```typescript
+interface JudgmentPattern {
+  id: string;                    // "pattern-<timestamp>-<random>"
+  pattern: string;               // The insight about judgment
+  supportCount: number;          // Observations supporting this pattern
+  contradictCount: number;       // Observations contradicting it
+  confidence: number;            // supportCount / (supportCount + contradictCount)
+  firstSeen: string;
+  lastUpdated: string;
+  exampleCycleIds: string[];
+}
+```
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Recording** | Agent calls `shadow` before executing primary plan | Shadow stored with strategy and rationale |
+| **Outcome** | `recordPrimaryOutcome()` after cycle completes | Links outcome to all shadows for that cycle |
+| **Assessment** | Dream cycle analysis | Shadows assessed as `likely_better`, `similar`, `worse`, or `unknown` |
+| **Pattern extraction** | Dream cycle analysis | Recurring judgment insights promoted to patterns |
+| **Pruning** | Dream cycle or retention limit | Old shadows pruned by retention days; weak patterns pruned by confidence |
+
+### Key Behaviors
+
+- **Capacity**: Max 200 shadows (configurable). Oldest pruned when exceeded.
+- **Missed opportunities**: Shadows assessed as `likely_better` where primary failed — tracked for learning
+- **Established patterns**: Patterns with enough supporting observations (default: 5) for reliable guidance
+- **Dream integration**: Phase 7a prunes old shadows and weak patterns during dream cycles
+- **Privacy**: Only strategy descriptions, never raw user content
+
+## Tool Synthesizer (Vision Tier 2: Tool Synthesis)
+
+> **Source**: `src/tools/synthesizer.ts`
+> **Storage**: `~/.casterly/tools/` (tool definitions and metadata)
+
+LLM-authored custom tools with bash template implementations. The LLM synthesizes new tools when it notices repetitive multi-step operations, wrapping them into single-call tools.
+
+### Synthesized Tool Structure
+
+```typescript
+interface SynthesizedTool {
+  name: string;                  // Lowercase alphanumeric + underscores
+  description: string;
+  inputSchema: object;           // JSON Schema for parameters
+  implementation: {
+    type: 'bash_template';
+    template: string;            // Bash with {{param}} substitution
+    cwd?: string;
+  };
+  createdAt: string;
+  authorNotes: string;           // Why the LLM created this tool
+  usageCount: number;
+  lastUsed: string;
+  status: 'active' | 'archived';
+  version: number;
+}
+```
+
+### Security
+
+Templates are scanned against 13 dangerous patterns before creation:
+
+| Pattern | Blocks |
+|---------|--------|
+| `rm -rf` | Recursive deletion |
+| `process.exit` | Process termination |
+| `eval()` / `Function()` | Dynamic code execution |
+| `credentials` / `secrets` / `.env` | Sensitive file access |
+| `ssh` / `scp` | Remote operations |
+| Write to `/etc/` or `/usr/` | System modification |
+| `curl.*\|.*sh` | Pipe-to-shell attacks |
+
+### Lifecycle
+
+| Phase | Trigger | Effect |
+|-------|---------|--------|
+| **Creation** | Agent calls `create_tool` with name, schema, template | Security scan → name validation → capacity check → creation |
+| **Usage** | Tool invoked during cycle | Usage count incremented, lastUsed updated |
+| **Archival** | Agent calls `manage_tools` or dream cycle flags unused | Status set to `archived`, excluded from active tools |
+| **Reactivation** | Agent calls `manage_tools` to reactivate | Status set back to `active` |
+| **Deletion** | Agent calls `manage_tools` to delete | Permanently removed from store |
+
+### Key Behaviors
+
+- **Name validation**: Lowercase alphanumeric + underscores, max 40 chars, not in reserved names (all 42 built-in tool names)
+- **Capacity**: Max 20 tools (configurable). Rejected when full.
+- **Template rendering**: `{{param}}` substitution with shell-safe single quote escaping
+- **Unused detection**: Tools unused for 30 days (configurable) flagged during dream cycles
+- **Dream integration**: Phase 7b auto-archives unused tools past threshold
+
 ## Context Manager (Tiered Memory)
 
 > **Source**: `src/autonomous/context-manager.ts`
@@ -423,6 +581,9 @@ During cycle
     ├── Crystal store: crystallize(), dissolve(), validate(), weaken()
     ├── Constitution: createRule(), recordSuccess/Failure/ViolationSuccess()
     ├── Trace replay: record() (at cycle end)
+    ├── Prompt store: editPrompt(), revertPrompt(), recordMetrics() (Vision Tier 2)
+    ├── Shadow store: recordShadow(), recordPrimaryOutcome(), assessShadow() (Vision Tier 2)
+    ├── Tool synthesizer: createTool(), recordUsage(), archiveTool() (Vision Tier 2)
     └── Context manager: addToWarmTier() (auto from tool results)
     │
     ▼
@@ -433,7 +594,10 @@ Cycle end
     ├── goalStack.save()         ← Only if dirty
     ├── issueLog.save()          ← Only if dirty
     ├── crystalStore.save()      ← Only if dirty (Vision Tier 1)
-    └── constitutionStore.save() ← Only if dirty (Vision Tier 1)
+    ├── constitutionStore.save() ← Only if dirty (Vision Tier 1)
+    ├── promptStore.save()       ← Only if dirty (Vision Tier 2)
+    ├── shadowStore.save()       ← Only if dirty (Vision Tier 2)
+    └── toolSynthesizer.save()   ← Only if dirty (Vision Tier 2)
 ```
 
 ## Privacy Guarantees
@@ -448,6 +612,9 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 - Crystals: Only derived insights, never raw user content
 - Constitution: Only empirical rules from journal references, never user data
 - Traces: Execution sequences and tool parameters only, no raw sensitive content
+- Prompt store: Only workflow guidance and strategy text, never user data
+- Shadow store: Only strategy descriptions and rationale, never raw user content
+- Tool synthesizer: Only tool definitions and bash templates, never sensitive data
 
 ## Key Files
 
@@ -461,4 +628,7 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 | `src/autonomous/crystal-store.ts` | Permanent insights with confidence tracking (Vision Tier 1) |
 | `src/autonomous/constitution-store.ts` | Self-authored rules with evidence (Vision Tier 1) |
 | `src/autonomous/trace-replay.ts` | Execution trace recording and replay (Vision Tier 1) |
+| `src/autonomous/prompt-store.ts` | Versioned self-modifying prompts (Vision Tier 2) |
+| `src/autonomous/shadow-store.ts` | Shadow execution and judgment patterns (Vision Tier 2) |
+| `src/tools/synthesizer.ts` | LLM-authored tool synthesis (Vision Tier 2) |
 | `src/tasks/execution-log.ts` | Bounded task outcome log (248 lines) |

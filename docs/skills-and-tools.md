@@ -157,9 +157,9 @@ Bash execution is registered separately.
 
 ---
 
-## Agent Tools (34)
+## Agent Tools (42)
 
-In addition to the 13 native tools above, the autonomous agent loop has 21 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
+In addition to the 13 native tools above, the autonomous agent loop has 29 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
 
 See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categories:
 
@@ -177,10 +177,15 @@ See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categor
 | Self-knowledge (crystals) | `crystallize`, `dissolve`, `list_crystals` |
 | Self-knowledge (constitution) | `create_rule`, `update_rule`, `list_rules` |
 | Self-knowledge (traces) | `replay`, `compare_traces`, `search_traces` |
+| Self-improvement (prompts) | `edit_prompt`, `revert_prompt`, `get_prompt` |
+| Self-improvement (shadows) | `shadow`, `list_shadows` |
+| Self-improvement (tools) | `create_tool`, `manage_tools`, `list_custom_tools` |
 | Delegation | `delegate` |
 | Communication | `message_user` |
 
 The self-knowledge tools (9 total) are part of Vision Tier 1. They enable the agent to learn from experience (crystals), author its own operational rules (constitution), and debug past failures (trace replay).
+
+The self-improvement tools (8 total) are part of Vision Tier 2. They enable the agent to modify its own prompts, record and analyze alternative approaches (shadows), and synthesize new tools.
 
 ---
 

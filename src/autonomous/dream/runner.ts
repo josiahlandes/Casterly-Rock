@@ -34,6 +34,9 @@ import type { FragileFile } from './archaeology.js';
 import type { CrystalStore } from '../crystal-store.js';
 import type { ConstitutionStore } from '../constitution-store.js';
 import type { TraceReplay } from '../trace-replay.js';
+import type { PromptStore } from '../prompt-store.js';
+import type { ShadowStore } from '../shadow-store.js';
+import type { ToolSynthesizer } from '../../tools/synthesizer.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -102,6 +105,15 @@ export interface DreamOutcome {
   /** Number of traces cleaned up */
   tracesCleaned: number;
 
+  /** Number of shadows analyzed (Vision Tier 2) */
+  shadowsAnalyzed: number;
+
+  /** Number of old shadows pruned (Vision Tier 2) */
+  shadowsPruned: number;
+
+  /** Number of unused tools flagged (Vision Tier 2) */
+  unusedToolsFlagged: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -157,6 +169,9 @@ export class DreamCycleRunner {
     crystalStore?: CrystalStore,
     constitutionStore?: ConstitutionStore,
     traceReplay?: TraceReplay,
+    promptStore?: PromptStore,
+    shadowStore?: ShadowStore,
+    toolSynthesizer?: ToolSynthesizer,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -176,6 +191,9 @@ export class DreamCycleRunner {
         crystalsPruned: 0,
         rulesPruned: 0,
         tracesCleaned: 0,
+        shadowsAnalyzed: 0,
+        shadowsPruned: 0,
+        unusedToolsFlagged: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -291,7 +309,51 @@ export class DreamCycleRunner {
         }
       }
 
-      // Phase 7: Write retrospective
+      // Phase 7a: Shadow analysis (Vision Tier 2)
+      if (shadowStore) {
+        try {
+          const unassessed = shadowStore.getUnassessedShadows();
+          outcome.shadowsAnalyzed = unassessed.length;
+
+          // Prune old shadows
+          outcome.shadowsPruned = shadowStore.pruneOldShadows();
+
+          // Prune weak patterns
+          shadowStore.pruneWeakPatterns();
+
+          if (outcome.shadowsAnalyzed > 0 || outcome.shadowsPruned > 0) {
+            await shadowStore.save();
+          }
+          outcome.phasesCompleted.push('shadowAnalysis');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Shadow analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('shadowAnalysis');
+        }
+      }
+
+      // Phase 7b: Tool inventory management (Vision Tier 2)
+      if (toolSynthesizer) {
+        try {
+          const unused = toolSynthesizer.getUnusedTools();
+          outcome.unusedToolsFlagged = unused.length;
+
+          // Auto-archive tools unused for the threshold period
+          for (const tool of unused) {
+            toolSynthesizer.archiveTool(tool.name);
+            tracer.log('dream', 'info', `Archived unused tool: ${tool.name}`);
+          }
+
+          if (unused.length > 0) {
+            await toolSynthesizer.save();
+          }
+          outcome.phasesCompleted.push('toolInventory');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Tool inventory failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('toolInventory');
+        }
+      }
+
+      // Phase 8: Write retrospective
       try {
         outcome.retrospectiveWritten = await this.writeRetrospective(
           reflector,

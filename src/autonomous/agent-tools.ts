@@ -47,6 +47,9 @@ import { AdversarialTester } from './reasoning/adversarial.js';
 import type { CrystalStore } from './crystal-store.js';
 import type { ConstitutionStore } from './constitution-store.js';
 import type { TraceReplay } from './trace-replay.js';
+import type { PromptStore } from './prompt-store.js';
+import type { ShadowStore } from './shadow-store.js';
+import type { ToolSynthesizer } from '../tools/synthesizer.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -123,6 +126,12 @@ export interface AgentState {
   constitutionStore?: ConstitutionStore;
   /** Vision Tier 1: Trace replay for self-debugging */
   traceReplay?: TraceReplay;
+  /** Vision Tier 2: Self-modifying prompt store */
+  promptStore?: PromptStore;
+  /** Vision Tier 2: Shadow execution store */
+  shadowStore?: ShadowStore;
+  /** Vision Tier 2: Tool synthesizer */
+  toolSynthesizer?: ToolSynthesizer;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1023,6 +1032,193 @@ const SEARCH_TRACES_SCHEMA: ToolSchema = {
         description: 'Maximum results (default 10).',
       },
     },
+    required: [],
+  },
+};
+
+// ── VISION TIER 2: SELF-MODIFYING PROMPTS ────────────────────────────────────
+
+const EDIT_PROMPT_SCHEMA: ToolSchema = {
+  name: 'edit_prompt',
+  description: `Edit your own system prompt. Replace old text with new text.
+
+Use this when you've identified a workflow pattern that should be baked into your default behavior.
+Examples: "always run tests after editing 2+ files", "prefer recall_journal for debugging".
+
+Protected patterns (Safety Boundary, Path Guards, Redaction Rules, Security Invariants) cannot be removed.
+Each edit is versioned and can be reverted.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      old_text: {
+        type: 'string',
+        description: 'The exact text to replace in the current prompt.',
+      },
+      new_text: {
+        type: 'string',
+        description: 'The replacement text.',
+      },
+      rationale: {
+        type: 'string',
+        description: 'Why this edit is being made — what experience motivates it.',
+      },
+    },
+    required: ['old_text', 'new_text', 'rationale'],
+  },
+};
+
+const REVERT_PROMPT_SCHEMA: ToolSchema = {
+  name: 'revert_prompt',
+  description: `Revert your system prompt to a previous version.
+
+Use this when a prompt edit led to worse performance. Specify the version number to revert to.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      version: {
+        type: 'integer',
+        description: 'The version number to revert to.',
+      },
+      rationale: {
+        type: 'string',
+        description: 'Why you are reverting.',
+      },
+    },
+    required: ['version', 'rationale'],
+  },
+};
+
+const GET_PROMPT_SCHEMA: ToolSchema = {
+  name: 'get_prompt',
+  description: `View your current system prompt content and version history.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      include_history: {
+        type: 'boolean',
+        description: 'Whether to include version history (default false).',
+      },
+    },
+    required: [],
+  },
+};
+
+// ── VISION TIER 2: SHADOW EXECUTION ──────────────────────────────────────────
+
+const SHADOW_SCHEMA: ToolSchema = {
+  name: 'shadow',
+  description: `Record an alternative approach (shadow) before executing your primary plan.
+
+Use this for non-trivial tasks to build judgment data. Describe what you would do differently.
+The shadow is stored but NOT executed — only the primary approach runs. During dream cycles,
+shadows are compared against actual outcomes to calibrate your judgment.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      cycle_id: {
+        type: 'string',
+        description: 'The current cycle ID.',
+      },
+      strategy: {
+        type: 'string',
+        description: 'Description of the alternative strategy.',
+      },
+      expected_steps: {
+        type: 'array',
+        description: 'Expected steps the shadow approach would take.',
+        items: { type: 'string', description: 'A step description.' },
+      },
+      rationale: {
+        type: 'string',
+        description: 'Why you chose the primary approach over this shadow.',
+      },
+      tags: {
+        type: 'array',
+        description: 'Tags for categorization.',
+        items: { type: 'string', description: 'A tag.' },
+      },
+    },
+    required: ['cycle_id', 'strategy', 'expected_steps', 'rationale'],
+  },
+};
+
+const LIST_SHADOWS_SCHEMA: ToolSchema = {
+  name: 'list_shadows',
+  description: `List recent shadows and judgment patterns. Shows unassessed shadows, missed opportunities, and established patterns.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+// ── VISION TIER 2: TOOL SYNTHESIS ────────────────────────────────────────────
+
+const CREATE_TOOL_SCHEMA: ToolSchema = {
+  name: 'create_tool',
+  description: `Create a new custom tool by providing a name, description, parameters, and a bash template.
+
+Use this when you notice a repeated multi-step operation that could be wrapped in a single tool call.
+The template uses {{param_name}} syntax for parameter substitution.
+
+Security: Templates are scanned for dangerous patterns before acceptance.
+Examples of good custom tools:
+- "quick_test" — run only test files related to recently modified source files
+- "check_and_summarize_diff" — read git diff, classify change type, summarize`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: {
+        type: 'string',
+        description: 'Tool name (lowercase, alphanumeric + underscores).',
+      },
+      description: {
+        type: 'string',
+        description: 'What the tool does and when to use it.',
+      },
+      parameters: {
+        type: 'object',
+        description: 'JSON Schema for the tool parameters (properties and required fields).',
+      },
+      template: {
+        type: 'string',
+        description: 'Bash command template with {{param}} placeholders.',
+      },
+      author_notes: {
+        type: 'string',
+        description: 'Why this tool was created — what repeated pattern it addresses.',
+      },
+    },
+    required: ['name', 'description', 'template', 'author_notes'],
+  },
+};
+
+const MANAGE_TOOLS_SCHEMA: ToolSchema = {
+  name: 'manage_tools',
+  description: `Manage custom tools: archive unused tools, reactivate archived tools, or delete tools permanently.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['archive', 'reactivate', 'delete'],
+        description: 'The action to perform.',
+      },
+      tool_name: {
+        type: 'string',
+        description: 'The name of the custom tool.',
+      },
+    },
+    required: ['action', 'tool_name'],
+  },
+};
+
+const LIST_CUSTOM_TOOLS_SCHEMA: ToolSchema = {
+  name: 'list_custom_tools',
+  description: `List all custom (synthesized) tools with usage statistics, status, and creation date.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
     required: [],
   },
 };
@@ -2370,7 +2566,240 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── edit_prompt (Vision Tier 2) ────────────────────────────────────────
+
+  executors.set('edit_prompt', async (call) => {
+    if (!state.promptStore) {
+      return failureResult(call.id, 'Prompt store not available.');
+    }
+
+    const oldText = requireString(call, 'old_text');
+    if ('error' in oldText) return oldText.error;
+    const newText = requireString(call, 'new_text');
+    if ('error' in newText) return newText.error;
+    const rationale = requireString(call, 'rationale');
+    if ('error' in rationale) return rationale.error;
+
+    const result = state.promptStore.editPrompt({
+      oldText: oldText.value,
+      newText: newText.value,
+      rationale: rationale.value,
+    });
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Edit failed.');
+    }
+
+    await state.promptStore.save();
+    return successResult(call.id, `Prompt edited successfully. Now at version ${result.version}.`, config.maxOutputChars);
+  });
+
+  // ── revert_prompt (Vision Tier 2) ──────────────────────────────────────
+
+  executors.set('revert_prompt', async (call) => {
+    if (!state.promptStore) {
+      return failureResult(call.id, 'Prompt store not available.');
+    }
+
+    const version = call.input['version'];
+    if (typeof version !== 'number') {
+      return failureResult(call.id, 'Missing required parameter: version (integer).');
+    }
+    const rationale = requireString(call, 'rationale');
+    if ('error' in rationale) return rationale.error;
+
+    const result = state.promptStore.revertPrompt(version, rationale.value);
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Revert failed.');
+    }
+
+    await state.promptStore.save();
+    return successResult(call.id, `Prompt reverted to v${version}. Now at version ${result.version}.`, config.maxOutputChars);
+  });
+
+  // ── get_prompt (Vision Tier 2) ─────────────────────────────────────────
+
+  executors.set('get_prompt', async (call) => {
+    if (!state.promptStore) {
+      return failureResult(call.id, 'Prompt store not available.');
+    }
+
+    const includeHistory = call.input['include_history'] === true;
+    const lines: string[] = [
+      `## Current System Prompt (v${state.promptStore.getVersion()})`,
+      '',
+      state.promptStore.getContent(),
+    ];
+
+    if (includeHistory) {
+      lines.push('', '## Version History', '');
+      for (const v of state.promptStore.getVersions()) {
+        const metrics = v.metrics
+          ? ` | ${v.metrics.cyclesRun} cycles, ${Math.round(v.metrics.successRate * 100)}% success`
+          : '';
+        lines.push(`- v${v.version} (${v.timestamp.split('T')[0]}): ${v.rationale}${metrics}`);
+      }
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── shadow (Vision Tier 2) ─────────────────────────────────────────────
+
+  executors.set('shadow', async (call) => {
+    if (!state.shadowStore) {
+      return failureResult(call.id, 'Shadow store not available.');
+    }
+
+    const cycleId = requireString(call, 'cycle_id');
+    if ('error' in cycleId) return cycleId.error;
+    const strategy = requireString(call, 'strategy');
+    if ('error' in strategy) return strategy.error;
+    const rationale = requireString(call, 'rationale');
+    if ('error' in rationale) return rationale.error;
+
+    const expectedSteps = Array.isArray(call.input['expected_steps'])
+      ? (call.input['expected_steps'] as string[])
+      : [];
+    const tags = Array.isArray(call.input['tags'])
+      ? (call.input['tags'] as string[])
+      : [];
+
+    const shadow = state.shadowStore.recordShadow({
+      cycleId: cycleId.value,
+      strategy: strategy.value,
+      expectedSteps,
+      rationale: rationale.value,
+      tags,
+    });
+
+    await state.shadowStore.save();
+    return successResult(
+      call.id,
+      `Shadow recorded: ${shadow.id}. The alternative approach is stored for later analysis.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── list_shadows (Vision Tier 2) ───────────────────────────────────────
+
+  executors.set('list_shadows', async (call) => {
+    if (!state.shadowStore) {
+      return failureResult(call.id, 'Shadow store not available.');
+    }
+
+    return successResult(
+      call.id,
+      state.shadowStore.buildAnalysisSummary(),
+      config.maxOutputChars,
+    );
+  });
+
+  // ── create_tool (Vision Tier 2) ────────────────────────────────────────
+
+  executors.set('create_tool', async (call) => {
+    if (!state.toolSynthesizer) {
+      return failureResult(call.id, 'Tool synthesizer not available.');
+    }
+
+    const name = requireString(call, 'name');
+    if ('error' in name) return name.error;
+    const description = requireString(call, 'description');
+    if ('error' in description) return description.error;
+    const template = requireString(call, 'template');
+    if ('error' in template) return template.error;
+    const authorNotes = requireString(call, 'author_notes');
+    if ('error' in authorNotes) return authorNotes.error;
+
+    const params = call.input['parameters'] as SynthesizedToolParams | undefined;
+    const inputSchema = params && typeof params === 'object'
+      ? {
+          type: 'object' as const,
+          properties: (params.properties ?? {}) as Record<string, { type: string; description: string }>,
+          required: (params.required ?? []) as string[],
+        }
+      : { type: 'object' as const, properties: {} as Record<string, { type: string; description: string }>, required: [] as string[] };
+
+    const result = state.toolSynthesizer.createTool({
+      name: name.value,
+      description: description.value,
+      inputSchema,
+      template: template.value,
+      authorNotes: authorNotes.value,
+    });
+
+    if (!result.success) {
+      const violations = result.securityViolations
+        ? `\nSecurity violations:\n${result.securityViolations.map((v) => `- ${v}`).join('\n')}`
+        : '';
+      return failureResult(call.id, `${result.error}${violations}`);
+    }
+
+    await state.toolSynthesizer.save();
+    return successResult(
+      call.id,
+      `Custom tool "${name.value}" created successfully. It will be available in future cycles.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── manage_tools (Vision Tier 2) ───────────────────────────────────────
+
+  executors.set('manage_tools', async (call) => {
+    if (!state.toolSynthesizer) {
+      return failureResult(call.id, 'Tool synthesizer not available.');
+    }
+
+    const action = requireString(call, 'action');
+    if ('error' in action) return action.error;
+    const toolName = requireString(call, 'tool_name');
+    if ('error' in toolName) return toolName.error;
+
+    let ok: boolean;
+    switch (action.value) {
+      case 'archive':
+        ok = state.toolSynthesizer.archiveTool(toolName.value);
+        break;
+      case 'reactivate':
+        ok = state.toolSynthesizer.reactivateTool(toolName.value);
+        break;
+      case 'delete':
+        ok = await state.toolSynthesizer.deleteTool(toolName.value);
+        break;
+      default:
+        return failureResult(call.id, `Unknown action: ${action.value}. Use archive, reactivate, or delete.`);
+    }
+
+    if (!ok) {
+      return failureResult(call.id, `Tool "${toolName.value}" not found or action not applicable.`);
+    }
+
+    await state.toolSynthesizer.save();
+    return successResult(call.id, `Tool "${toolName.value}" ${action.value}d successfully.`, config.maxOutputChars);
+  });
+
+  // ── list_custom_tools (Vision Tier 2) ──────────────────────────────────
+
+  executors.set('list_custom_tools', async (call) => {
+    if (!state.toolSynthesizer) {
+      return failureResult(call.id, 'Tool synthesizer not available.');
+    }
+
+    return successResult(
+      call.id,
+      state.toolSynthesizer.buildToolList(),
+      config.maxOutputChars,
+    );
+  });
+
   return executors;
+}
+
+// Helper type for create_tool parameter parsing
+interface SynthesizedToolParams {
+  properties?: Record<string, unknown>;
+  required?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2432,6 +2861,17 @@ export function buildAgentToolkit(
     REPLAY_SCHEMA,
     COMPARE_TRACES_SCHEMA,
     SEARCH_TRACES_SCHEMA,
+    // Vision Tier 2: Self-Modifying Prompts
+    EDIT_PROMPT_SCHEMA,
+    REVERT_PROMPT_SCHEMA,
+    GET_PROMPT_SCHEMA,
+    // Vision Tier 2: Shadow Execution
+    SHADOW_SCHEMA,
+    LIST_SHADOWS_SCHEMA,
+    // Vision Tier 2: Tool Synthesis
+    CREATE_TOOL_SCHEMA,
+    MANAGE_TOOLS_SCHEMA,
+    LIST_CUSTOM_TOOLS_SCHEMA,
   ];
 
   // Build all executors
@@ -2510,4 +2950,13 @@ export {
   REPLAY_SCHEMA,
   COMPARE_TRACES_SCHEMA,
   SEARCH_TRACES_SCHEMA,
+  // Vision Tier 2
+  EDIT_PROMPT_SCHEMA,
+  REVERT_PROMPT_SCHEMA,
+  GET_PROMPT_SCHEMA,
+  SHADOW_SCHEMA,
+  LIST_SHADOWS_SCHEMA,
+  CREATE_TOOL_SCHEMA,
+  MANAGE_TOOLS_SCHEMA,
+  LIST_CUSTOM_TOOLS_SCHEMA,
 };

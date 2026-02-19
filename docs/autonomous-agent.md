@@ -86,7 +86,7 @@ Each turn in the loop:
 
 The loop checks an `aborted` flag before each turn. External code (e.g. the message handler) can call `agentLoop.abort()` to preempt autonomous work when a user message arrives. The current turn completes, but no new turn starts.
 
-## Agent Toolkit (34 tools)
+## Agent Toolkit (42 tools)
 
 The agent has its own expanded tool set beyond the 13 core native tools. These are organized into categories:
 
@@ -205,6 +205,29 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 | `compare_traces` | Compare two execution traces side-by-side. Highlights divergence points and unique strategies. |
 | `search_traces` | Search past traces by outcome, trigger type, or tools used. Returns index entries (use `replay` for full details). |
 
+### Self-Improvement — Prompts (3)
+
+| Tool | Description |
+|------|-------------|
+| `edit_prompt` | Edit the system prompt via search/replace with rationale. Protected patterns (Safety Boundary, Path Guards, Redaction Rules, Security Invariants) cannot be removed. Creates a new versioned entry. |
+| `revert_prompt` | Revert the system prompt to a specific version number. Useful when performance degrades after a change. |
+| `get_prompt` | Get the current prompt content, version history, or diff between two versions. Supports `content`, `versions`, and `diff` actions. |
+
+### Self-Improvement — Shadows (2)
+
+| Tool | Description |
+|------|-------------|
+| `shadow` | Record an alternative approach before executing the primary plan. Takes strategy, expected steps, and rationale for why primary was chosen. |
+| `list_shadows` | List shadows for a specific cycle, show missed opportunities, or display judgment patterns. Supports `cycle`, `missed`, and `patterns` views. |
+
+### Self-Improvement — Tools (3)
+
+| Tool | Description |
+|------|-------------|
+| `create_tool` | Synthesize a new custom tool with a bash template. Security-scanned against 13 dangerous patterns. Templates use `{{param}}` substitution. |
+| `manage_tools` | Archive, reactivate, or delete custom tools. Supports lifecycle management of synthesized tools. |
+| `list_custom_tools` | List all custom tools with usage stats, creation date, and status. Shows active tools and archived count. |
+
 ## Agent State
 
 The agent operates on three persistent state stores, all loaded at cycle start and saved at cycle end:
@@ -260,7 +283,35 @@ Tracked problems the agent has discovered:
 
 ## Self-Knowledge (Vision Tier 1)
 
-Three self-improvement stores provide Tyrion with the ability to learn from experience, author his own rules, and debug past failures.
+Three stores provide Tyrion with the ability to learn from experience, author his own rules, and debug past failures.
+
+## Self-Improvement (Vision Tier 2)
+
+Three mechanisms provide Tyrion with the ability to modify his own behavior, calibrate his judgment, and extend his capabilities.
+
+### Prompt Store
+
+> **Source**: `src/autonomous/prompt-store.ts`, stored at `~/.casterly/system-prompt.md` + `~/.casterly/prompt-versions.json`
+
+Versioned, editable system prompt. The LLM can modify its own workflow guidance, default strategies, tool preferences, and self-correction triggers. Protected patterns (Safety Boundary, Path Guards, Redaction Rules, Security Invariants) are immutable.
+
+Budget: max 20 versions. Metrics tracked per version (success rate, average turns, errors).
+
+### Shadow Store
+
+> **Source**: `src/autonomous/shadow-store.ts`, stored at `~/.casterly/shadow-analysis.json`
+
+Alternative approach recording before executing the primary plan. Shadows are assessed during dream cycles to calibrate judgment. Judgment patterns are extracted from recurring assessments.
+
+Budget: max 200 shadows, 90-day retention. Patterns require 5+ observations to be considered established.
+
+### Tool Synthesizer
+
+> **Source**: `src/tools/synthesizer.ts`, stored at `~/.casterly/tools/`
+
+LLM-authored custom tools with bash template implementations. Security-scanned against 13 dangerous patterns. Tools unused for 30 days auto-archived during dream cycles.
+
+Budget: max 20 active tools. Templates max 2000 chars.
 
 ### Crystal Store
 
@@ -366,7 +417,7 @@ The most recent handoff note is included in the identity prompt for session cont
 The controller manages the full lifecycle of an autonomous session:
 
 1. Load state (world model, goals, issues) from disk
-2. Build the agent toolkit with all 34 tools
+2. Build the agent toolkit with all 42 tools
 3. Construct the agent loop with config + provider + state
 4. Run the loop for a given trigger
 5. Persist updated state back to disk
@@ -456,7 +507,7 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | File | Purpose |
 |------|---------|
 | `src/autonomous/agent-loop.ts` | ReAct loop: trigger → turns → outcome |
-| `src/autonomous/agent-tools.ts` | 34 agent tools: schemas + executors |
+| `src/autonomous/agent-tools.ts` | 42 agent tools: schemas + executors |
 | `src/autonomous/controller.ts` | Lifecycle management: load → run → persist |
 | `src/autonomous/world-model.ts` | Codebase health, activity, concerns |
 | `src/autonomous/goal-stack.ts` | Priority queue of goals |
@@ -470,6 +521,9 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | `src/autonomous/crystal-store.ts` | Crystal store — permanent insights (Vision Tier 1) |
 | `src/autonomous/constitution-store.ts` | Constitution — self-authored rules (Vision Tier 1) |
 | `src/autonomous/trace-replay.ts` | Trace replay — self-debugging (Vision Tier 1) |
+| `src/autonomous/prompt-store.ts` | Self-modifying prompts (Vision Tier 2) |
+| `src/autonomous/shadow-store.ts` | Shadow execution and judgment patterns (Vision Tier 2) |
+| `src/tools/synthesizer.ts` | Tool synthesis (Vision Tier 2) |
 | `src/autonomous/types.ts` | Shared type definitions |
 | `src/autonomous/index.ts` | Public exports |
 
