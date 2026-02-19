@@ -1,8 +1,8 @@
 # Memory & State
 
-> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/autonomous/prompt-store.ts`, `src/autonomous/shadow-store.ts`, `src/tools/synthesizer.ts`, `src/tasks/execution-log.ts`
+> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/autonomous/prompt-store.ts`, `src/autonomous/shadow-store.ts`, `src/tools/synthesizer.ts`, `src/autonomous/dream/challenge-evaluator.ts`, `src/autonomous/dream/prompt-evolution.ts`, `src/autonomous/dream/training-extractor.ts`, `src/autonomous/dream/lora-trainer.ts`, `src/tasks/execution-log.ts`
 
-Casterly maintains persistent state across sessions through eleven subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
+Casterly maintains persistent state across sessions through fifteen subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
 
 ```
 ~/.casterly/
@@ -20,6 +20,16 @@ Casterly maintains persistent state across sessions through eleven subsystems, e
 ├── shadow-analysis.json       ← Shadow execution data + judgment patterns (Vision Tier 2)
 ├── tools/                     ← Synthesized tool store (Vision Tier 2)
 │   └── tools.json             ← Tool definitions and metadata
+├── challenge-history.json     ← Challenge evaluation history (Vision Tier 3)
+├── prompt-evolution/          ← Prompt genetic algorithm (Vision Tier 3)
+│   ├── metadata.json          ← Generation counter, elite index
+│   ├── variant-N.md           ← Prompt variant content
+│   └── variant-N.json         ← Variant metadata and fitness
+├── training-data.json         ← Extracted LoRA training data (Vision Tier 3)
+├── adapters/                  ← LoRA adapter registry (Vision Tier 3)
+│   └── registry.json          ← Adapter metadata and lifecycle state
+├── benchmarks/                ← Benchmark tasks per skill (Vision Tier 3)
+│   └── <skill>.json           ← Benchmark task definitions
 └── execution-log/
     └── log.jsonl              ← Task execution outcomes (operational memory)
 ```
@@ -527,6 +537,111 @@ Templates are scanned against 13 dangerous patterns before creation:
 - **Unused detection**: Tools unused for 30 days (configurable) flagged during dream cycles
 - **Dream integration**: Phase 7b auto-archives unused tools past threshold
 
+## Challenge Evaluator (Vision Tier 3: Adversarial Self-Testing)
+
+> **Source**: `src/autonomous/dream/challenge-evaluator.ts`
+> **Storage**: `~/.casterly/challenge-history.json` (JSON, full rewrite on save)
+
+Tracks results from adversarial dual-model self-testing. The challenge generator (`src/autonomous/dream/challenge-generator.ts`) creates domain-specific challenges based on self-model weaknesses; the evaluator records results and updates sub-skill assessments.
+
+### Sub-Skill Assessment Structure
+
+```typescript
+interface SubSkillAssessment {
+  key: string;                 // "regex.lookaheads"
+  skill: string;               // Parent skill
+  subSkill: string;            // Sub-skill name
+  challengeSuccessRate: number; // 0-1
+  challengeAttempts: number;
+  challengeSuccesses: number;
+  lastAssessed: string;        // ISO
+}
+```
+
+### Key Behaviors
+
+- **Sub-skill granularity**: Extends the self-model's 13 skills with fine-grained sub-skills (e.g., `regex.lookaheads`, `typescript.generics`, `security.injection`)
+- **Trend tracking**: `getSkillTrend()` shows pass rate over the last N batches
+- **Weakness identification**: `getWeakestSubSkills()` returns the lowest-performing sub-skills with minimum sample threshold
+- **Budget**: Max 50 batch records. Older batches pruned on insertion.
+- **Dream integration**: Phase 8a generates challenges, evaluates results, and records to history
+
+## Prompt Evolution (Vision Tier 3: Prompt Genetic Algorithm)
+
+> **Source**: `src/autonomous/dream/prompt-evolution.ts`
+> **Storage**: `~/.casterly/prompt-evolution/` (variant files + metadata)
+
+Evolves the system prompt through genetic algorithm selection pressure. Maintains a population of prompt variants, evaluates them against benchmarks, and produces new generations through mutation and crossover.
+
+### Prompt Variant Structure
+
+```typescript
+interface PromptVariant {
+  index: number;               // Position in population
+  content: string;             // Full prompt text
+  generation: number;
+  parents: number[];           // Parent variant indices
+  mutations: string[];         // Mutation types applied
+  fitness: number | null;      // Computed fitness score
+  metrics: FitnessMetrics | null;
+}
+```
+
+### Key Behaviors
+
+- **Protected sections**: Safety Boundary, Path Guards, and other protected patterns are preserved through all genetic operations
+- **Elite strategy**: Best-performing variant always preserved in next generation
+- **Mutation types**: reorder_rules, adjust_threshold, add_guidance, remove_guidance, rephrase
+- **Crossover**: Combines sections from two parents using markdown headers as boundaries
+- **Fitness weights**: completionRate (40%), avgTurns (25%), avgToolCalls (15%), errorRate (20%)
+- **Population size**: Default 8 variants. Each variant stored as `.md` (content) + `.json` (metadata)
+- **Dream integration**: Phase 8b evolves population when 2+ variants have fitness data
+
+## Training Extractor (Vision Tier 3: LoRA Training Data)
+
+> **Source**: `src/autonomous/dream/training-extractor.ts`
+> **Storage**: `~/.casterly/training-data.json` (JSON, full rewrite on save)
+
+Extracts decision-outcome pairs from the journal and issue log, formats them as training examples for LoRA fine-tuning. Examples are grouped by skill domain.
+
+### Data Formats
+
+- **Instruction/completion pairs**: From journal reflections/handoffs — supervised fine-tuning format
+- **Preference pairs (DPO)**: From issue attempts — successful vs failed approaches paired
+
+### Key Behaviors
+
+- **Skill classification**: SKILL_PATTERNS map content to 12 skill domains (regex, typescript, testing, etc.)
+- **Lookback**: Default 90 days. Only recent data used for training.
+- **Budget**: Max 100 examples per skill domain. Content truncated at 2000 chars.
+- **Dream integration**: Phase 8c extracts training data and saves dataset
+
+## LoRA Trainer (Vision Tier 3: Local Fine-Tuning)
+
+> **Source**: `src/autonomous/dream/lora-trainer.ts`
+> **Storage**: `~/.casterly/adapters/registry.json` (JSON, full rewrite on save), `~/.casterly/benchmarks/` (JSON per skill)
+
+Manages the lifecycle of LoRA adapters: creation, evaluation, activation, and retirement. Each adapter targets a specific skill domain.
+
+### Adapter Lifecycle
+
+| Status | Meaning |
+|--------|---------|
+| `training` | Adapter created, training in progress |
+| `evaluating` | Training complete, running benchmarks |
+| `active` | Passed evaluation, loaded for inference |
+| `discarded` | Failed evaluation (below improvement threshold) |
+| `archived` | Previously active, superseded by newer version |
+
+### Key Behaviors
+
+- **Improvement threshold**: Minimum 5% improvement over baseline to accept an adapter
+- **Versioning**: Creating a new adapter for an existing skill increments version and archives the old one
+- **Capacity**: Max 20 adapters. Excess must be archived or discarded.
+- **Benchmark tasks**: Loaded from `~/.casterly/benchmarks/*.json` on startup
+- **Trainable skills**: `getTrainableSkills()` identifies skills with sufficient training data but no active adapter
+- **Privacy**: All training data comes from the local journal and issue log only
+
 ## Context Manager (Tiered Memory)
 
 > **Source**: `src/autonomous/context-manager.ts`
@@ -584,6 +699,10 @@ During cycle
     ├── Prompt store: editPrompt(), revertPrompt(), recordMetrics() (Vision Tier 2)
     ├── Shadow store: recordShadow(), recordPrimaryOutcome(), assessShadow() (Vision Tier 2)
     ├── Tool synthesizer: createTool(), recordUsage(), archiveTool() (Vision Tier 2)
+    ├── Challenge evaluator: recordBatch(), updateSubSkill() (Vision Tier 3)
+    ├── Prompt evolution: recordFitness(), evolve(), mutate(), crossover() (Vision Tier 3)
+    ├── Training extractor: extract(), saveDataset() (Vision Tier 3)
+    ├── LoRA trainer: createAdapter(), recordEvaluation(), recordLoad() (Vision Tier 3)
     └── Context manager: addToWarmTier() (auto from tool results)
     │
     ▼
@@ -597,7 +716,10 @@ Cycle end
     ├── constitutionStore.save() ← Only if dirty (Vision Tier 1)
     ├── promptStore.save()       ← Only if dirty (Vision Tier 2)
     ├── shadowStore.save()       ← Only if dirty (Vision Tier 2)
-    └── toolSynthesizer.save()   ← Only if dirty (Vision Tier 2)
+    ├── toolSynthesizer.save()   ← Only if dirty (Vision Tier 2)
+    ├── challengeEvaluator.save() ← Only if dirty (Vision Tier 3)
+    ├── promptEvolution.save()   ← Only if dirty (Vision Tier 3)
+    └── loraTrainer.save()       ← Only if dirty (Vision Tier 3)
 ```
 
 ## Privacy Guarantees
@@ -615,6 +737,10 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 - Prompt store: Only workflow guidance and strategy text, never user data
 - Shadow store: Only strategy descriptions and rationale, never raw user content
 - Tool synthesizer: Only tool definitions and bash templates, never sensitive data
+- Challenge evaluator: Only synthetic challenge results and aggregate statistics, no user data
+- Prompt evolution: Only prompt variant text and fitness scores, no user data
+- Training extractor: Only decision-outcome pairs from Tyrion's own reasoning, never user content
+- LoRA trainer: Only adapter metadata and benchmark scores, no user data
 
 ## Key Files
 
@@ -631,4 +757,9 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 | `src/autonomous/prompt-store.ts` | Versioned self-modifying prompts (Vision Tier 2) |
 | `src/autonomous/shadow-store.ts` | Shadow execution and judgment patterns (Vision Tier 2) |
 | `src/tools/synthesizer.ts` | LLM-authored tool synthesis (Vision Tier 2) |
+| `src/autonomous/dream/challenge-generator.ts` | Adversarial challenge generation (Vision Tier 3) |
+| `src/autonomous/dream/challenge-evaluator.ts` | Challenge evaluation and sub-skill tracking (Vision Tier 3) |
+| `src/autonomous/dream/prompt-evolution.ts` | Prompt genetic algorithm (Vision Tier 3) |
+| `src/autonomous/dream/training-extractor.ts` | LoRA training data extraction (Vision Tier 3) |
+| `src/autonomous/dream/lora-trainer.ts` | LoRA adapter lifecycle management (Vision Tier 3) |
 | `src/tasks/execution-log.ts` | Bounded task outcome log (248 lines) |

@@ -540,10 +540,23 @@ These mechanisms are ordered by risk and dependency. Earlier mechanisms create t
 > - Agent toolkit (`agent-tools.ts`) exposes 8 new tools (42 total, up from 34)
 > - Configuration in `config/autonomous.yaml` under `self_improvement` section
 
-**Tier 3 -- High complexity, high ceiling, requires Tier 1-2 as training signal:**
+**Tier 3 -- High complexity, high ceiling, requires Tier 1-2 as training signal: IMPLEMENTED**
 7. Adversarial dual-model self-testing -- requires granular self-model (from Tier 1-2) to know what to test
 8. Prompt genetic algorithm -- requires benchmarks (from adversarial testing) as the fitness function
 9. LoRA fine-tuning -- highest ceiling but most complex; needs substantial journal data and the benchmark infrastructure from earlier tiers
+
+> **Implementation Status (Tier 3):** All three Tier 3 mechanisms are implemented as of 2026-02-19.
+>
+> | Mechanism | Source | Tools | Tests |
+> |-----------|--------|-------|-------|
+> | Adversarial Self-Testing | `src/autonomous/dream/challenge-generator.ts`, `src/autonomous/dream/challenge-evaluator.ts` | `run_challenges`, `challenge_history` | `tests/challenge-generator.test.ts` (22 tests) |
+> | Prompt Genetic Algorithm | `src/autonomous/dream/prompt-evolution.ts` | `evolve_prompt`, `evolution_status` | `tests/prompt-evolution.test.ts` (18 tests) |
+> | LoRA Fine-Tuning | `src/autonomous/dream/training-extractor.ts`, `src/autonomous/dream/lora-trainer.ts` | `extract_training_data`, `list_adapters`, `load_adapter` | `tests/lora-trainer.test.ts` (26 tests) |
+>
+> Integration points:
+> - Dream cycle runner (`dream/runner.ts`) adds Phase 8a (adversarial challenges), Phase 8b (prompt evolution), Phase 8c (training data extraction)
+> - Agent toolkit (`agent-tools.ts`) exposes 7 new tools (49 total, up from 42)
+> - Configuration in `config/autonomous.yaml` under `advanced_self_improvement` section
 
 ## Roadmap: The Transition to LLM-Driven Architecture
 

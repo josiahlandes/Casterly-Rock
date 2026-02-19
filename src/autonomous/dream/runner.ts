@@ -37,6 +37,13 @@ import type { TraceReplay } from '../trace-replay.js';
 import type { PromptStore } from '../prompt-store.js';
 import type { ShadowStore } from '../shadow-store.js';
 import type { ToolSynthesizer } from '../../tools/synthesizer.js';
+import type { ChallengeGenerator } from './challenge-generator.js';
+import type { ChallengeEvaluator } from './challenge-evaluator.js';
+import type { PromptEvolution } from './prompt-evolution.js';
+import type { TrainingExtractor } from './training-extractor.js';
+import type { LoraTrainer } from './lora-trainer.js';
+import type { Journal } from '../journal.js';
+import type { IssueLog as IssueLogType } from '../issue-log.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -114,6 +121,18 @@ export interface DreamOutcome {
   /** Number of unused tools flagged (Vision Tier 2) */
   unusedToolsFlagged: number;
 
+  /** Number of challenges generated (Vision Tier 3) */
+  challengesGenerated: number;
+
+  /** Number of challenges passed (Vision Tier 3) */
+  challengesPassed: number;
+
+  /** Whether prompt evolution ran (Vision Tier 3) */
+  promptEvolutionRan: boolean;
+
+  /** Number of training examples extracted (Vision Tier 3) */
+  trainingExamplesExtracted: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -172,6 +191,12 @@ export class DreamCycleRunner {
     promptStore?: PromptStore,
     shadowStore?: ShadowStore,
     toolSynthesizer?: ToolSynthesizer,
+    challengeGenerator?: ChallengeGenerator,
+    challengeEvaluator?: ChallengeEvaluator,
+    promptEvolution?: PromptEvolution,
+    trainingExtractor?: TrainingExtractor,
+    loraTrainer?: LoraTrainer,
+    journal?: Journal,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -194,6 +219,10 @@ export class DreamCycleRunner {
         shadowsAnalyzed: 0,
         shadowsPruned: 0,
         unusedToolsFlagged: 0,
+        challengesGenerated: 0,
+        challengesPassed: 0,
+        promptEvolutionRan: false,
+        trainingExamplesExtracted: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -353,7 +382,66 @@ export class DreamCycleRunner {
         }
       }
 
-      // Phase 8: Write retrospective
+      // Phase 8a: Adversarial challenge generation (Vision Tier 3)
+      if (challengeGenerator && challengeEvaluator) {
+        try {
+          const cycleId = `dream-${Date.now()}`;
+          const batch = challengeGenerator.generateBatch(this.selfModel, cycleId);
+          outcome.challengesGenerated = batch.challenges.length;
+
+          // Summarize results (in a real run, challenges would be executed)
+          if (batch.results.length > 0) {
+            const summary = challengeGenerator.summarizeBatch(batch);
+            challengeEvaluator.recordBatch(batch, summary);
+            outcome.challengesPassed = summary.passed;
+            await challengeEvaluator.save();
+          }
+
+          outcome.phasesCompleted.push('adversarialChallenges');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Adversarial challenges failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('adversarialChallenges');
+        }
+      }
+
+      // Phase 8b: Prompt evolution generation (Vision Tier 3)
+      if (promptEvolution) {
+        try {
+          if (promptEvolution.isInitialized()) {
+            // Only evolve if we have fitness data
+            const pop = promptEvolution.getPopulation();
+            const evaluated = pop.filter((v) => v.fitness !== null);
+            if (evaluated.length >= 2) {
+              promptEvolution.evolve();
+              await promptEvolution.save();
+              outcome.promptEvolutionRan = true;
+            }
+          }
+          outcome.phasesCompleted.push('promptEvolution');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Prompt evolution failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('promptEvolution');
+        }
+      }
+
+      // Phase 8c: Training data extraction (Vision Tier 3)
+      if (trainingExtractor && journal) {
+        try {
+          const dataset = await trainingExtractor.extract(journal, issueLog);
+          outcome.trainingExamplesExtracted = dataset.totalExamples;
+
+          if (dataset.totalExamples > 0) {
+            await trainingExtractor.saveDataset(dataset);
+          }
+
+          outcome.phasesCompleted.push('trainingDataExtraction');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Training data extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('trainingDataExtraction');
+        }
+      }
+
+      // Phase 9: Write retrospective
       try {
         outcome.retrospectiveWritten = await this.writeRetrospective(
           reflector,

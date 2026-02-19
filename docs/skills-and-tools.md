@@ -157,9 +157,9 @@ Bash execution is registered separately.
 
 ---
 
-## Agent Tools (42)
+## Agent Tools (49)
 
-In addition to the 13 native tools above, the autonomous agent loop has 29 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
+In addition to the 13 native tools above, the autonomous agent loop has 36 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
 
 See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categories:
 
@@ -180,12 +180,17 @@ See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categor
 | Self-improvement (prompts) | `edit_prompt`, `revert_prompt`, `get_prompt` |
 | Self-improvement (shadows) | `shadow`, `list_shadows` |
 | Self-improvement (tools) | `create_tool`, `manage_tools`, `list_custom_tools` |
+| Advanced self-improvement (challenges) | `run_challenges`, `challenge_history` |
+| Advanced self-improvement (evolution) | `evolve_prompt`, `evolution_status` |
+| Advanced self-improvement (LoRA) | `extract_training_data`, `list_adapters`, `load_adapter` |
 | Delegation | `delegate` |
 | Communication | `message_user` |
 
 The self-knowledge tools (9 total) are part of Vision Tier 1. They enable the agent to learn from experience (crystals), author its own operational rules (constitution), and debug past failures (trace replay).
 
 The self-improvement tools (8 total) are part of Vision Tier 2. They enable the agent to modify its own prompts, record and analyze alternative approaches (shadows), and synthesize new tools.
+
+The advanced self-improvement tools (7 total) are part of Vision Tier 3. They enable the agent to generate adversarial challenges for self-testing (`run_challenges`, `challenge_history`), evolve its system prompt through genetic algorithms (`evolve_prompt`, `evolution_status`), and manage LoRA fine-tuning data and adapters (`extract_training_data`, `list_adapters`, `load_adapter`).
 
 ---
 

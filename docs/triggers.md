@@ -230,7 +230,7 @@ The trigger system is well-aligned with the vision. Triggers are already normali
 - High-recall journal entries should suggest `crystallize` during dream cycles
 - Rules with declining confidence should suggest review during scheduled maintenance
 
-**What exists today:** Vision Tier 1 is fully implemented. The crystal store, constitution store, and trace replay are integrated into the agent toolkit (9 tools) and dream cycle runner (pruning phases). Vision Tier 2 is also implemented: the prompt store, shadow store, and tool synthesizer add 8 more tools (42 total) and two dream cycle phases (7a: shadow analysis, 7b: tool inventory). Self-knowledge and self-improvement triggers are currently manual (agent-initiated) — automatic suggestion is planned for future phases.
+**What exists today:** Vision Tier 1 is fully implemented. The crystal store, constitution store, and trace replay are integrated into the agent toolkit (9 tools) and dream cycle runner (pruning phases). Vision Tier 2 is also implemented: the prompt store, shadow store, and tool synthesizer add 8 more tools. Vision Tier 3 is also implemented: the challenge generator/evaluator, prompt evolution, training extractor, and LoRA trainer add 7 more tools (49 total) and three dream cycle phases (8a: adversarial challenges, 8b: prompt evolution, 8c: training data extraction). Self-knowledge and self-improvement triggers are currently manual (agent-initiated) — automatic suggestion is planned for future phases.
 
 ### 5. Route iMessage through the trigger system
 

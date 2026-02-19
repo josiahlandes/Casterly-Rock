@@ -86,7 +86,7 @@ Each turn in the loop:
 
 The loop checks an `aborted` flag before each turn. External code (e.g. the message handler) can call `agentLoop.abort()` to preempt autonomous work when a user message arrives. The current turn completes, but no new turn starts.
 
-## Agent Toolkit (42 tools)
+## Agent Toolkit (49 tools)
 
 The agent has its own expanded tool set beyond the 13 core native tools. These are organized into categories:
 
@@ -227,6 +227,28 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 | `create_tool` | Synthesize a new custom tool with a bash template. Security-scanned against 13 dangerous patterns. Templates use `{{param}}` substitution. |
 | `manage_tools` | Archive, reactivate, or delete custom tools. Supports lifecycle management of synthesized tools. |
 | `list_custom_tools` | List all custom tools with usage stats, creation date, and status. Shows active tools and archived count. |
+
+### Advanced Self-Improvement — Challenges (2)
+
+| Tool | Description |
+|------|-------------|
+| `run_challenges` | Generate and return a batch of adversarial challenges for self-testing. Prioritizes weak skills from the self-model. Supports sub-skill granularity (e.g., `regex.lookaheads`). |
+| `challenge_history` | View challenge evaluation history: overall stats, skill trends over recent batches, and weakest/strongest sub-skills. |
+
+### Advanced Self-Improvement — Prompt Evolution (2)
+
+| Tool | Description |
+|------|-------------|
+| `evolve_prompt` | Manage the prompt genetic algorithm. Actions: `initialize` (create population from current prompt), `record_fitness` (record metrics for a variant), `evolve` (advance to next generation via mutation + crossover). |
+| `evolution_status` | View the current state of prompt evolution: generation number, population size, best fitness, and variant summaries. |
+
+### Advanced Self-Improvement — LoRA (3)
+
+| Tool | Description |
+|------|-------------|
+| `extract_training_data` | Extract training examples from journal and issue log. Produces instruction/completion pairs and DPO preference pairs grouped by skill domain. |
+| `list_adapters` | List all LoRA adapters with status, improvement scores, and load counts. Optionally filter by status (active, training, archived, discarded). |
+| `load_adapter` | Load a specific LoRA adapter for the current task. Records the load event and returns adapter metadata. |
 
 ## Agent State
 
@@ -417,7 +439,7 @@ The most recent handoff note is included in the identity prompt for session cont
 The controller manages the full lifecycle of an autonomous session:
 
 1. Load state (world model, goals, issues) from disk
-2. Build the agent toolkit with all 42 tools
+2. Build the agent toolkit with all 49 tools
 3. Construct the agent loop with config + provider + state
 4. Run the loop for a given trigger
 5. Persist updated state back to disk
@@ -507,7 +529,7 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | File | Purpose |
 |------|---------|
 | `src/autonomous/agent-loop.ts` | ReAct loop: trigger → turns → outcome |
-| `src/autonomous/agent-tools.ts` | 42 agent tools: schemas + executors |
+| `src/autonomous/agent-tools.ts` | 49 agent tools: schemas + executors |
 | `src/autonomous/controller.ts` | Lifecycle management: load → run → persist |
 | `src/autonomous/world-model.ts` | Codebase health, activity, concerns |
 | `src/autonomous/goal-stack.ts` | Priority queue of goals |
@@ -524,6 +546,11 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | `src/autonomous/prompt-store.ts` | Self-modifying prompts (Vision Tier 2) |
 | `src/autonomous/shadow-store.ts` | Shadow execution and judgment patterns (Vision Tier 2) |
 | `src/tools/synthesizer.ts` | Tool synthesis (Vision Tier 2) |
+| `src/autonomous/dream/challenge-generator.ts` | Adversarial challenge generation (Vision Tier 3) |
+| `src/autonomous/dream/challenge-evaluator.ts` | Challenge evaluation and sub-skill tracking (Vision Tier 3) |
+| `src/autonomous/dream/prompt-evolution.ts` | Prompt genetic algorithm (Vision Tier 3) |
+| `src/autonomous/dream/training-extractor.ts` | LoRA training data extraction (Vision Tier 3) |
+| `src/autonomous/dream/lora-trainer.ts` | LoRA adapter lifecycle management (Vision Tier 3) |
 | `src/autonomous/types.ts` | Shared type definitions |
 | `src/autonomous/index.ts` | Public exports |
 

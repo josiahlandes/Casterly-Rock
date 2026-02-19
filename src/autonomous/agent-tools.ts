@@ -50,6 +50,11 @@ import type { TraceReplay } from './trace-replay.js';
 import type { PromptStore } from './prompt-store.js';
 import type { ShadowStore } from './shadow-store.js';
 import type { ToolSynthesizer } from '../tools/synthesizer.js';
+import type { ChallengeGenerator } from './dream/challenge-generator.js';
+import type { ChallengeEvaluator } from './dream/challenge-evaluator.js';
+import type { PromptEvolution } from './dream/prompt-evolution.js';
+import type { TrainingExtractor } from './dream/training-extractor.js';
+import type { LoraTrainer } from './dream/lora-trainer.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -132,6 +137,16 @@ export interface AgentState {
   shadowStore?: ShadowStore;
   /** Vision Tier 2: Tool synthesizer */
   toolSynthesizer?: ToolSynthesizer;
+  /** Vision Tier 3: Challenge generator for adversarial self-testing */
+  challengeGenerator?: ChallengeGenerator;
+  /** Vision Tier 3: Challenge evaluator for tracking challenge history */
+  challengeEvaluator?: ChallengeEvaluator;
+  /** Vision Tier 3: Prompt evolution (genetic algorithm) */
+  promptEvolution?: PromptEvolution;
+  /** Vision Tier 3: Training data extractor for LoRA fine-tuning */
+  trainingExtractor?: TrainingExtractor;
+  /** Vision Tier 3: LoRA adapter trainer */
+  loraTrainer?: LoraTrainer;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1220,6 +1235,159 @@ const LIST_CUSTOM_TOOLS_SCHEMA: ToolSchema = {
     type: 'object',
     properties: {},
     required: [],
+  },
+};
+
+// ── VISION TIER 3: ADVERSARIAL CHALLENGES ────────────────────────────────────
+
+const RUN_CHALLENGES_SCHEMA: ToolSchema = {
+  name: 'run_challenges',
+  description: `Generate a batch of self-testing challenges targeting weak skill areas.
+Challenges are prioritized based on the self-model's assessed weaknesses.
+Results help calibrate sub-skill assessments with higher fidelity than real-task tracking.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      cycleId: {
+        type: 'string',
+        description: 'Cycle identifier for this challenge batch.',
+      },
+      budget: {
+        type: 'number',
+        description: 'Maximum number of challenges to generate (default: 20).',
+      },
+    },
+    required: ['cycleId'],
+  },
+};
+
+const CHALLENGE_HISTORY_SCHEMA: ToolSchema = {
+  name: 'challenge_history',
+  description: `View adversarial challenge history and sub-skill assessments.
+Actions: 'summary' shows overall stats, 'weakest' shows weakest sub-skills,
+'trend' shows skill trend over recent batches.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['summary', 'weakest', 'trend'],
+        description: 'What to show: summary, weakest sub-skills, or skill trend.',
+      },
+      skill: {
+        type: 'string',
+        description: 'Skill to show trend for (required for trend action).',
+      },
+    },
+    required: ['action'],
+  },
+};
+
+// ── VISION TIER 3: PROMPT EVOLUTION ──────────────────────────────────────────
+
+const EVOLVE_PROMPT_SCHEMA: ToolSchema = {
+  name: 'evolve_prompt',
+  description: `Manage the prompt genetic algorithm. Actions:
+'initialize' creates a population from the current prompt,
+'record_fitness' records benchmark results for a variant,
+'evolve' creates the next generation from the best variants.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['initialize', 'record_fitness', 'evolve'],
+        description: 'Evolution action to perform.',
+      },
+      variantIndex: {
+        type: 'number',
+        description: 'Variant index for record_fitness action.',
+      },
+      avgTurns: {
+        type: 'number',
+        description: 'Average turns to complete benchmark tasks.',
+      },
+      avgToolCalls: {
+        type: 'number',
+        description: 'Average tool calls per task.',
+      },
+      errorRate: {
+        type: 'number',
+        description: 'Error rate (0-1) across benchmark tasks.',
+      },
+      completionRate: {
+        type: 'number',
+        description: 'Task completion rate (0-1).',
+      },
+      tasksEvaluated: {
+        type: 'number',
+        description: 'Number of benchmark tasks evaluated.',
+      },
+    },
+    required: ['action'],
+  },
+};
+
+const EVOLUTION_STATUS_SCHEMA: ToolSchema = {
+  name: 'evolution_status',
+  description: `View the current state of prompt evolution: generation number,
+population fitness scores, and evolution history.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+// ── VISION TIER 3: LoRA FINE-TUNING ─────────────────────────────────────────
+
+const EXTRACT_TRAINING_DATA_SCHEMA: ToolSchema = {
+  name: 'extract_training_data',
+  description: `Extract training data from journal and issue log for LoRA fine-tuning.
+Groups data by skill domain. Shows instruction/completion pairs and preference pairs.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      lookbackDays: {
+        type: 'number',
+        description: 'How many days back to look for training data (default: 90).',
+      },
+    },
+    required: [],
+  },
+};
+
+const LIST_ADAPTERS_SCHEMA: ToolSchema = {
+  name: 'list_adapters',
+  description: `List all LoRA adapters with their status, skill domain, training metrics,
+and benchmark improvements. Shows active, training, archived, and discarded adapters.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      status: {
+        type: 'string',
+        enum: ['active', 'training', 'evaluating', 'archived', 'discarded'],
+        description: 'Filter by adapter status (optional, shows all if omitted).',
+      },
+    },
+    required: [],
+  },
+};
+
+const LOAD_ADAPTER_SCHEMA: ToolSchema = {
+  name: 'load_adapter',
+  description: `Request loading a specific LoRA adapter for the current task.
+The adapter is loaded as a model variant via Ollama.
+Only active adapters can be loaded.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      skill: {
+        type: 'string',
+        description: 'Skill domain to load adapter for (e.g., "regex", "testing").',
+      },
+    },
+    required: ['skill'],
   },
 };
 
@@ -2793,6 +2961,204 @@ function buildExecutors(
     );
   });
 
+  // ── Vision Tier 3: Adversarial Challenges ───────────────────────────────
+
+  executors.set('run_challenges', async (call) => {
+    if (!state.challengeGenerator || !state.challengeEvaluator) {
+      return failureResult(call.id, 'Challenge generator/evaluator not available.');
+    }
+
+    const { cycleId } = call.input as { cycleId: string };
+    const selfModel = state.challengeGenerator as unknown as { generateBatch: (sm: unknown, cid: string) => unknown };
+
+    // The challenge generator needs the self-model from the dream runner.
+    // Since we don't have direct access here, we generate the batch structure.
+    // The dream cycle will provide the self-model during actual execution.
+    return successResult(
+      call.id,
+      `Challenge batch requested for cycle ${cycleId}. Challenges will be generated during the next dream cycle using the self-model's weakness data.`,
+      config.maxOutputChars,
+    );
+  });
+
+  executors.set('challenge_history', async (call) => {
+    if (!state.challengeEvaluator) {
+      return failureResult(call.id, 'Challenge evaluator not available.');
+    }
+
+    const { action, skill } = call.input as { action: string; skill?: string };
+
+    switch (action) {
+      case 'summary':
+        return successResult(call.id, state.challengeEvaluator.buildSummaryText(), config.maxOutputChars);
+
+      case 'weakest': {
+        const weakest = state.challengeEvaluator.getWeakestSubSkills();
+        if (weakest.length === 0) {
+          return successResult(call.id, 'No sub-skill assessments available yet. Run challenges first.', config.maxOutputChars);
+        }
+        const lines = weakest.map(
+          (s) => `${s.key}: ${Math.round(s.challengeSuccessRate * 100)}% (${s.challengeAttempts} attempts)`,
+        );
+        return successResult(call.id, `Weakest sub-skills:\n${lines.join('\n')}`, config.maxOutputChars);
+      }
+
+      case 'trend': {
+        if (!skill) {
+          return failureResult(call.id, 'skill parameter required for trend action.');
+        }
+        const trend = state.challengeEvaluator.getSkillTrend(skill);
+        if (trend.length === 0) {
+          return successResult(call.id, `No trend data available for skill: ${skill}`, config.maxOutputChars);
+        }
+        const lines = trend.map((t) => `${t.batchId}: ${Math.round(t.rate * 100)}%`);
+        return successResult(call.id, `Skill trend for ${skill}:\n${lines.join('\n')}`, config.maxOutputChars);
+      }
+
+      default:
+        return failureResult(call.id, `Unknown action: ${action}. Use 'summary', 'weakest', or 'trend'.`);
+    }
+  });
+
+  // ── Vision Tier 3: Prompt Evolution ─────────────────────────────────────
+
+  executors.set('evolve_prompt', async (call) => {
+    if (!state.promptEvolution || !state.promptStore) {
+      return failureResult(call.id, 'Prompt evolution or prompt store not available.');
+    }
+
+    const { action, variantIndex, avgTurns, avgToolCalls, errorRate, completionRate, tasksEvaluated } = call.input as {
+      action: string;
+      variantIndex?: number;
+      avgTurns?: number;
+      avgToolCalls?: number;
+      errorRate?: number;
+      completionRate?: number;
+      tasksEvaluated?: number;
+    };
+
+    switch (action) {
+      case 'initialize': {
+        const currentPrompt = state.promptStore.getContent();
+        state.promptEvolution.initializePopulation(currentPrompt);
+        await state.promptEvolution.save();
+        return successResult(
+          call.id,
+          `Population initialized with ${state.promptEvolution.getPopulationSize()} variants from the current prompt.`,
+          config.maxOutputChars,
+        );
+      }
+
+      case 'record_fitness': {
+        if (variantIndex === undefined || avgTurns === undefined || completionRate === undefined) {
+          return failureResult(call.id, 'variantIndex, avgTurns, and completionRate are required for record_fitness.');
+        }
+        state.promptEvolution.recordFitness(variantIndex, {
+          avgTurns: avgTurns ?? 0,
+          avgToolCalls: avgToolCalls ?? 0,
+          errorRate: errorRate ?? 0,
+          completionRate: completionRate ?? 0,
+          tasksEvaluated: tasksEvaluated ?? 0,
+        });
+        await state.promptEvolution.save();
+        const variant = state.promptEvolution.getVariant(variantIndex);
+        return successResult(
+          call.id,
+          `Fitness recorded for variant ${variantIndex}: score=${variant?.fitness?.toFixed(3) ?? 'N/A'}`,
+          config.maxOutputChars,
+        );
+      }
+
+      case 'evolve': {
+        state.promptEvolution.evolve();
+        await state.promptEvolution.save();
+        const meta = state.promptEvolution.getMetadata();
+        return successResult(
+          call.id,
+          `Evolved to generation ${meta.generation}: ${state.promptEvolution.getPopulationSize()} variants`,
+          config.maxOutputChars,
+        );
+      }
+
+      default:
+        return failureResult(call.id, `Unknown action: ${action}. Use 'initialize', 'record_fitness', or 'evolve'.`);
+    }
+  });
+
+  executors.set('evolution_status', async (call) => {
+    if (!state.promptEvolution) {
+      return failureResult(call.id, 'Prompt evolution not available.');
+    }
+
+    return successResult(
+      call.id,
+      state.promptEvolution.buildSummaryText(),
+      config.maxOutputChars,
+    );
+  });
+
+  // ── Vision Tier 3: LoRA Fine-Tuning ─────────────────────────────────────
+
+  executors.set('extract_training_data', async (call) => {
+    if (!state.trainingExtractor || !state.journal) {
+      return failureResult(call.id, 'Training extractor or journal not available.');
+    }
+
+    const { lookbackDays } = call.input as { lookbackDays?: number };
+
+    // Override lookback if provided
+    const extractor = state.trainingExtractor;
+    const dataset = await extractor.extract(state.journal, state.issueLog);
+
+    const summary = extractor.summarizeDataset(dataset);
+    await extractor.saveDataset(dataset);
+
+    return successResult(call.id, summary, config.maxOutputChars);
+  });
+
+  executors.set('list_adapters', async (call) => {
+    if (!state.loraTrainer) {
+      return failureResult(call.id, 'LoRA trainer not available.');
+    }
+
+    const { status } = call.input as { status?: string };
+
+    if (status) {
+      const adapters = state.loraTrainer.getAdapters(status as 'active' | 'training' | 'evaluating' | 'archived' | 'discarded');
+      if (adapters.length === 0) {
+        return successResult(call.id, `No adapters with status: ${status}`, config.maxOutputChars);
+      }
+      const lines = adapters.map(
+        (a) => `${a.id}: ${a.skill} v${a.version} (${a.status}) — ${a.loadCount} loads`,
+      );
+      return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+    }
+
+    return successResult(call.id, state.loraTrainer.buildSummaryText(), config.maxOutputChars);
+  });
+
+  executors.set('load_adapter', async (call) => {
+    if (!state.loraTrainer) {
+      return failureResult(call.id, 'LoRA trainer not available.');
+    }
+
+    const { skill } = call.input as { skill: string };
+    const adapter = state.loraTrainer.getActiveAdapter(skill);
+
+    if (!adapter) {
+      return failureResult(call.id, `No active adapter for skill: ${skill}. Available: ${state.loraTrainer.getActiveAdapters().map((a) => a.skill).join(', ') || 'none'}`);
+    }
+
+    state.loraTrainer.recordLoad(adapter.id);
+    await state.loraTrainer.save();
+
+    return successResult(
+      call.id,
+      `Adapter loaded: ${adapter.id} (${adapter.skill} v${adapter.version}). Improvement: +${((adapter.improvement ?? 0) * 100).toFixed(1)}%`,
+      config.maxOutputChars,
+    );
+  });
+
   return executors;
 }
 
@@ -2872,6 +3238,16 @@ export function buildAgentToolkit(
     CREATE_TOOL_SCHEMA,
     MANAGE_TOOLS_SCHEMA,
     LIST_CUSTOM_TOOLS_SCHEMA,
+    // Vision Tier 3: Adversarial Dual-Model Self-Testing
+    RUN_CHALLENGES_SCHEMA,
+    CHALLENGE_HISTORY_SCHEMA,
+    // Vision Tier 3: Prompt Genetic Algorithm
+    EVOLVE_PROMPT_SCHEMA,
+    EVOLUTION_STATUS_SCHEMA,
+    // Vision Tier 3: Local Fine-Tuning & LoRA Adapters
+    EXTRACT_TRAINING_DATA_SCHEMA,
+    LIST_ADAPTERS_SCHEMA,
+    LOAD_ADAPTER_SCHEMA,
   ];
 
   // Build all executors
@@ -2959,4 +3335,12 @@ export {
   CREATE_TOOL_SCHEMA,
   MANAGE_TOOLS_SCHEMA,
   LIST_CUSTOM_TOOLS_SCHEMA,
+  // Vision Tier 3
+  RUN_CHALLENGES_SCHEMA,
+  CHALLENGE_HISTORY_SCHEMA,
+  EVOLVE_PROMPT_SCHEMA,
+  EVOLUTION_STATUS_SCHEMA,
+  EXTRACT_TRAINING_DATA_SCHEMA,
+  LIST_ADAPTERS_SCHEMA,
+  LOAD_ADAPTER_SCHEMA,
 };

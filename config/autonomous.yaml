@@ -380,6 +380,94 @@ self_improvement:
     unused_days_threshold: 30
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SELF-IMPROVEMENT TIER 3 (Vision: Adversarial Testing, Prompt Evolution, LoRA)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+advanced_self_improvement:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ADVERSARIAL DUAL-MODEL SELF-TESTING
+  # ─────────────────────────────────────────────────────────────────────────────
+  adversarial:
+    # Maximum challenges per dream cycle batch
+    challenge_budget: 20
+
+    # Prioritize weakest skills from self-model
+    prioritize_weak_skills: true
+
+    # Challenge types to generate
+    challenge_types:
+      - code_completion
+      - bug_detection
+      - regex_construction
+      - refactoring_decision
+      - security_review
+
+    # Time limit per challenge in seconds
+    default_time_limit_seconds: 60
+
+    # Path to challenge evaluation history
+    history_path: ~/.casterly/challenge-history.json
+
+    # Maximum batch records to keep
+    max_batch_records: 50
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PROMPT GENETIC ALGORITHM
+  # ─────────────────────────────────────────────────────────────────────────────
+  prompt_evolution:
+    # Directory for prompt variants
+    variants_path: ~/.casterly/prompt-evolution
+
+    # Population size (number of variant prompts)
+    population_size: 8
+
+    # Mutation rate (0.0-1.0)
+    mutation_rate: 0.3
+
+    # Crossover rate (0.0-1.0)
+    crossover_rate: 0.7
+
+    # Keep current best in next generation (elite strategy)
+    elite_strategy: true
+
+    # Maximum generation records to keep
+    max_generation_history: 50
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LOCAL FINE-TUNING AND LoRA ADAPTERS
+  # ─────────────────────────────────────────────────────────────────────────────
+  lora_training:
+    # Directory for adapter files
+    adapters_path: ~/.casterly/adapters
+
+    # Directory for benchmark tasks
+    benchmarks_path: ~/.casterly/benchmarks
+
+    # Maximum adapters to maintain
+    max_adapters: 20
+
+    # Minimum improvement threshold to keep adapter (e.g., 0.05 = +5%)
+    min_improvement_threshold: 0.05
+
+    # Training data lookback in days
+    training_data_lookback_days: 90
+
+    # Default LoRA configuration
+    lora:
+      rank: 8
+      alpha: 16
+      target_modules:
+        - q_proj
+        - v_proj
+      learning_rate: 0.0001
+      epochs: 3
+      batch_size: 8
+      format: instruction_completion
+
+    # Number of benchmark tasks per evaluation
+    eval_sample_size: 10
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # COMMUNICATION (Phase 7: proactive user messaging)
 # ═══════════════════════════════════════════════════════════════════════════════
 
