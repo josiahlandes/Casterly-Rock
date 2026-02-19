@@ -1,59 +1,216 @@
-# Creating Skills and Tools
+# Skills & Tools
 
-This guide explains how to create custom skills and define native tools for Casterly.
+> **Source**: `src/tools/`, `src/skills/`, `skills/`
 
-## Skills Overview
+Tyrion has two complementary capability systems: **native tools** (built-in, typed executors compiled into the binary) and **skills** (drop-in markdown packages loaded from disk at startup). Both are surfaced to the LLM through the same tool-use protocol.
 
-Skills extend Casterly's capabilities with domain-specific instructions and optional native tools. They are defined in `SKILL.md` files using YAML frontmatter and markdown content.
-
-**Skill locations:**
-- `~/.casterly/workspace/skills/` - User skills
-- `skills/` - Project skills
-
-## Basic Skill Structure
+## Architecture Overview
 
 ```
-my-skill/
-└── SKILL.md
+┌─────────────────────────────────────────────────────────────────┐
+│                        Tool Registry                            │
+│  Holds ToolSchema[] — name, description, JSON Schema params     │
+│  Formats for Anthropic or Ollama/OpenAI wire format             │
+└──────────┬──────────────────────────────┬───────────────────────┘
+           │                              │
+    CORE_TOOLS (compiled)         Skill tools (loaded from SKILL.md)
+           │                              │
+           ▼                              ▼
+┌──────────────────────┐   ┌──────────────────────────┐
+│  Tool Orchestrator   │   │  Skill Registry          │
+│  Map<name, executor> │   │  Map<id, Skill>          │
+│  execute(call)       │   │  getRelevantSkillInstr() │
+│  executeAll(calls[]) │   │  getPromptSection()      │
+└──────────────────────┘   │  getTools()              │
+                           └──────────────────────────┘
+```
+
+---
+
+## Native Tools
+
+### Type System
+
+Every tool is a `ToolSchema`:
+
+```typescript
+interface ToolSchema {
+  name: string;             // Unique name the LLM uses to invoke it
+  description: string;      // Human-readable description
+  inputSchema: {            // JSON Schema for parameters
+    type: 'object';
+    properties: Record<string, ToolProperty>;
+    required: string[];
+  };
+}
+```
+
+Tool calls and results are typed:
+
+```typescript
+interface NativeToolCall {
+  id: string;                       // Match request to response
+  name: string;                     // Tool name
+  input: Record<string, unknown>;   // Structured params
+}
+
+interface NativeToolResult {
+  toolCallId: string;
+  success: boolean;
+  output?: string;
+  error?: string;
+  exitCode?: number;
+}
+```
+
+### Tool Registry
+
+`createToolRegistry()` manages all tool schemas and converts between provider formats:
+
+| Method | Purpose |
+|--------|---------|
+| `register(tool)` | Add a tool schema |
+| `getTools()` | All registered schemas |
+| `getTool(name)` | Lookup by name |
+| `formatForAnthropic()` | Convert to `{ name, description, input_schema }` |
+| `formatForOllama()` | Convert to `{ type: "function", function: { name, description, parameters } }` |
+
+Core tools are registered by default.
+
+### Tool Orchestrator
+
+`createToolOrchestrator()` maps tool names to executor functions and dispatches calls:
+
+| Method | Purpose |
+|--------|---------|
+| `registerExecutor(executor)` | Register a `{ toolName, execute }` pair |
+| `canExecute(name)` | Check if executor exists |
+| `execute(call)` | Execute a single tool call |
+| `executeAll(calls)` | Execute calls sequentially, continue on failure |
+| `getRegisteredTools()` | List registered tool names |
+
+### Core Tools (13 total)
+
+Registered by default via `CORE_TOOLS`:
+
+#### File Tools (5)
+
+| Tool | Description | Key Params |
+|------|-------------|------------|
+| `read_file` | Read file contents with optional line limit | `path`, `encoding?`, `maxLines?` |
+| `write_file` | Write/append to file, creates parent dirs | `path`, `content`, `append?` |
+| `list_files` | List directory entries with type and size | `path`, `recursive?`, `pattern?` |
+| `search_files` | Regex search across files | `pattern`, `path?`, `filePattern?`, `maxResults?` |
+| `read_document` | Parse binary docs (PDF, DOCX, XLSX, CSV, ZIP) | `path`, `maxPages?`, `maxRows?`, `format?`, `sheet?` |
+
+**`write_file` rule**: User documents (budgets, notes, lists) go to `~/Documents/Tyrion/`, not the project repo.
+
+**`read_document` formats**: PDF (text + metadata), DOCX (text or HTML), XLSX (structured rows per sheet), CSV (headers + rows), ZIP/TAR.GZ (archive listing). Format detected by magic bytes first, then extension.
+
+#### Coding Tools (4)
+
+| Tool | Description | Key Params |
+|------|-------------|------------|
+| `edit_file` | Search/replace in existing file with diff preview | `path`, `search`, `replace`, `replaceAll?` |
+| `glob_files` | Pattern-based file discovery with metadata | `pattern`, `cwd?`, `filesOnly?`, `maxDepth?` |
+| `grep_files` | Content search with context lines | `pattern`, `cwd?`, `include?`, `ignoreCase?`, `literal?`, `contextBefore?`, `contextAfter?`, `maxMatches?` |
+| `validate_files` | Run parse/lint/typecheck/test pipeline | `files`, `quick?`, `skipTest?` |
+
+#### Messaging Tools (1)
+
+| Tool | Description | Key Params |
+|------|-------------|------------|
+| `send_message` | Send iMessage to phone number or email | `recipient`, `text` |
+
+Not for replying to the current sender (that's automatic). Must use this tool, not bash + osascript.
+
+#### Productivity Tools (3)
+
+| Tool | Description | Key Params |
+|------|-------------|------------|
+| `calendar_read` | Read Apple Calendar events via AppleScript | `from?`, `to?`, `calendar?`, `limit?` |
+| `reminder_create` | Create Apple Reminder | `title`, `dueDate?`, `notes?`, `list?`, `priority?` |
+| `http_get` | HTTP GET with safety guards | `url`, `headers?`, `timeout?`, `maxSize?` |
+
+**`http_get` safety**: GET only. Blocks private/internal IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata). Blocks `file:`, `ftp:`, `data:`, `javascript:` schemes. Blocks `Cookie` and `Authorization` headers. 30s default timeout, 2MB default / 10MB max response.
+
+#### Shell Fallback (1)
+
+| Tool | Description |
+|------|-------------|
+| `bash` | General-purpose shell execution via `/bin/zsh` |
+
+The LLM is instructed to prefer native tools over bash equivalents. Bash goes through the three-tier safety gate (BLOCKED / APPROVAL_REQUIRED / SAFE) documented in `docs/security.md`.
+
+### Executor Registration
+
+All 13 native executors are registered in `registerNativeExecutors()`:
+
+```text
+Core file:    read_file, write_file, list_files, search_files, read_document
+Coding:       edit_file, glob_files, grep_files, validate_files
+Messaging:    send_message
+Productivity: calendar_read, reminder_create, http_get
+```
+
+Bash execution is registered separately.
+
+---
+
+## Skills System
+
+Skills are self-contained capability packages loaded from disk. Each skill is a directory containing a `SKILL.md` with YAML frontmatter and markdown instructions.
+
+### Skill Structure
+
+```
+skills/
+├── apple-calendar/
+│   └── SKILL.md
+├── imessage-send/
+│   └── SKILL.md
+├── system-control/
+│   └── SKILL.md
+├── self-update/
+│   └── SKILL.md
+└── 3d-printing/
+    ├── SKILL.md
+    └── scripts/
+        ├── printer-api.sh
+        ├── sdcp-client.mjs
+        └── slice-model.sh
 ```
 
 ### SKILL.md Format
 
-```markdown
+```yaml
 ---
-name: my-skill
-description: Short description of what the skill does
-homepage: https://example.com  # Optional
+name: skill-name
+description: What the skill does
+homepage: https://...                    # Optional
 metadata:
   openclaw:
-    emoji: "🔧"
-    os: ["darwin", "linux"]  # Optional OS restrictions
+    emoji: "📅"
+    os: ["darwin"]                       # Supported platforms
     requires:
-      bins: ["git", "npm"]   # Required binaries
-      envVars: ["API_KEY"]   # Required environment variables
+      bins: ["orca-slicer"]             # Required binaries
+      envVars: ["API_KEY"]              # Required env vars
     install:
-      - id: brew
-        kind: brew
-        formula: my-tool
-        bins: ["my-tool"]
+      - id: orcaslicer
+        kind: manual
+        instructions: "Download from ..."
+tools:                                   # Optional native tool schemas
+  - name: tool_name
+    description: What it does
+    inputSchema: { ... }
 ---
 
-# My Skill
+# Skill Name
 
-Instructions for the LLM on how to use this skill.
-
-## Usage
-
-Explain when and how to use the skill.
-
-## Examples
-
-\`\`\`bash
-example-command --flag
-\`\`\`
+Markdown instructions for the LLM...
 ```
 
-## Skill Frontmatter Properties
+#### Frontmatter Properties
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
@@ -63,123 +220,92 @@ example-command --flag
 | `metadata` | `object` | No | OpenClaw metadata |
 | `tools` | `ToolSchema[]` | No | Native tool definitions |
 
-### OpenClaw Metadata
+### Skill Loading
 
-```yaml
-metadata:
-  openclaw:
-    emoji: "🎯"              # Display emoji
-    os: ["darwin"]           # Supported platforms
-    requires:
-      bins: ["tool-name"]    # Required CLI tools
-      envVars: ["ENV_VAR"]   # Required env vars
-    install:
-      - id: brew
-        kind: brew
-        formula: formula-name
-```
+**Search directories** (in priority order — first match wins):
 
-## Adding Native Tools to Skills
+1. `~/.casterly/skills/` — User workspace skills (highest priority)
+2. `~/Casterly/skills/` — Project skills
+3. `./skills/` — Current directory skills
 
-Skills can define native tools that are registered when the skill loads. This enables structured tool calling instead of text-based command parsing.
+**Loading process** (`loadSkills()`):
 
-### Tool Schema Format
+1. Scan each directory for subdirectories
+2. Read `SKILL.md` in each subdirectory
+3. Parse YAML frontmatter (name, description, metadata, tools)
+4. Check requirements:
+   - OS compatibility (`platform()` vs `metadata.openclaw.os`)
+   - Required binaries (`which` check for each `requires.bins` entry)
+   - Required env vars (`process.env` check)
+5. Mark `available: true/false` with reason
 
-```yaml
----
-name: weather-skill
-description: Get weather information
-tools:
-  - name: get_weather
-    description: Get current weather for a location
-    inputSchema:
-      type: object
-      properties:
-        location:
-          type: string
-          description: City name or coordinates
-        units:
-          type: string
-          description: Temperature units
-          enum: ["celsius", "fahrenheit"]
-      required:
-        - location
----
-```
+### Skill Registry
 
-### Complete Example with Tools
+`createSkillRegistry()` provides:
 
-```yaml
----
-name: file-manager
-description: Manage files and directories
-tools:
-  - name: list_files
-    description: List files in a directory
-    inputSchema:
-      type: object
-      properties:
-        path:
-          type: string
-          description: Directory path to list
-        recursive:
-          type: boolean
-          description: Whether to list recursively
-      required:
-        - path
+| Method | Purpose |
+|--------|---------|
+| `get(id)` | Look up skill by directory name |
+| `getAvailable()` | All skills passing requirement checks |
+| `getPromptSection()` | Names + descriptions for system prompt (no full instructions) |
+| `getRelevantSkillInstructions(message)` | Full instructions for skills matching user intent |
+| `getTools()` | Native `ToolSchema[]` defined by available skills |
+| `reload()` | Rescan skill directories |
 
-  - name: read_file
-    description: Read contents of a file
-    inputSchema:
-      type: object
-      properties:
-        path:
-          type: string
-          description: Path to the file to read
-        encoding:
-          type: string
-          description: File encoding
-          enum: ["utf-8", "ascii", "base64"]
-      required:
-        - path
+### Intent Matching
 
-  - name: write_file
-    description: Write content to a file
-    inputSchema:
-      type: object
-      properties:
-        path:
-          type: string
-          description: Path to write to
-        content:
-          type: string
-          description: Content to write
-        append:
-          type: boolean
-          description: Append instead of overwrite
-      required:
-        - path
-        - content
+`getRelevantSkillInstructions()` uses keyword-to-skill-ID mappings to decide which skills are relevant for a given message:
+
+| Keywords | Skill IDs |
+|----------|-----------|
+| note, notes | apple-notes |
+| grocery, shopping list, list | apple-notes, apple-reminders |
+| reminder, remind, todo | apple-reminders |
+| calendar, event, meeting, schedule, appointment | apple-calendar |
+| weather, forecast, temperature, rain | weather |
+| text, message, send | imessage-send, imsg |
+| email, mail | himalaya |
+| spotify, music, play, song | spotify-player |
+| photo, picture, camera, snap | camsnap |
+| volume, brightness, screenshot | system-control |
+| code | coding-agent |
+| github, repo, pull request, pr | github |
+
+Falls back to name/description substring matching.
+
+**Prompt safety**: Full skill instructions contain example bash commands. The registry wraps them with a warning:
+> "The documentation below contains EXAMPLE commands. Do NOT execute every example! Choose ONLY the ONE command that matches what the user asked for."
+
+### Notes Skill Deduplication
+
+If multiple notes skills are loaded (e.g. `apple-notes` and `bear-notes`), the registry filters to prefer `apple-notes`.
+
+### Installed Skills
+
+| Skill | Description | OS | Requirements | Native Tools |
+|-------|-------------|-----|-------------|--------------|
+| `apple-calendar` | Query Apple Calendar events via AppleScript | macOS | — | — |
+| `imessage-send` | Send iMessages to contacts | macOS | — | — |
+| `system-control` | Volume, brightness, apps, screenshots, processes | macOS | — | — |
+| `self-update` | Check for updates, update, restart Tyrion | macOS, Linux | `git`, `npm` | `check_for_updates`, `update_tyrion`, `restart_tyrion` |
+| `3d-printing` | Slice models, manage presets, control Elegoo Centauri Carbon | macOS, Linux | `orca-slicer`, `curl`, `jq` | 12 tools (slice, presets, upload, print control, status) |
+
 ---
 
-# File Manager Skill
+## Creating Skills
 
-Manage files using native tool calls.
+### Adding a New Skill
 
-## When to use
+1. Create a directory under one of the skill search paths
+2. Add a `SKILL.md` with YAML frontmatter (`name` and `description` required)
+3. Optionally define `metadata.openclaw` for OS/binary requirements
+4. Optionally define `tools` array for native tool schemas
+5. Write markdown instructions for the LLM in the body
+6. Add supporting scripts in the skill directory if needed
 
-Use this skill when the user asks to:
-- List files in a directory
-- Read file contents
-- Create or modify files
+The skill is automatically loaded on next startup (or `registry.reload()`).
 
-## Notes
-
-- Always confirm before overwriting existing files
-- Use recursive listing sparingly on large directories
-```
-
-## Tool Property Types
+### Tool Property Types
 
 | Type | Description | Example |
 |------|-------------|---------|
@@ -190,137 +316,11 @@ Use this skill when the user asks to:
 | `object` | Nested object | `{"key": "value"}` |
 | `array` | List of items | `["a", "b", "c"]` |
 
-### String Enums
+String enums restrict values: `enum: ["red", "green", "blue"]`
 
-Restrict string values to specific options:
+Array items are typed: `items: { type: string, description: "A tag" }`
 
-```yaml
-properties:
-  color:
-    type: string
-    description: Color choice
-    enum: ["red", "green", "blue"]
-```
-
-### Array Types
-
-Define array item types:
-
-```yaml
-properties:
-  tags:
-    type: array
-    description: List of tags
-    items:
-      type: string
-      description: A tag
-```
-
-### Nested Objects
-
-Define complex nested structures:
-
-```yaml
-properties:
-  config:
-    type: object
-    description: Configuration options
-    properties:
-      enabled:
-        type: boolean
-        description: Whether enabled
-      timeout:
-        type: integer
-        description: Timeout in seconds
-    required:
-      - enabled
-```
-
-## Skill Availability
-
-Skills are automatically checked for availability based on their requirements:
-
-1. **OS Check**: Skill is unavailable if `os` doesn't include current platform
-2. **Binary Check**: Skill is unavailable if required `bins` aren't on PATH
-3. **Env Check**: Skill is unavailable if required `envVars` aren't set
-
-Unavailable skills are loaded but not included in the LLM context.
-
-## Skill Registry API
-
-Access skills programmatically:
-
-```typescript
-import { createSkillRegistry } from './skills';
-
-const registry = createSkillRegistry();
-
-// Get all available skills
-const skills = registry.getAvailable();
-
-// Get skill by ID
-const skill = registry.get('my-skill');
-
-// Get all tools from skills
-const tools = registry.getTools();
-
-// Get relevant instructions for a message
-const instructions = registry.getRelevantSkillInstructions('send a message');
-```
-
-## Built-in Tools
-
-Casterly includes these core tools:
-
-### bash
-
-Execute shell commands:
-
-```typescript
-{
-  name: 'bash',
-  description: 'Execute a shell command on the local system.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      command: {
-        type: 'string',
-        description: 'The shell command to execute.'
-      }
-    },
-    required: ['command']
-  }
-}
-```
-
-### route_decision
-
-Used internally by the router:
-
-```typescript
-{
-  name: 'route_decision',
-  description: 'Declare your routing decision for the user request.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      route: {
-        type: 'string',
-        enum: ['local', 'cloud']
-      },
-      reason: {
-        type: 'string'
-      },
-      confidence: {
-        type: 'number'
-      }
-    },
-    required: ['route', 'reason', 'confidence']
-  }
-}
-```
-
-## Creating Custom Tool Executors
+### Creating Custom Tool Executors
 
 To execute tools defined by skills, register custom executors:
 
@@ -329,13 +329,10 @@ import { createToolOrchestrator } from './tools';
 
 const orchestrator = createToolOrchestrator();
 
-// Register a custom executor
 orchestrator.registerExecutor({
   toolName: 'get_weather',
   async execute(call) {
     const { location, units } = call.input as { location: string; units?: string };
-
-    // Implement tool logic
     const weather = await fetchWeather(location, units);
 
     return {
@@ -347,53 +344,51 @@ orchestrator.registerExecutor({
 });
 ```
 
-## Best Practices
+### Best Practices
 
-### Skill Instructions
+**Skill instructions:**
+1. Be specific — clearly explain when and how to use the skill
+2. Include examples — show command patterns and expected outputs
+3. Document limitations — note what the skill cannot do
+4. Handle errors — explain how to recover from common failures
 
-1. **Be specific**: Clearly explain when and how to use the skill
-2. **Include examples**: Show command patterns and expected outputs
-3. **Document limitations**: Note what the skill cannot do
-4. **Handle errors**: Explain how to recover from common failures
+**Tool definitions:**
+1. Use descriptive names (`get_weather` not `gw`)
+2. Write clear descriptions explaining what the tool does and when to use it
+3. Mark required fields and use enums where appropriate
+4. Prefer flat structures over deep nesting
 
-### Tool Definitions
+**Security:**
+1. Validate all inputs in your executor before using them
+2. Don't expose secrets in tool outputs
+3. Use safety gates for destructive operations
+4. Log through `safeLogger` — never log sensitive tool inputs directly
 
-1. **Descriptive names**: Use `get_weather` not `gw`
-2. **Clear descriptions**: Explain what the tool does and when to use it
-3. **Validate inputs**: Mark required fields and use enums where appropriate
-4. **Keep it simple**: Prefer flat structures over deep nesting
+### Troubleshooting
 
-### Security
+**Skill not loading:** Check YAML frontmatter syntax; verify `name` and `description` are present; confirm file location.
 
-1. **Validate all inputs** in your executor before using them
-2. **Don't expose secrets** in tool outputs
-3. **Use safety gates** for destructive operations
-4. **Log carefully** - don't log sensitive tool inputs
+**Skill shows as unavailable:** Check required binaries (`which binary-name`); check env vars (`echo $ENV_VAR`); check OS restriction matches platform.
 
-## Troubleshooting
+**Tool not being called:** Verify tool schema is valid JSON Schema; check tool is registered with orchestrator; ensure model supports native tool use.
 
-### Skill Not Loading
+**Tool execution fails:** Check executor is registered for the tool name; verify input validation in executor; check safety gates aren't blocking execution.
 
-1. Check YAML frontmatter syntax (use a YAML validator)
-2. Verify `name` and `description` are present
-3. Check file location is correct
+---
 
-### Skill Shows as Unavailable
+## Key Files
 
-1. Check required binaries are installed: `which binary-name`
-2. Check environment variables: `echo $ENV_VAR`
-3. Check OS restriction matches current platform
-
-### Tool Not Being Called
-
-1. Verify tool schema is valid JSON Schema
-2. Check tool is registered with orchestrator
-3. Look at trace output for tool call attempts
-4. Ensure model supports native tool use
-
-### Tool Execution Fails
-
-1. Check executor is registered for the tool name
-2. Verify input validation in executor
-3. Look at error message in tool result
-4. Check safety gates aren't blocking execution
+| File | Purpose |
+|------|---------|
+| `src/tools/schemas/types.ts` | Core type definitions (ToolSchema, NativeToolCall, etc.) |
+| `src/tools/schemas/core.ts` | Core tool definitions (bash, file tools) + aggregation |
+| `src/tools/schemas/coding.ts` | Coding tool definitions (edit, glob, grep, validate) |
+| `src/tools/schemas/messaging.ts` | Messaging tool definitions (send_message) |
+| `src/tools/schemas/productivity.ts` | Productivity tool definitions (calendar, reminder, http_get) |
+| `src/tools/schemas/registry.ts` | Tool registry with Anthropic/Ollama format conversion |
+| `src/tools/orchestrator.ts` | Tool call dispatcher |
+| `src/tools/executor.ts` | Bash executor with safety gates |
+| `src/tools/executors/*.ts` | Individual native tool executor implementations |
+| `src/skills/types.ts` | Skill type definitions (Skill, SkillRegistry, etc.) |
+| `src/skills/loader.ts` | Skill loading, requirement checking, registry creation |
+| `skills/*/SKILL.md` | Individual skill packages |
