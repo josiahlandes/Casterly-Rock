@@ -14,46 +14,107 @@ Privacy is not a toggle, a policy page, or a promise. It is a structural propert
 
 Local inference is not a degraded mode activated when the network is down. It is the primary and only mode. The system is designed around the capabilities and constraints of on-device models. Cloud providers exist in the codebase as a historical artifact; they are not used.
 
+### LLM-Driven, Not LLM-Assisted
+
+Most agent architectures treat the LLM as a component inside a system -- called at specific points in a hardcoded pipeline, with the application logic deciding when to invoke it, what context to provide, and how to interpret the result. Casterly inverts this. The LLM is the system. It drives the execution loop, decides what to do next, chooses which tools to invoke, manages its own context, and determines when to verify its own work.
+
+The system provides capability. The LLM provides judgment. Classification, planning, execution strategy, verification, memory management, and dream cycles are all decisions the LLM makes -- guided by its system prompt and shaped by its accumulated self-knowledge, not enforced by a state machine in code.
+
+This inversion is only viable because of the economics of local inference. When tokens are free, the scarce resource is not compute but model capability per inference -- can the model reliably make the right decision at each step? The entire architecture is designed around that question: maximizing the probability that the LLM makes good decisions, and making recovery cheap when it doesn't.
+
 ### Autonomous Agency, Not a Chatbot
 
-Casterly is not a question-answering service waiting for input. It is an agent that can initiate actions, schedule work, monitor events, and maintain continuity across sessions. It classifies incoming work, decomposes complex tasks into plans, executes those plans with verification, and learns from outcomes. When idle, it can consolidate memory and reflect on past interactions.
+Casterly is not a question-answering service waiting for input. It is an agent that can initiate actions, schedule work, monitor events, and maintain continuity across sessions. When idle, it can consolidate memory and reflect on past interactions. The LLM decides how to handle incoming work -- whether it needs planning, whether it needs verification, whether it's trivial enough to just do. There is no fixed pipeline that every task must traverse.
 
 ### Journal-Driven Continuity
 
 State is not a structured object passed between pipeline stages. It is a narrative. The journal -- an append-only JSONL log -- is the source of truth for what Casterly has done, what it noticed, what it thinks, and what it would tell its future self. Every session begins by reading the most recent handoff note and ends by writing one. Opinions emerge from experience. Self-knowledge is derived from patterns in the journal, not hardcoded.
 
+The journal is also where architectural decisions accumulate. When the LLM discovers that a particular strategy works well for a particular kind of task, that insight enters the journal and shapes future behavior. The system's architecture evolves through experience, not code changes.
+
 ## Hardware as Strategy
 
 The Mac Studio M4 Max with 128GB unified memory is not a deployment target. It is the strategic advantage.
 
-### What This Enables Now
+### Free Tokens Change Everything
 
-- **gpt-oss:120b running locally** with headroom for a second concurrent model (qwen3-coder-next for code editing). No API latency. No rate limits. No per-token costs.
-- **128GB unified memory** means two 70B+ parameter models can coexist in memory simultaneously, enabling task-based model routing without cold starts.
+Running inference locally means tokens are effectively free -- electricity is the only marginal cost, and it's negligible. This inverts the economics that drive every cloud-based agent architecture. Cloud architectures minimize LLM calls because each one costs money. Casterly maximizes them because each one is free.
+
+This means the system can afford patterns that cloud architectures cannot:
+
+- **Self-correction loops.** Instead of needing to get it right in one shot, the model generates, critiques its own output, and revises. A 120b model that gets 3 attempts at a reasoning step is more reliable than a 200b model that gets one.
+- **Redundant verification.** The model verifies incrementally -- checking each step as it goes rather than running a single verifier at the end. This catches errors before they compound, which is the exact failure mode a local model is most vulnerable to.
+- **Rich context loading.** With 128GB, there's room to load generous amounts of relevant context per inference. The model controls what to load and what to evict, rather than the system budgeting on its behalf.
+- **Exploration.** The model can try approaches, backtrack, and try again. Dead ends are cheap when tokens are free.
+
+### What 128GB Enables
+
+- **gpt-oss:120b + qwen3-coder-next concurrently** -- two 70B+ parameter models coexisting in memory. No cold starts, no swapping, no choosing between them. The LLM decides which model handles each step at runtime.
+- **Headroom for a third lightweight model** (7b-13b) that can serve as a fast tool -- a draft generator, a quick classifier, or a spell-checker for the executive model's reasoning. The 120b model decides when to invoke it.
+- **Large context windows** -- 128K token windows paired with LLM-controlled context management. Quality over quantity: exactly the right 32K tokens of context outperforms 128K tokens of noise, and the model is the one best positioned to judge what's relevant.
+- **On-device embeddings** for semantic memory without competing for memory with the inference models.
 - **NVMe storage** for fast journal reads, session loading, and repo-map generation.
 - **Full macOS integration** -- iMessage, Calendar, Reminders, Notes, Finder, System Events -- all accessible locally via AppleScript and native APIs with no network dependency.
 
-### What This Unlocks
+## Architecture: The Thin Runtime
 
-- **On-device embeddings** for semantic memory (beyond keyword matching in the journal).
-- **Concurrent agent reasoning** to maximize hardware utilization -- multiple subagents reasoning in parallel within the hardware's concurrency budget.
-- **Real-time event processing** -- file watchers, git hooks, and calendar polling feeding triggers into the agent loop with minimal latency.
-- **Large context windows** -- local models with 128K context windows, paired with intelligent context budgeting, enable complex multi-file code operations.
+The system is reduced to four layers. Everything else is the LLM's decision.
 
-## Models
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Event Queue                                                 │
+│     Triggers come in (user messages, file changes, schedules,   │
+│     goals). The LLM decides when, whether, and how to act.     │
+├─────────────────────────────────────────────────────────────────┤
+│  2. Tool Runtime                                                │
+│     Executes tool calls, returns results. Clean schemas,        │
+│     actionable errors. The LLM composes workflows from tools.   │
+├─────────────────────────────────────────────────────────────────┤
+│  3. State Store                                                 │
+│     Journal, memory tiers, world model, goals, issues,          │
+│     self-model. The LLM reads and writes freely.                │
+├─────────────────────────────────────────────────────────────────┤
+│  4. Safety Boundary                                             │
+│     Path guards, command blockers, redaction. Non-negotiable,   │
+│     invisible when not triggered. The only hardcoded logic.     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Classification, planning, execution strategy, verification, memory management, and dream cycles are not pipeline stages enforced by code. They are tools and strategies the LLM invokes based on its judgment. The current pipeline (classify → plan → execute → verify) becomes a suggested workflow in the system prompt -- a default the LLM follows when appropriate and deviates from when it isn't.
+
+### Design Principles
+
+**The system provides capability, the LLM provides judgment.** The system never decides *what* to do -- only *how* to do it safely. Every decision about strategy, priority, workflow, and resource allocation is the LLM's.
+
+**Clean tool contracts.** Every tool has an unambiguous schema with actionable error messages. The model should never have to guess what a tool does or interpret cryptic failures. Fewer, cleaner tools are better than more tools with overlapping responsibilities.
+
+**Transparent state.** The model can see everything it needs to make good decisions -- its own token usage, how many turns it's used, what's in its context, what's in the event queue, what the world model says about the codebase. Self-awareness enables self-correction.
+
+**Good defaults in the prompt, not the code.** The system prompt describes the workflow as a default strategy, with explicit guidance on when to deviate. "If the task is trivial, skip planning. If you're uncertain about a result, verify immediately rather than waiting until the end." The architecture moves from code to language.
+
+**Graceful degradation.** When the model does something wrong -- and it will -- recovery is easy. Clear error messages, easy undo, no irreversible state changes without confirmation. The safety boundary handles the dangerous cases; everything else is soft-landable.
+
+## Models: LLM-Controlled Mixture of Experts
 
 | Role | Model | Purpose |
 |------|-------|---------|
-| Primary reasoning | gpt-oss:120b | Planning, conversation, classification, verification, general tasks |
-| Code editing | qwen3-coder-next | Code generation, refactoring, review, implementation |
+| Executive / reasoning | gpt-oss:120b | Strategy, judgment, coordination, verification, general tasks |
+| Code specialist | qwen3-coder-next | Code generation, refactoring, review, implementation |
+| Fast utility (planned) | 7b-13b TBD | Quick classification, draft generation, spell-checking reasoning |
 
-Task-based routing is configured in `config/models.yaml`. Ollama is the sole inference provider. Model selection follows these rules:
+Ollama is the sole inference provider. Model configuration lives in `config/models.yaml`.
 
-- **Coding tasks** (code generation, refactoring, bug fixes, review) route to `qwen3-coder-next`.
-- **General tasks** (reasoning, planning, conversation, classification) route to the primary model.
-- **Autonomous cycles** use the primary model for reasoning and delegate coding subtasks to the coding model via the `delegate` tool.
+The two-model setup is a basic mixture of experts where the **gating function is the LLM itself**. The reasoning model is the executive. It sees the problem, reasons about it, and decides how to solve it -- including which model to use for each step. It delegates to the coding model explicitly via the `delegate` tool, providing scoped context and clear instructions, then reviews the result.
 
-The agent can also perform metacognitive delegation -- deciding at runtime which model is best suited for a subtask based on its self-assessment of the task's characteristics.
+This is not hardcoded task-type routing. The executive model decides at runtime based on the task's characteristics, its own self-assessed strengths and weaknesses, and what it's learned from past delegations recorded in the journal. A task that looks like "code editing" might actually need the reasoning model if it requires architectural judgment. The LLM makes that call.
+
+### Best-of-N as a Native Strategy
+
+Because tokens are free, the executive model can use redundancy as a reliability strategy. For hard decisions, it can ask both models to solve the same problem and compare results -- not as a hardcoded `bestOfN()` method, but as the model's own judgment: "This is hard. Let me try it myself and also delegate to the coding model, then compare approaches." The `ConcurrentProvider` infrastructure supports this; the model just needs the tools to invoke it.
+
+### The Third Model Slot
+
+With 128GB, there's memory headroom beyond the two primary models. A lightweight 7b-13b model could serve as a fast tool the executive invokes for specific purposes: generating drafts that the executive refines, doing quick pre-classification before the executive engages, or sanity-checking the executive's reasoning. The executive decides when speed matters more than depth.
 
 ## Identity and Personality
 
@@ -95,246 +156,137 @@ Dream cycles are configured with intervals, budgets, and lookback windows in `co
 
 Periodic self-reflection where Casterly rebuilds its understanding of its own strengths, weaknesses, and working patterns from journal history. The self-model (`src/autonomous/dream/self-model.ts`) tracks 13 skills (regex, TypeScript, testing, refactoring, security, performance, concurrency, parsing, config, git, bug-fixing, documentation) with success rates and sample sizes. The model is stored in `~/.casterly/self-model.yaml` and rebuilt every 48 hours from the issue log and reflections. This replaces telemetry-based metrics with genuine self-knowledge: "I tend to over-complicate refactors" rather than "successRate: 0.7."
 
-## Roadmap
+## Roadmap: The Transition to LLM-Driven Architecture
 
-### Semantic Memory
+The roadmap is organized around a single goal: moving from "system that uses an LLM" to "LLM that uses a system." Each phase loosens the hardcoded pipeline and gives the LLM more control, while the supporting work (semantic memory, parallelism) provides the infrastructure the LLM needs to make good decisions.
 
-On-device embeddings for richer recall beyond keyword matching. The context store's `recall()` method currently uses keyword-weighted substring matching across the cool and cold memory tiers. Embedding-based similarity search would enable the agent to find relevant past context even when the exact words differ.
+### Phase 1: Loosen the Pipeline
+
+Make the current pipeline optional rather than mandatory. The pipeline (classify → plan → execute → verify) remains the default, but the LLM gains the ability to override it.
+
+**Approach:**
+- Add a `meta` tool that lets the LLM skip classification, skip planning, add mid-execution verification, or change execution strategy.
+- Track which overrides the LLM uses and whether they succeed, through the existing journal and self-knowledge system.
+- The LLM learns its own architectural preferences from experience. "I tend to skip planning for simple file edits and that works well" becomes a journal insight that shapes future behavior.
+
+**Why this is low-risk:** The pipeline is still the default. The LLM can only deviate, not break the system. Bad overrides are caught by the existing safety boundary and quality gates. The self-knowledge system captures what works and what doesn't.
 
 **What exists today:**
-- Four-tier memory system (hot/warm/cool/cold) with keyword recall fully operational.
-- Ollama supports embeddings via `/api/embed` -- the inference provider is already running.
-- `ContextStore.recall()` (`src/autonomous/context-store.ts:216`) extracts keywords, scores entries with title (3x), tag (2x), and content (1x) weights, returns `RecallResult[]`.
-- `ContextManager.recall()` (`src/autonomous/context-manager.ts:349`) delegates transparently to the store.
-- Agent tool `recall` (`src/autonomous/agent-tools.ts:1661`) invokes `contextManager.recall()` and formats results.
+- The agent loop (`src/autonomous/agent-loop.ts`) is already a ReAct loop -- the LLM decides tool calls at each step.
+- The classifier (`src/tasks/classifier.ts`), planner (`src/tasks/planner.ts`), runner (`src/tasks/runner.ts`), and verifier (`src/tasks/verifier.ts`) are separable modules that can be invoked as tools.
+- The journal and self-model already track success/failure patterns.
 
-**Implementation plan:**
+### Phase 2: Promote the ReAct Loop
 
-#### Phase 1: Embedding Provider (~4-6 hours)
+Make the agent loop the only execution path. Classification, planning, and verification become tools the LLM calls when it judges they're needed, rather than mandatory stages.
 
-Create `src/providers/embedding.ts`:
+**Approach:**
+- Triggers arrive at the agent loop directly. No pre-classification.
+- The `classify`, `plan`, `verify`, and `delegate` tools are available but not required. The LLM decides whether to use them based on the trigger and its self-knowledge.
+- The 6-phase dream cycle becomes 6 tools the LLM can invoke during idle time, rather than a hardcoded sequence. The LLM might decide to skip code archaeology because the codebase hasn't changed, or run self-model rebuilding early because it's been struggling with a skill.
+- The system becomes a flat toolbox rather than a layered pipeline.
 
-```typescript
-export interface EmbeddingProvider {
-  embed(text: string): Promise<number[]>;
-  embedBatch(texts: string[]): Promise<number[][]>;
-  dimensions: number;
-}
-```
+**What exists today:**
+- The agent loop is already the primary execution path when autonomous mode is enabled.
+- The dream cycle runner (`src/autonomous/dream/runner.ts`) has separable phases.
+- Tool schemas are already clean and well-documented.
 
-- Call Ollama's `POST /api/embed` endpoint with model `nomic-embed-text` (~40MB, 768 dimensions).
-- Reuse the existing Ollama base URL from `config/models.yaml`.
-- Add an in-memory LRU cache (keyed by content hash) to avoid re-embedding identical text.
-- No new dependencies -- use the same `fetch` calls as `src/providers/ollama.ts`.
+**Key change:** The system prompt becomes the architecture document. It describes the default workflow, when to deviate, and how to self-correct. The LLM follows the prompt's guidance -- not because the code forces it to, but because the prompt is well-written and the model is capable enough to follow it.
 
-#### Phase 2: Vector Storage (~3-5 hours)
+### Phase 3: Introspection Tools
 
-Extend `MemoryEntry` in `src/autonomous/context-store.ts:35`:
+Give the model visibility into things the system currently hides. Self-awareness enables self-correction.
 
-```typescript
-export interface MemoryEntry {
-  // ... existing fields ...
-  embedding?: number[];  // optional, only present when semantic memory enabled
-}
-```
+**New tools:**
+- `peek_queue` -- see the trigger queue: what's pending, what's next, what priority.
+- `check_budget` -- see token consumption, turn count, and time elapsed for the current cycle.
+- `list_context` -- see what's currently loaded in each memory tier and how much budget remains.
+- `review_steps` -- see the execution history for the current cycle: what tools were called, what they returned, what decisions were made.
+- `assess_self` -- query the self-model for strengths and weaknesses relevant to the current task.
 
-Modify `archive()` (`context-store.ts:164`):
-- After entry creation (line 185), call `embeddingProvider.embed(title + ' ' + content)` and store the vector in the entry's `embedding` field.
-- Embeddings persist in the existing JSONL files alongside the entry -- no separate storage layer needed initially.
-- Add `embeddingProvider?: EmbeddingProvider` to `ContextStoreConfig` (`context-store.ts:78`).
+**Why this matters:** A model that can see its own state makes better decisions about what to do next. "I've used 15 of 20 turns and haven't started the implementation yet -- I should stop planning and start doing" is a judgment call that requires visibility into the budget. "I'm weak at regex -- let me verify this pattern carefully" requires access to the self-model.
 
-#### Phase 3: Hybrid Recall (~4-6 hours)
+**What exists today:**
+- The budget is tracked in the agent loop but not exposed as a tool.
+- The self-model exists but is only loaded into the hot tier passively.
+- Context tier contents are not queryable from the LLM's perspective.
 
-Add a `recallSemantic()` path inside the existing `recall()` method (`context-store.ts:216`):
+### Phase 4: LLM-Controlled Context
 
-```
-recall(query)
-  ├── extractKeywords(query)           # existing path
-  ├── embeddingProvider.embed(query)   # new: embed the query
-  ├── for each entry:
-  │     ├── keywordScore = scoreEntry(entry, keywords)    # existing
-  │     └── semanticScore = cosineSimilarity(queryVec, entry.embedding)  # new
-  │         hybridScore = (1 - hybridWeight) * keywordScore + hybridWeight * semanticScore
-  ├── filter by minSimilarity threshold
-  └── return top N sorted by hybridScore
-```
+Replace hardcoded token budgets with a model-controlled context manager. The model decides what to load and what to evict.
 
-Cosine similarity is ~10 lines of math (dot product / magnitude product). No library needed.
+**Approach:**
+- The tiered structure (hot/warm/cool/cold) remains as physical storage, but the model controls what's in its active window.
+- The model can request specific context: "load the last 5 journal entries about TypeScript refactoring" or "evict the world model summary, I don't need it for this task."
+- Existing tools (`recall`, `recall_journal`, `archive`, `note`) already provide read/write access. The new capability is explicit context management -- the model deciding what to keep and what to drop.
+- The hot tier's fixed budget (currently ~2k tokens for identity + world model + goals) becomes a suggestion. The model can request more identity context for complex tasks or less for simple ones.
 
-Entries without embeddings (pre-existing or when disabled) fall back to keyword-only scoring transparently.
+**What exists today:**
+- `ContextManager` (`src/autonomous/context-manager.ts`) manages the 4-tier hierarchy with fixed budgets.
+- The `note`, `archive`, `recall`, and `recall_journal` tools already give the LLM read/write access.
+- The missing piece is explicit eviction and loading controls.
 
-#### Phase 4: Configuration (~1-2 hours)
+### Phase 5: LLM-Initiated Triggers
 
-Add Zod schema in `src/config/schema.ts`:
+Give the model the ability to create its own triggers. The model becomes proactive, not just reactive.
 
-```typescript
-const embeddingConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  provider: z.enum(['ollama']).default('ollama'),
-  model: z.string().default('nomic-embed-text'),
-  dimensions: z.number().int().positive().default(768),
-  hybridWeight: z.number().min(0).max(1).default(0.5),
-  minSimilarity: z.number().min(0).max(1).default(0.3),
-  cachePath: z.string().default('~/.casterly/memory/embeddings'),
-});
-```
+**New tool:**
+- `schedule` -- "wake me in 2 hours to check if those tests pass" or "remind me to review this PR tomorrow morning" or "set a daily check on the dependency audit."
 
-Add to `config/autonomous.yaml`:
+**Why this matters:** True autonomous agency means the model decides not just *how* to act but *when* to act. Currently, the trigger sources are external (user messages, file watchers, cron schedules, stale issue detection). With LLM-initiated triggers, the model creates its own event sources based on what it learns from experience.
 
-```yaml
-semantic_memory:
-  enabled: false
-  provider: ollama
-  model: nomic-embed-text:latest
-  dimensions: 768
-  hybrid_weight: 0.5
-  min_similarity: 0.3
-  cache_path: ~/.casterly/memory/embeddings
-```
-
-#### Phase 5: Tests (~4-6 hours)
-
-Follow patterns in `tests/autonomous-context-manager.test.ts`:
-
-- Mock `EmbeddingProvider` with deterministic vectors (seeded from content hash) to avoid Ollama dependency in CI.
-- Test: archived entry gets an embedding vector of correct dimensions.
-- Test: semantic recall finds entries that share no keywords with the query but are conceptually similar.
-- Test: `hybridWeight=0` produces pure keyword results; `hybridWeight=1` produces pure semantic results.
-- Test: entries without embeddings are scored by keyword only (backward compatibility).
-- Test: `minSimilarity` threshold filters low-confidence matches.
-
-**Files touched:** `src/providers/embedding.ts` (new), `src/autonomous/context-store.ts`, `src/config/schema.ts`, `config/autonomous.yaml`, `tests/embedding-provider.test.ts` (new), `tests/autonomous-context-manager.test.ts`.
-
-**Estimated effort:** ~17-27 hours across 5 phases. No external dependencies. All computation stays on-device.
+**What exists today:**
+- The scheduler (`src/scheduler/`) supports cron patterns, interval triggers, and one-shot triggers.
+- The trigger router (`src/autonomous/trigger-router.ts`) normalizes all trigger types into `AgentTrigger`.
+- The missing piece is an agent tool that wraps `scheduler.createTrigger()`.
 
 ---
 
-### Parallelism
+### Supporting Work: Semantic Memory
 
-Concurrent agent reasoning to maximize hardware utilization. The M4 Max can support two concurrent models. Independent branches of a task DAG should be processed in parallel by multiple subagents, each with a scoped context.
+On-device embeddings for richer recall beyond keyword matching. This directly supports the LLM-driven architecture -- the better the model's memory, the better its judgment.
 
 **What exists today:**
-- `ConcurrentProvider` (`src/providers/concurrent.ts`) is fully implemented with `parallel()`, `bestOfN()`, `generate()`, bounded concurrency (max 3), and per-model timing metrics.
-- `ReasoningScaler` (`src/autonomous/reasoning/scaling.ts`) maps task difficulty to strategy: `easy` → single generation, `medium` → 2 candidates with heuristic pick, `hard` → up to 4 candidates via `bestOfN` with judge.
-- `AutonomousLoop` (`src/autonomous/loop.ts:211`) already creates a `ReasoningScaler` and calls `assessDifficulty()` at line 750 before each agent cycle.
-- Difficulty currently only scales `maxTurns` (line 764: `easy=0.5x`, `medium=1.0x`, `hard=1.5x`). It does not route through `ConcurrentProvider`.
-- Task runner (`src/tasks/runner.ts:71`) has a proper `Semaphore` class and executes DAG branches via `Promise.all`.
+- Four-tier memory system (hot/warm/cool/cold) with keyword recall fully operational.
+- Ollama supports embeddings via `/api/embed`.
+- `ContextStore.recall()` (`src/autonomous/context-store.ts:216`) uses keyword-weighted substring matching.
 
 **Implementation plan:**
 
-#### Phase A: Build ConcurrentProvider in AutonomousLoop (~2-3 hours)
+1. **Embedding Provider** -- Create `src/providers/embedding.ts` wrapping Ollama's `/api/embed` with `nomic-embed-text` (~40MB, 768 dimensions). In-memory LRU cache keyed by content hash.
+2. **Vector Storage** -- Extend `MemoryEntry` with an optional `embedding` field. Persist in existing JSONL files.
+3. **Hybrid Recall** -- Combine keyword scores and cosine similarity with a configurable `hybridWeight`. Entries without embeddings fall back to keyword-only scoring.
+4. **Configuration** -- Zod schema and `config/autonomous.yaml` entries for the embedding model, dimensions, hybrid weight, and similarity threshold.
+5. **Tests** -- Mock `EmbeddingProvider` with deterministic vectors. Test hybrid scoring, backward compatibility, and threshold filtering.
 
-Modify `src/autonomous/loop.ts` constructor (line 171):
+**Files touched:** `src/providers/embedding.ts` (new), `src/autonomous/context-store.ts`, `src/config/schema.ts`, `config/autonomous.yaml`, `tests/embedding-provider.test.ts` (new), `tests/autonomous-context-manager.test.ts`.
 
-1. Import `ConcurrentProvider` and `createConcurrentProvider`.
-2. After the existing `ReasoningScaler` init (line 215), build a provider map:
-   ```typescript
-   const providerMap = new Map<string, LlmProvider>();
-   providerMap.set(agentConfig.reasoningModel, primaryProvider);
-   providerMap.set(agentConfig.codingModel, codingProvider);
-   this.concurrentProvider = createConcurrentProvider(providerMap, {
-     maxConcurrent: config.hardware?.max_concurrent_requests ?? 3,
-     maxParallelGenerations: config.hardware?.max_parallel_generations ?? 4,
-   });
-   ```
-3. Store as `private concurrentProvider: ConcurrentProvider`.
+---
 
-#### Phase B: Route Agent Loop Through ConcurrentProvider (~2-3 hours)
+### Supporting Work: Parallelism
 
-Modify `runAgentCycle()` in `src/autonomous/loop.ts` (lines 770-782):
+Wire the existing `ConcurrentProvider` into the agent loop so the LLM can use multi-model inference as a strategy.
 
-**Current flow** (line 775):
-```typescript
-const llmProvider = this.provider as unknown as LlmProvider;
-this.activeAgentLoop = createAgentLoop(config, llmProvider, ...);
-```
+**What exists today:**
+- `ConcurrentProvider` (`src/providers/concurrent.ts`) is fully implemented with `parallel()`, `bestOfN()`, bounded concurrency, and per-model timing metrics.
+- `ReasoningScaler` (`src/autonomous/reasoning/scaling.ts`) maps difficulty to strategy but doesn't route through `ConcurrentProvider` yet.
 
-**New flow:**
-```typescript
-if (this.agentConfig.useConcurrentProvider && difficulty !== 'easy') {
-  // Wrap ConcurrentProvider as LlmProvider for agent loop consumption
-  const concurrentLlm: LlmProvider = {
-    id: 'concurrent',
-    kind: 'local',
-    model: this.agentConfig.reasoningModel,
-    generateWithTools: async (request, tools, prev) => {
-      if (difficulty === 'hard') {
-        const result = await this.concurrentProvider.bestOfN(
-          [this.agentConfig.reasoningModel, this.agentConfig.codingModel],
-          request,
-          this.agentConfig.reasoningModel,  // judge
-          tools,
-        );
-        return result.best.response;
-      }
-      // medium: parallel, return first
-      const results = await this.concurrentProvider.parallel(
-        [this.agentConfig.reasoningModel, this.agentConfig.codingModel],
-        request,
-        tools,
-      );
-      return results[0]!.response;
-    },
-  };
-  this.activeAgentLoop = createAgentLoop(config, concurrentLlm, ...);
-} else {
-  // easy: single model, existing path
-  const llmProvider = this.provider as unknown as LlmProvider;
-  this.activeAgentLoop = createAgentLoop(config, llmProvider, ...);
-}
-```
+**Implementation plan:**
 
-The agent loop itself (`src/autonomous/agent-loop.ts`) needs **zero changes** -- it calls `provider.generateWithTools()` at line 454, and the wrapper above handles the routing transparently.
+1. **Build ConcurrentProvider in AutonomousLoop** -- Create a provider map from config, wire into the loop constructor.
+2. **Route Through ConcurrentProvider** -- Wrap as `LlmProvider` for agent loop consumption. The agent loop needs zero changes -- it calls `provider.generateWithTools()` and the wrapper handles routing.
+3. **Fix Semaphore** -- Replace the busy-wait in `concurrent.ts` with the proper `Semaphore` from `runner.ts`. Extract to shared `src/utils/semaphore.ts`.
+4. **Expose as LLM Tool** -- Rather than hardcoding difficulty → strategy mapping, give the LLM a `parallel_reason` tool that lets it explicitly request multi-model inference. The LLM decides when redundancy is worth the cost.
+5. **Tests** -- Verify single-model bypass, parallel routing, best-of-N with judge, semaphore bounds.
 
-#### Phase C: Fix ConcurrentProvider Semaphore (~1 hour)
+**Files touched:** `src/autonomous/loop.ts`, `src/providers/concurrent.ts`, `src/utils/semaphore.ts` (new), `src/tasks/runner.ts`, `config/autonomous.yaml`, `src/config/schema.ts`, `tests/hardware.test.ts`.
 
-Replace the busy-wait in `src/providers/concurrent.ts:292` with the proper `Semaphore` class from `src/tasks/runner.ts:71`:
+---
 
-```typescript
-// Current (busy-wait with 50ms polling):
-private async acquireSlot(): Promise<void> {
-  while (this.activeRequests >= this.config.maxConcurrent) {
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  this.activeRequests++;
-}
+### The Guiding Principle
 
-// Replace with Promise-based semaphore (same pattern as task runner):
-private readonly semaphore: Semaphore;
-// ... use semaphore.acquire() / semaphore.release()
-```
+Across all phases: **the system provides capability, the LLM provides judgment.** The system never decides *what* to do -- only *how* to do it safely. Every decision about strategy, priority, workflow, and resource allocation is the LLM's.
 
-Extract the `Semaphore` class from `runner.ts` into a shared `src/utils/semaphore.ts` so both can import it.
+The 120b model will make worse decisions than a frontier model at each step. But with free tokens, it gets to make more of them, correct its mistakes, and learn from its history. Over time, the self-knowledge system captures which strategies work, and the model's effective capability rises above its raw parameter count.
 
-#### Phase D: Configuration (~1 hour)
-
-Add to `config/autonomous.yaml` under `agent_loop`:
-
-```yaml
-agent_loop:
-  # ... existing fields ...
-  use_concurrent_provider: false    # Enable parallel/best-of-N reasoning
-  concurrent_strategy: auto         # 'auto' uses ReasoningScaler, 'always_parallel', 'always_bestn'
-```
-
-Add Zod validation in schema:
-
-```typescript
-useConcurrentProvider: z.boolean().default(false),
-concurrentStrategy: z.enum(['auto', 'always_parallel', 'always_bestn']).default('auto'),
-```
-
-#### Phase E: Tests (~2 hours)
-
-Follow patterns in `tests/hardware.test.ts` (existing ConcurrentProvider tests) and `tests/agent-loop.test.ts`:
-
-- Test: easy difficulty bypasses ConcurrentProvider, uses single model.
-- Test: medium difficulty calls `parallel()` with both models.
-- Test: hard difficulty calls `bestOfN()` with judge.
-- Test: `useConcurrentProvider=false` always uses single model regardless of difficulty.
-- Test: shared `Semaphore` bounds concurrent requests correctly.
-- Test: agent loop outcome is identical whether routed through ConcurrentProvider wrapper or direct LlmProvider.
-
-**Files touched:** `src/autonomous/loop.ts`, `src/providers/concurrent.ts`, `src/utils/semaphore.ts` (new, extracted from runner), `src/tasks/runner.ts` (import change), `config/autonomous.yaml`, `src/config/schema.ts`, `tests/hardware.test.ts`.
-
-**Estimated effort:** ~8-10 hours across 5 phases. All components exist; this is primarily a wiring and routing task.
+That's the unique advantage of local-first: you can afford to let the model be wrong, try again, and get better -- without worrying about the bill.
