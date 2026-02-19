@@ -30,11 +30,10 @@ export type { AggregateStats, MemoryEntry } from './reflector.js';
 
 // Main loop
 export { AutonomousLoop, AbortError, loadConfig, main } from './loop.js';
-export type { LoopOptions } from './loop.js';
 
 // Controller (daemon-side management)
-export { createAutonomousController, isInWorkWindow } from './controller.js';
-export type { AutonomousController, AutonomousStatus, ControllerOptions } from './controller.js';
+export { createAutonomousController } from './controller.js';
+export type { AutonomousController } from './controller.js';
 
 // Reports
 export { formatDailyReport, formatMorningSummary } from './report.js';
@@ -61,7 +60,7 @@ export type {
 // ── Phase 1: Persistent Identity & Memory ──────────────────────────────────
 
 // Debug and tracing
-export { DebugTracer, getTracer, initTracer, resetTracer } from './debug.js';
+export { getTracer } from './debug.js';
 export type {
   DebugSubsystem,
   DebugLevel,
@@ -113,7 +112,7 @@ export type {
 
 // Journal system
 export { Journal, createJournal } from './journal.js';
-export type { JournalEntry, JournalConfig } from './journal.js';
+export type { JournalEntry } from './journal.js';
 
 // Trigger router
 export {
@@ -133,7 +132,6 @@ export {
   formatStateDiff,
   runInspector,
 } from '../debug/inspector.js';
-export type { InspectOptions, StateSnapshot, StateDiff } from '../debug/inspector.js';
 
 // User model (from world-model)
 export type { UserModel } from './world-model.js';
@@ -177,7 +175,7 @@ export type {
 // ── Phase 3: Event-Driven Awareness ──────────────────────────────────────────
 
 // Event bus
-export { EventBus, getEventPriority, compareEventPriority } from './events.js';
+export { EventBus } from './events.js';
 export type {
   SystemEvent,
   EventHandler,
@@ -215,7 +213,7 @@ export type {
 // ── Phase 5: Hardware Maximization ──────────────────────────────────────────
 
 // Reasoning scaler
-export { ReasoningScaler, createReasoningScaler } from './reasoning/scaling.js';
+export { ReasoningScaler } from './reasoning/scaling.js';
 export type {
   Difficulty,
   ReasoningScalerConfig,
@@ -224,7 +222,7 @@ export type {
 } from './reasoning/scaling.js';
 
 // Adversarial tester
-export { AdversarialTester, createAdversarialTester } from './reasoning/adversarial.js';
+export { AdversarialTester } from './reasoning/adversarial.js';
 export type {
   TestCase as AdversarialTestCase,
   AttackCategory,
@@ -236,7 +234,7 @@ export type {
 // ── Phase 6: Dream Cycles ────────────────────────────────────────────────────
 
 // Self-model
-export { SelfModel, createSelfModel } from './dream/self-model.js';
+export { SelfModel } from './dream/self-model.js';
 export type {
   SkillAssessment,
   SelfModelData,
@@ -244,7 +242,7 @@ export type {
 } from './dream/self-model.js';
 
 // Code archaeology
-export { CodeArchaeologist, createCodeArchaeologist } from './dream/archaeology.js';
+export { CodeArchaeologist } from './dream/archaeology.js';
 export type {
   FileHistory,
   FragileFile,
@@ -252,7 +250,7 @@ export type {
 } from './dream/archaeology.js';
 
 // Dream cycle runner
-export { DreamCycleRunner, createDreamCycleRunner } from './dream/runner.js';
+export { DreamCycleRunner } from './dream/runner.js';
 export type {
   DreamCycleConfig,
   DreamOutcome,
@@ -261,7 +259,7 @@ export type {
 // ── Vision Tier 2: Self-Improvement ──────────────────────────────────────────
 
 // Prompt store (self-modifying prompts)
-export { PromptStore, createPromptStore } from './prompt-store.js';
+export { PromptStore } from './prompt-store.js';
 export type {
   PromptVersion,
   VersionMetrics,
@@ -270,7 +268,7 @@ export type {
 } from './prompt-store.js';
 
 // Shadow store (shadow execution)
-export { ShadowStore, createShadowStore } from './shadow-store.js';
+export { ShadowStore } from './shadow-store.js';
 export type {
   Shadow,
   JudgmentPattern,
@@ -279,7 +277,7 @@ export type {
 } from './shadow-store.js';
 
 // Tool synthesizer (re-exported from tools)
-export { ToolSynthesizer, createToolSynthesizer } from '../tools/synthesizer.js';
+export { ToolSynthesizer } from '../tools/synthesizer.js';
 export type {
   SynthesizedTool,
   ToolImplementation,
@@ -290,7 +288,7 @@ export type {
 // ── Vision Tier 3: Advanced Self-Improvement ─────────────────────────────────
 
 // Challenge generator (adversarial dual-model self-testing)
-export { ChallengeGenerator, createChallengeGenerator } from './dream/challenge-generator.js';
+export { ChallengeGenerator } from './dream/challenge-generator.js';
 export type {
   Challenge,
   ChallengeType,
@@ -301,7 +299,7 @@ export type {
 } from './dream/challenge-generator.js';
 
 // Challenge evaluator (sub-skill tracking)
-export { ChallengeEvaluator, createChallengeEvaluator } from './dream/challenge-evaluator.js';
+export { ChallengeEvaluator } from './dream/challenge-evaluator.js';
 export type {
   SubSkillAssessment,
   EvaluationHistory,
@@ -310,7 +308,7 @@ export type {
 } from './dream/challenge-evaluator.js';
 
 // Prompt evolution (genetic algorithm)
-export { PromptEvolution, createPromptEvolution } from './dream/prompt-evolution.js';
+export { PromptEvolution } from './dream/prompt-evolution.js';
 export type {
   PromptVariant,
   FitnessMetrics,
@@ -320,7 +318,7 @@ export type {
 } from './dream/prompt-evolution.js';
 
 // Training extractor (LoRA data extraction)
-export { TrainingExtractor, createTrainingExtractor } from './dream/training-extractor.js';
+export { TrainingExtractor } from './dream/training-extractor.js';
 export type {
   TrainingExample,
   PreferencePair,
@@ -329,7 +327,7 @@ export type {
 } from './dream/training-extractor.js';
 
 // LoRA trainer (adapter management)
-export { LoraTrainer, createLoraTrainer } from './dream/lora-trainer.js';
+export { LoraTrainer } from './dream/lora-trainer.js';
 export type {
   LoraAdapter,
   LoraTrainingParams,
@@ -342,7 +340,6 @@ export type {
 // ── Phase 7: Communication ───────────────────────────────────────────────────
 
 // Message policy
-export { MessagePolicy, createMessagePolicy } from './communication/policy.js';
 export type {
   NotifiableEvent,
   DailySummaryStats,

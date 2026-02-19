@@ -1,4 +1,4 @@
-export { createSkillRegistry, loadSkills } from './loader.js';
+export { createSkillRegistry } from './loader.js';
 export type {
   Skill,
   SkillFrontmatter,

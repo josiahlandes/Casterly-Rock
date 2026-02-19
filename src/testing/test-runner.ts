@@ -4,7 +4,7 @@
  * Executes test cases and compares actual results with expected outcomes.
  */
 
-import type { TestCase, TestResult, ExpectedOutcome } from './test-cases.js';
+import type { TestCase, TestResult } from './test-cases.js';
 import type { RequestTrace, TraceCollector } from './trace.js';
 
 export interface TestRunnerOptions {

@@ -8,7 +8,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-export interface GlobOptions {
+interface GlobOptions {
   /** Base directory to search from (default: cwd) */
   cwd?: string;
   /** Include hidden files (default: false) */
@@ -25,7 +25,7 @@ export interface GlobOptions {
   dirsOnly?: boolean;
 }
 
-export interface GlobResult {
+interface GlobResult {
   success: boolean;
   pattern: string;
   cwd: string;
@@ -33,7 +33,7 @@ export interface GlobResult {
   error?: string;
 }
 
-export interface GlobMatch {
+interface GlobMatch {
   path: string;
   relativePath: string;
   isDirectory: boolean;
@@ -266,125 +266,4 @@ export async function glob(pattern: string, options: GlobOptions = {}): Promise<
   }
 }
 
-/**
- * Find files matching multiple patterns.
- */
-export async function globMultiple(
-  patterns: string[],
-  options: GlobOptions = {}
-): Promise<{ success: boolean; matches: GlobMatch[]; errors: string[] }> {
-  const allMatches = new Map<string, GlobMatch>();
-  const errors: string[] = [];
 
-  for (const pattern of patterns) {
-    const result = await glob(pattern, options);
-
-    if (!result.success) {
-      errors.push(result.error || `Failed to match pattern: ${pattern}`);
-      continue;
-    }
-
-    for (const match of result.matches) {
-      allMatches.set(match.path, match);
-    }
-  }
-
-  const matches = Array.from(allMatches.values()).sort((a, b) =>
-    a.relativePath.localeCompare(b.relativePath)
-  );
-
-  return {
-    success: errors.length === 0,
-    matches,
-    errors,
-  };
-}
-
-/**
- * List directory contents (non-recursive).
- */
-export async function listDir(
-  dirPath: string,
-  options: { dot?: boolean } = {}
-): Promise<{
-  success: boolean;
-  path: string;
-  entries: Array<{ name: string; isDirectory: boolean; size?: number }>;
-  error?: string;
-}> {
-  const absolutePath = path.isAbsolute(dirPath) ? dirPath : path.resolve(dirPath);
-
-  try {
-    const entries = await fs.readdir(absolutePath, { withFileTypes: true });
-    const results: Array<{ name: string; isDirectory: boolean; size?: number }> = [];
-
-    for (const entry of entries) {
-      if (!options.dot && entry.name.startsWith('.')) {
-        continue;
-      }
-
-      const fullPath = path.join(absolutePath, entry.name);
-      const isDirectory = entry.isDirectory();
-
-      let size: number | undefined;
-      if (!isDirectory) {
-        try {
-          const stats = await fs.stat(fullPath);
-          size = stats.size;
-        } catch {
-          // Ignore stat errors
-        }
-      }
-
-      const result: { name: string; isDirectory: boolean; size?: number } = {
-        name: entry.name,
-        isDirectory,
-      };
-      if (size !== undefined) {
-        result.size = size;
-      }
-      results.push(result);
-    }
-
-    // Sort: directories first, then alphabetically
-    results.sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) {
-        return a.isDirectory ? -1 : 1;
-      }
-      return a.name.localeCompare(b.name);
-    });
-
-    return {
-      success: true,
-      path: absolutePath,
-      entries: results,
-    };
-  } catch (err) {
-    const error = err as NodeJS.ErrnoException;
-
-    if (error.code === 'ENOENT') {
-      return {
-        success: false,
-        path: absolutePath,
-        entries: [],
-        error: `Directory not found: ${absolutePath}`,
-      };
-    }
-
-    if (error.code === 'ENOTDIR') {
-      return {
-        success: false,
-        path: absolutePath,
-        entries: [],
-        error: `Not a directory: ${absolutePath}`,
-      };
-    }
-
-    return {
-      success: false,
-      path: absolutePath,
-      entries: [],
-      error: `Failed to list directory: ${error.message}`,
-    };
-  }
-}

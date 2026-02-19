@@ -8,17 +8,17 @@ import { PDFParse } from 'pdf-parse';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface PdfParseOptions {
+interface PdfParseOptions {
   maxPages?: number | undefined;
 }
 
-export interface PdfMetadata {
+interface PdfMetadata {
   title?: string | undefined;
   author?: string | undefined;
   creator?: string | undefined;
 }
 
-export interface PdfParseResult {
+interface PdfParseResult {
   content: string;
   pages: number;
   metadata: PdfMetadata;

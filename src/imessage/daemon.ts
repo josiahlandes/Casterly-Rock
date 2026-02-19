@@ -49,7 +49,6 @@ import {
   createTaskManager,
   createExecutionLog,
   type TaskManager,
-  type ExecutionLog,
 } from '../tasks/index.js';
 import {
   AutonomousLoop,

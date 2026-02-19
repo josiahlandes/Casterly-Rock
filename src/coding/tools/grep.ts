@@ -9,7 +9,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { glob } from './glob.js';
 
-export interface GrepOptions {
+interface GrepOptions {
   /** Base directory to search from (default: cwd) */
   cwd?: string;
   /** File patterns to search (default: all files) */
@@ -32,7 +32,7 @@ export interface GrepOptions {
   dot?: boolean;
 }
 
-export interface GrepResult {
+interface GrepResult {
   success: boolean;
   pattern: string;
   matches: GrepMatch[];
@@ -43,7 +43,7 @@ export interface GrepResult {
   error?: string;
 }
 
-export interface GrepMatch {
+interface GrepMatch {
   file: string;
   relativePath: string;
   line: number;
@@ -348,64 +348,6 @@ export async function grep(pattern: string, options: GrepOptions = {}): Promise<
       error: `Grep failed: ${(err as Error).message}`,
     };
   }
-}
-
-/**
- * Search for a pattern and return only file paths (like grep -l).
- */
-export async function grepFiles(
-  pattern: string,
-  options: Omit<GrepOptions, 'filesOnly'> = {}
-): Promise<{
-  success: boolean;
-  pattern: string;
-  files: string[];
-  error?: string;
-}> {
-  const result = await grep(pattern, { ...options, filesOnly: true });
-
-  const response: { success: boolean; pattern: string; files: string[]; error?: string } = {
-    success: result.success,
-    pattern,
-    files: result.matches.map((m) => m.relativePath),
-  };
-  if (result.error) {
-    response.error = result.error;
-  }
-  return response;
-}
-
-/**
- * Count matches (like grep -c).
- */
-export async function grepCount(
-  pattern: string,
-  options: Omit<GrepOptions, 'maxMatches' | 'filesOnly'> = {}
-): Promise<{
-  success: boolean;
-  pattern: string;
-  totalMatches: number;
-  filesMatched: number;
-  error?: string;
-}> {
-  const result = await grep(pattern, { ...options, maxMatches: Infinity, filesOnly: false });
-
-  const response: {
-    success: boolean;
-    pattern: string;
-    totalMatches: number;
-    filesMatched: number;
-    error?: string;
-  } = {
-    success: result.success,
-    pattern,
-    totalMatches: result.totalMatches,
-    filesMatched: result.filesMatched,
-  };
-  if (result.error) {
-    response.error = result.error;
-  }
-  return response;
 }
 
 /**

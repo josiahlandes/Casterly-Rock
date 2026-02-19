@@ -20,7 +20,7 @@ import type { GoalSource } from '../src/autonomous/goal-stack.js';
 import { IssueLog } from '../src/autonomous/issue-log.js';
 import { buildIdentityPrompt, buildMinimalIdentityPrompt } from '../src/autonomous/identity.js';
 import { EventBus } from '../src/autonomous/events.js';
-import type { SystemEvent, FileChangedEvent, TestFailedEvent, GitPushEvent } from '../src/autonomous/events.js';
+import type { SystemEvent } from '../src/autonomous/events.js';
 import { createMessagePolicy } from '../src/autonomous/communication/policy.js';
 import type { NotifiableEvent, MessagePolicyConfig } from '../src/autonomous/communication/policy.js';
 
@@ -290,7 +290,7 @@ describe('Phase 3: Event System', () => {
     it('emits and drains events', () => {
       const bus = new EventBus({ maxQueueSize: 100, logEvents: false });
 
-      const event: FileChangedEvent = {
+      const event: SystemEvent = {
         type: 'file_changed',
         paths: ['src/foo.ts'],
         changeKind: 'modified',
@@ -604,7 +604,7 @@ describe('cross-phase integration', () => {
     const bus = new EventBus({ maxQueueSize: 100, logEvents: false });
 
     // Simulate: event arrives → goal created
-    const testFailEvent: TestFailedEvent = {
+    const testFailEvent: SystemEvent = {
       type: 'test_failed',
       testName: 'critical.test.ts',
       output: 'Assertion failed',

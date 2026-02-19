@@ -67,7 +67,7 @@ async function main(): Promise<void> {
   if (pending.length > 0) {
     console.log(`\nPending branches for review (${pending.length}):`);
     for (const branch of pending) {
-      console.log(`  ${branch.branchName}: ${branch.hypothesis.proposal?.substring(0, 100)}`);
+      console.log(`  ${branch.branch}: ${branch.proposal?.substring(0, 100)}`);
     }
   }
 

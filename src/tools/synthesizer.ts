@@ -18,7 +18,7 @@
  */
 
 import { readFile, writeFile, readdir, mkdir, unlink } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { getTracer } from '../autonomous/debug.js';
 
 // ─────────────────────────────────────────────────────────────────────────────

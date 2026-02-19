@@ -8,7 +8,6 @@ import {
 
 import {
   detectSensitiveContent,
-  type SensitiveDetectionOptions,
 } from '../src/security/detector.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -171,7 +170,7 @@ describe('matchSensitiveCategories', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('detectSensitiveContent', () => {
-  const defaultOptions: SensitiveDetectionOptions = {
+  const defaultOptions: { alwaysLocalCategories: SensitiveCategory[] } = {
     alwaysLocalCategories: ['credentials', 'health', 'finances'],
   };
 
@@ -201,7 +200,7 @@ describe('detectSensitiveContent', () => {
   });
 
   it('adds pattern-match reason for non-always-local categories', () => {
-    const options: SensitiveDetectionOptions = {
+    const options: { alwaysLocalCategories: SensitiveCategory[] } = {
       alwaysLocalCategories: [], // Nothing is always-local
     };
     const result = detectSensitiveContent('Check my calendar', options);
@@ -212,7 +211,7 @@ describe('detectSensitiveContent', () => {
 
   it('handles mixed always-local and non-always-local categories', () => {
     // "password" is credentials (always-local), "calendar" is not always-local
-    const options: SensitiveDetectionOptions = {
+    const options: { alwaysLocalCategories: SensitiveCategory[] } = {
       alwaysLocalCategories: ['credentials'],
     };
     const result = detectSensitiveContent(
@@ -229,7 +228,7 @@ describe('detectSensitiveContent', () => {
   // ── Options variations ───────────────────────────────────────────────
 
   it('works with empty alwaysLocalCategories', () => {
-    const options: SensitiveDetectionOptions = {
+    const options: { alwaysLocalCategories: SensitiveCategory[] } = {
       alwaysLocalCategories: [],
     };
     const result = detectSensitiveContent('My diagnosis was positive', options);
@@ -243,7 +242,7 @@ describe('detectSensitiveContent', () => {
     const allCategories: SensitiveCategory[] = [
       'calendar', 'finances', 'voice_memos', 'health', 'credentials', 'documents', 'contacts',
     ];
-    const options: SensitiveDetectionOptions = {
+    const options: { alwaysLocalCategories: SensitiveCategory[] } = {
       alwaysLocalCategories: allCategories,
     };
     const result = detectSensitiveContent('Check my schedule', options);

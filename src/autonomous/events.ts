@@ -46,7 +46,7 @@ export type SystemEvent =
  * Files in the project were created, modified, or deleted.
  * Emitted by the file watcher after debouncing.
  */
-export interface FileChangedEvent {
+interface FileChangedEvent {
   type: 'file_changed';
   paths: string[];
   changeKind: 'created' | 'modified' | 'deleted' | 'mixed';
@@ -57,7 +57,7 @@ export interface FileChangedEvent {
  * A test failed (detected by the file watcher after a test file change,
  * or by the agent loop after running tests).
  */
-export interface TestFailedEvent {
+interface TestFailedEvent {
   type: 'test_failed';
   testName: string;
   output: string;
@@ -68,7 +68,7 @@ export interface TestFailedEvent {
  * A git push or commit was detected on a watched branch.
  * Emitted by the git watcher.
  */
-export interface GitPushEvent {
+interface GitPushEvent {
   type: 'git_push';
   branch: string;
   commits: string[];
@@ -78,7 +78,7 @@ export interface GitPushEvent {
 /**
  * A build or compilation error was detected.
  */
-export interface BuildErrorEvent {
+interface BuildErrorEvent {
   type: 'build_error';
   error: string;
   timestamp: string;
@@ -88,7 +88,7 @@ export interface BuildErrorEvent {
  * An issue has been stale for too long without activity.
  * Emitted by the issue aging watcher.
  */
-export interface IssueStalledEvent {
+interface IssueStalledEvent {
   type: 'issue_stale';
   issueId: string;
   daysSinceActivity: number;
@@ -98,7 +98,7 @@ export interface IssueStalledEvent {
 /**
  * The user sent a message (e.g., via iMessage or CLI).
  */
-export interface UserMessageEvent {
+interface UserMessageEvent {
   type: 'user_message';
   sender: string;
   message: string;
@@ -108,7 +108,7 @@ export interface UserMessageEvent {
 /**
  * A scheduled timer fired (fallback when no events arrive).
  */
-export interface ScheduledEvent {
+interface ScheduledEvent {
   type: 'scheduled';
   reason: string;
   timestamp: string;
@@ -161,7 +161,7 @@ export type EventHandler<T extends SystemEvent = SystemEvent> = (event: T) => vo
 /**
  * Wildcard handler that receives all events.
  */
-export type WildcardHandler = (event: SystemEvent) => void;
+type WildcardHandler = (event: SystemEvent) => void;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EventBus Configuration

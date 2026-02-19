@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const sensitiveCategorySchema = z.enum([
+const sensitiveCategorySchema = z.enum([
   'calendar',
   'finances',
   'voice_memos',

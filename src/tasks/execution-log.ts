@@ -15,7 +15,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { safeLogger } from '../logging/safe-logger.js';
 import type { ExecutionRecord } from './types.js';

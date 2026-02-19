@@ -3,7 +3,7 @@ import { existsSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { glob, globMultiple, listDir } from '../src/coding/tools/glob.js';
+import { glob } from '../src/coding/tools/glob.js';
 
 // ─── Temp dir helpers ────────────────────────────────────────────────────────
 
@@ -154,98 +154,3 @@ describe('glob — errors', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// globMultiple
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('globMultiple', () => {
-  it('combines results from multiple patterns', async () => {
-    setupTree();
-    const result = await globMultiple(['src/*.ts', '*.json'], { cwd: TEST_BASE });
-    expect(result.matches.length).toBeGreaterThanOrEqual(3); // 2 .ts + 1 .json
-  });
-
-  it('deduplicates across patterns', async () => {
-    setupTree();
-    const result = await globMultiple(['src/*.ts', 'src/*'], { cwd: TEST_BASE });
-    // src/index.ts and src/utils.ts should not be duplicated
-    const paths = result.matches.map((m) => m.path);
-    expect(new Set(paths).size).toBe(paths.length);
-  });
-
-  it('returns sorted results', async () => {
-    setupTree();
-    const result = await globMultiple(['**/*.ts'], { cwd: TEST_BASE });
-    const paths = result.matches.map((m) => m.relativePath);
-    const sorted = [...paths].sort();
-    expect(paths).toEqual(sorted);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// listDir
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('listDir', () => {
-  it('lists directory contents', async () => {
-    setupTree();
-    const result = await listDir(TEST_BASE);
-    expect(result.success).toBe(true);
-    expect(result.entries.length).toBeGreaterThan(0);
-  });
-
-  it('directories sorted before files', async () => {
-    setupTree();
-    const result = await listDir(TEST_BASE);
-    const dirEntries = result.entries.filter((e) => e.isDirectory);
-    const fileEntries = result.entries.filter((e) => !e.isDirectory);
-
-    if (dirEntries.length > 0 && fileEntries.length > 0) {
-      const lastDirIdx = result.entries.lastIndexOf(dirEntries[dirEntries.length - 1]!);
-      const firstFileIdx = result.entries.indexOf(fileEntries[0]!);
-      expect(lastDirIdx).toBeLessThan(firstFileIdx);
-    }
-  });
-
-  it('includes file sizes', async () => {
-    setupTree();
-    const result = await listDir(TEST_BASE);
-    const fileEntry = result.entries.find((e) => !e.isDirectory);
-    if (fileEntry) {
-      expect(typeof fileEntry.size).toBe('number');
-    }
-  });
-
-  it('hides hidden files by default', async () => {
-    mkdirSync(TEST_BASE, { recursive: true });
-    writeFileSync(join(TEST_BASE, '.hidden'), 'x');
-    writeFileSync(join(TEST_BASE, 'visible'), 'x');
-
-    const result = await listDir(TEST_BASE);
-    expect(result.entries.some((e) => e.name === '.hidden')).toBe(false);
-    expect(result.entries.some((e) => e.name === 'visible')).toBe(true);
-  });
-
-  it('shows hidden files with dot=true', async () => {
-    mkdirSync(TEST_BASE, { recursive: true });
-    writeFileSync(join(TEST_BASE, '.hidden'), 'x');
-
-    const result = await listDir(TEST_BASE, { dot: true });
-    expect(result.entries.some((e) => e.name === '.hidden')).toBe(true);
-  });
-
-  it('fails for nonexistent directory', async () => {
-    const result = await listDir(join(TEST_BASE, 'nonexistent'));
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('not found');
-  });
-
-  it('fails for file path', async () => {
-    const fp = join(TEST_BASE, 'file.txt');
-    mkdirSync(TEST_BASE, { recursive: true });
-    writeFileSync(fp, 'content');
-    const result = await listDir(fp);
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Not a directory');
-  });
-});

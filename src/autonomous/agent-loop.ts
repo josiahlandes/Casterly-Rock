@@ -37,12 +37,10 @@
 
 import { getTracer } from './debug.js';
 import { buildIdentityPrompt } from './identity.js';
-import type { AgentToolkit, AgentState, CycleIntrospection } from './agent-tools.js';
+import type { AgentToolkit, AgentState } from './agent-tools.js';
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
 import type { ToolSchema, NativeToolCall, NativeToolResult, ToolResultMessage } from '../tools/schemas/types.js';
-import type { WorldModel } from './world-model.js';
-import type { GoalStack, Goal } from './goal-stack.js';
-import type { IssueLog } from './issue-log.js';
+import type { Goal } from './goal-stack.js';
 import type { SelfModelSummary } from './identity.js';
 import type { Journal } from './journal.js';
 

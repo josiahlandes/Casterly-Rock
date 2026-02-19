@@ -18,7 +18,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getTracer } from '../debug.js';
 import type { Journal, JournalEntry } from '../journal.js';
-import type { IssueLog, Issue, IssueAttempt } from '../issue-log.js';
+import type { IssueLog } from '../issue-log.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

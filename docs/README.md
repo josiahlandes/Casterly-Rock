@@ -16,7 +16,6 @@
 | Doc | Scope |
 |-----|-------|
 | [Architecture Overview](architecture.md) | High-level system: event sources → trigger router → agent loop → subsystems |
-| [Agent Loop Refactor Plan](PLAN-agent-architecture-refactor.md) | Unification plan for interactive + autonomous execution paths |
 
 ## Reference Documentation
 
@@ -54,13 +53,14 @@ Superseded docs moved to `docs/archive/`:
 |-----|---------------|
 | [security.md](archive/security.md) | [Security & Privacy](security-and-privacy.md) |
 | [testing.md](archive/testing.md) | [Testing & Quality Gates](testing-and-quality-gates.md) |
+| [OPEN-ISSUES.md](archive/OPEN-ISSUES.md) | All 9 issues implemented — historical record |
+| [IMPLEMENTATION-GUIDE.md](archive/IMPLEMENTATION-GUIDE.md) | Companion to OPEN-ISSUES — all work complete |
+| [PLAN-agent-architecture-refactor.md](archive/PLAN-agent-architecture-refactor.md) | Agent architecture refactor (Phases 0-6 complete) |
 
 ## Planning & Operations
 
 | Doc | Purpose |
 |-----|---------|
-| [Open Issues](OPEN-ISSUES.md) | Tracked gaps and feature requests |
-| [Implementation Guide](IMPLEMENTATION-GUIDE.md) | Handoff guide with integration points, function signatures, design decisions |
 | [Mac Permissions Review](mac-permissions-review.md) | Permission handling analysis for Node.js CLI |
 | [App Wrapper Plan](app-wrapper-plan.md) | Native Casterly.app plan: launcher, permissions, menu bar, IPC, signing |
 

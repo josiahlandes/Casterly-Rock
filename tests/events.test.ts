@@ -7,10 +7,6 @@ import {
 } from '../src/autonomous/events.js';
 import type {
   SystemEvent,
-  FileChangedEvent,
-  TestFailedEvent,
-  UserMessageEvent,
-  ScheduledEvent,
 } from '../src/autonomous/events.js';
 import { resetTracer, initTracer } from '../src/autonomous/debug.js';
 
@@ -20,19 +16,19 @@ import { resetTracer, initTracer } from '../src/autonomous/debug.js';
 
 const now = () => new Date().toISOString();
 
-function makeFileEvent(paths: string[] = ['src/test.ts']): FileChangedEvent {
+function makeFileEvent(paths: string[] = ['src/test.ts']): SystemEvent {
   return { type: 'file_changed', paths, changeKind: 'modified', timestamp: now() };
 }
 
-function makeTestFailedEvent(testName: string = 'detector.test.ts'): TestFailedEvent {
+function makeTestFailedEvent(testName: string = 'detector.test.ts'): SystemEvent {
   return { type: 'test_failed', testName, output: 'FAIL', timestamp: now() };
 }
 
-function makeUserEvent(message: string = 'hello'): UserMessageEvent {
+function makeUserEvent(message: string = 'hello'): SystemEvent {
   return { type: 'user_message', sender: 'Josiah', message, timestamp: now() };
 }
 
-function makeScheduledEvent(): ScheduledEvent {
+function makeScheduledEvent(): SystemEvent {
   return { type: 'scheduled', reason: 'timer', timestamp: now() };
 }
 
