@@ -60,6 +60,14 @@ Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
 | **Error Codes** | Structured error system (E1xx–E9xx), auto-detection | [error-codes.md](error-codes.md) |
 | **Installation** | Prerequisites, setup, configuration | [install.md](install.md) |
 
+> **NOTE — Vision Reconciliation (System Overview)**
+>
+> The system overview diagram above is largely aligned with the vision, but needs one change: the diagram implies triggers flow through the agent loop as the single path, which is correct. However, the *implementation* still has a separate pipeline path (`src/pipeline/process.ts`) that bypasses the agent loop entirely for iMessage conversations, routing them through classify → flat tool loop or classify → task manager pipeline. The vision says the agent loop is the *only* execution path. The separate pipeline entry point needs to be retired, with all triggers (including iMessage) entering through the agent loop.
+>
+> **What to change:**
+> - Remove `src/pipeline/process.ts` as a separate execution path. Route iMessage messages through `triggerFromMessage()` → agent loop like all other triggers.
+> - The iMessage daemon (`src/imessage/daemon.ts`) should emit user triggers into the event queue rather than calling `processChatMessage()` directly.
+
 ## Source Layout
 
 ```

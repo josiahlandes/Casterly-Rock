@@ -24,7 +24,9 @@ This inversion is only viable because of the economics of local inference. When 
 
 ### Autonomous Agency, Not a Chatbot
 
-Casterly is not a question-answering service waiting for input. It is an agent that can initiate actions, schedule work, monitor events, and maintain continuity across sessions. When idle, it can consolidate memory and reflect on past interactions. The LLM decides how to handle incoming work -- whether it needs planning, whether it needs verification, whether it's trivial enough to just do. There is no fixed pipeline that every task must traverse.
+Casterly is not a question-answering service waiting for input. It is an agent that can initiate actions, schedule work, monitor events, and maintain continuity across sessions. There is no "autonomous mode" toggle that activates a separate code path. Autonomy is the default state. Responding to a user message, noticing a file change, consolidating memory, practicing a weak skill, and fixing a bug it discovered on its own are all the same thing: the LLM receiving a trigger, deciding what to do, and doing it. The trigger source varies. The agent doesn't.
+
+The LLM decides how to handle incoming work -- whether it needs planning, whether it needs verification, whether it's trivial enough to just do. It also decides what to do when no external triggers are pending: consolidate memory, review past failures, practice weak skills, reorganize goals, or simply wait. These are not "background tasks" running in a separate daemon. They are goals the LLM pursues when higher-priority work isn't waiting. There is no fixed pipeline that every task must traverse, and there is no modal boundary between "interactive" and "autonomous."
 
 ### Journal-Driven Continuity
 
@@ -141,7 +143,9 @@ The personality is not cosmetic. It shapes how the agent communicates, what it p
 
 ### Dream Cycle Consolidation
 
-Background reasoning during idle time. When Casterly is not actively processing user requests, it analyzes its journal for patterns, consolidates operational memory, updates its self-model, and compresses old entries. The dream cycle runner (`src/autonomous/dream/runner.ts`) executes six phases:
+Dream cycles are part of Tyrion's normal routine -- low-priority goals that the LLM pursues when no higher-priority triggers are pending. They are not a separate daemon or a special "background mode." They are what Tyrion does when there's nothing more urgent: review what happened, consolidate what was learned, and prepare for what's next. The same agent loop that handles user messages handles dream cycles. The trigger source is different (scheduled or self-initiated rather than external), but the execution path is identical.
+
+The dream cycle runner (`src/autonomous/dream/runner.ts`) currently structures this as six phases, but in the LLM-driven architecture these become six tools the LLM can invoke in any order, skip, or extend based on its judgment:
 
 1. **Consolidate reflections** -- groups past outcomes by success/failure, archives insights.
 2. **Update world model** -- runs a codebase health check and refreshes the world model YAML.
@@ -150,7 +154,7 @@ Background reasoning during idle time. When Casterly is not actively processing 
 5. **Update self-model** -- recalculates strengths and weaknesses from the issue log.
 6. **Write retrospective** -- weekly summary written to the journal.
 
-Dream cycles are configured with intervals, budgets, and lookback windows in `config/autonomous.yaml`.
+Quiet hours (configured in `config/autonomous.yaml`) are a scheduling preference, not a mode switch. Tyrion prefers to do consolidation work during quiet hours because the user is less likely to need immediate responses, freeing up the full hardware budget for self-improvement. But if a reflection is needed mid-day -- for example, after a string of failures -- the LLM can initiate a consolidation cycle whenever it judges it's worthwhile.
 
 ### Self-Knowledge Rebuilding
 
@@ -253,7 +257,7 @@ The model literally gets better at tasks it encounters, using its own experience
 **Why this is feasible locally:**
 - LoRA adapters are small (tens of MB each). Dozens can coexist in memory alongside the base model.
 - Ollama supports adapter loading via model variants.
-- Training uses the GPU during idle time (dream cycles run at night).
+- Training uses the GPU during dream cycles, which the LLM typically schedules during quiet hours when the full hardware budget is available.
 - 128GB provides ample memory for training + inference on the same hardware.
 
 **Risk mitigation:** Fine-tuning on your own outputs can cause drift or mode collapse. Every adapter is evaluated against a stable benchmark suite before acceptance. The self-model tracks pre- and post-adapter performance. Adapters that degrade performance are logged and discarded. A `max_adapters` limit prevents unbounded growth.
@@ -337,7 +341,7 @@ Evolve the system prompt through selection pressure.
 
 **Concept:** Maintain a population of system prompt variants. Each variant is tested against a benchmark suite. The best-performing prompts "reproduce" -- combine elements from the strongest variants. Over generations, the system prompt evolves toward optimal performance for the specific model, hardware, and use patterns.
 
-**Why free tokens make this feasible:** Each variant needs to run through a benchmark, meaning dozens of inference calls per generation. Cloud architectures can't afford this. Locally, it's just idle GPU time during dream cycles. A population of 8 variants running 10 benchmark tasks each is 80 inference calls -- trivial when tokens are free.
+**Why free tokens make this feasible:** Each variant needs to run through a benchmark, meaning dozens of inference calls per generation. Cloud architectures can't afford this. Locally, it's a low-priority goal the LLM pursues during dream cycles. A population of 8 variants running 10 benchmark tasks each is 80 inference calls -- trivial when tokens are free.
 
 **What it optimizes for:** Not task correctness (that's binary) but decision quality: turns-to-completion, unnecessary tool calls, errors caught by verification, context management efficiency, judgment accuracy (measured via shadow execution data).
 
@@ -541,11 +545,11 @@ Make the agent loop the only execution path. Classification, planning, and verif
 **Approach:**
 - Triggers arrive at the agent loop directly. No pre-classification.
 - The `classify`, `plan`, `verify`, and `delegate` tools are available but not required. The LLM decides whether to use them based on the trigger and its self-knowledge.
-- The 6-phase dream cycle becomes 6 tools the LLM can invoke during idle time, rather than a hardcoded sequence. The LLM might decide to skip code archaeology because the codebase hasn't changed, or run self-model rebuilding early because it's been struggling with a skill.
+- The 6-phase dream cycle becomes 6 tools the LLM can invoke as low-priority goals, rather than a hardcoded sequence. The LLM might decide to skip code archaeology because the codebase hasn't changed, or run self-model rebuilding early because it's been struggling with a skill.
 - The system becomes a flat toolbox rather than a layered pipeline.
 
 **What exists today:**
-- The agent loop is already the primary execution path when autonomous mode is enabled.
+- The agent loop is already the primary execution path.
 - The dream cycle runner (`src/autonomous/dream/runner.ts`) has separable phases.
 - Tool schemas are already clean and well-documented.
 

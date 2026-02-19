@@ -289,3 +289,49 @@ Implementation details:
 | `src/autonomous/provider.ts` | `AutonomousProvider` interface for legacy 4-phase loop |
 | `src/autonomous/providers/ollama.ts` | Ollama implementation of autonomous provider |
 | `src/pipeline/process.ts` | Pipeline integration: classify → route → execute |
+
+---
+
+## Vision Reconciliation Notes
+
+The provider interface itself is well-designed and aligned with the vision. The contradiction is in how model routing happens — hardcoded by task type rather than LLM-decided.
+
+### 1. Remove hardcoded task-type model routing
+
+**Current:** `src/providers/index.ts` (lines 48-78) has a `CODING_TASK_TYPES` set that routes `coding`, `file_operation`, `code`, `review`, `implement`, `validate` tasks to the coding model. `src/pipeline/process.ts` (lines 277-287) enforces this routing after classification.
+
+**Why change:** The vision says the two-model setup is "a basic mixture of experts where the gating function is the LLM itself." The LLM should decide which model handles a subtask at runtime, not a static lookup table. A task classified as "coding" might actually need the reasoning model if it requires architectural judgment.
+
+**What to do:** Remove the `CODING_TASK_TYPES` set and the `forTask()` routing method from `ProviderRegistry`. The `delegate` agent tool already lets the LLM specify which model to use — this is the correct mechanism. The system prompt should describe the models' strengths: "Use qwen3-coder-next for implementation, code generation, and refactoring. Use gpt-oss:120b for planning, analysis, and judgment calls."
+
+### 2. Retire the pipeline routing in `process.ts`
+
+**Current:** `src/pipeline/process.ts` integrates classification and routing as a pipeline: classify → route to model → execute via flat tool loop or task manager.
+
+**Why change:** The vision says the agent loop is the only execution path. The pipeline in `process.ts` is a separate path that bypasses the agent loop entirely.
+
+**What to do:** Remove `process.ts` as an execution path. All triggers (including iMessage) flow through the agent loop. The classification step in the pipeline becomes an optional agent tool the LLM invokes when needed.
+
+### 3. Remove the legacy `AutonomousProvider` interface
+
+**Current:** `src/autonomous/provider.ts` defines a separate provider interface with `analyze()`, `hypothesize()`, `implement()`, `reflect()` methods for the old 4-phase pipeline.
+
+**Why change:** The 4-phase pipeline is superseded by the ReAct agent loop. The `AutonomousProvider` interface is unused in the target architecture.
+
+**What to do:** Delete `src/autonomous/provider.ts` and `src/autonomous/providers/ollama.ts`. All inference goes through the standard `LlmProvider` interface.
+
+### 4. Wire `ConcurrentProvider` as an LLM-accessible tool
+
+**Current:** `src/providers/concurrent.ts` is fully implemented with `parallel()`, `bestOfN()`, and bounded concurrency, but is not wired into the agent loop or exposed to the LLM.
+
+**Why change:** The vision says "because tokens are free, the executive model can use redundancy as a reliability strategy." The LLM should be able to request multi-model inference when it judges a problem is hard enough to warrant it.
+
+**What to do:** Create a `parallel_reason` agent tool that lets the LLM explicitly request multi-model inference. The tool wraps `ConcurrentProvider.parallel()` or `bestOfN()`. The LLM decides when redundancy is worth the cost, rather than the system routing based on difficulty assessment.
+
+### 5. Keep the provider interface stable
+
+**Current:** The `LlmProvider` interface is minimal and clean: `generateWithTools()` is the only method.
+
+**Why change:** This is already aligned with the vision. The interface is the right abstraction — it hides provider details and lets the agent loop work with any model.
+
+**What to do:** Keep as-is. This is a good example of the "thin runtime" philosophy — the system provides capability (inference), the LLM provides judgment (what to ask and when).
