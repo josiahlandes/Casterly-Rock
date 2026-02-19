@@ -1,8 +1,8 @@
 # Memory & State
 
-> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/autonomous/prompt-store.ts`, `src/autonomous/shadow-store.ts`, `src/tools/synthesizer.ts`, `src/autonomous/dream/challenge-evaluator.ts`, `src/autonomous/dream/prompt-evolution.ts`, `src/autonomous/dream/training-extractor.ts`, `src/autonomous/dream/lora-trainer.ts`, `src/tasks/execution-log.ts`
+> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/context-store.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/autonomous/prompt-store.ts`, `src/autonomous/shadow-store.ts`, `src/tools/synthesizer.ts`, `src/autonomous/dream/challenge-evaluator.ts`, `src/autonomous/dream/prompt-evolution.ts`, `src/autonomous/dream/training-extractor.ts`, `src/autonomous/dream/lora-trainer.ts`, `src/providers/embedding.ts`, `src/tasks/execution-log.ts`
 
-Casterly maintains persistent state across sessions through fifteen subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
+Casterly maintains persistent state across sessions through sixteen subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
 
 ```
 ~/.casterly/

@@ -29,7 +29,7 @@ import type {
 import { AgentLoop, createAgentLoop } from './agent-loop.js';
 import type { AgentTrigger, AgentLoopConfig, AgentOutcome } from './agent-loop.js';
 import { buildAgentToolkit } from './agent-tools.js';
-import type { AgentToolkit, AgentState } from './agent-tools.js';
+import type { AgentToolkit, AgentState, CycleIntrospection } from './agent-tools.js';
 import { WorldModel } from './world-model.js';
 import { GoalStack } from './goal-stack.js';
 import { IssueLog } from './issue-log.js';
@@ -167,6 +167,11 @@ export class AutonomousLoop {
   private lastCycleEndMs: number = 0;
   private dailyTurnCount: number = 0;
   private eventsConfig: EventsConfig;
+
+  // Roadmap: Optional providers
+  private jobStore: import('../scheduler/store.js').JobStore | null = null;
+  private embeddingProvider: import('../providers/embedding.js').EmbeddingProvider | null = null;
+  private concurrentProvider: import('../providers/concurrent.js').ConcurrentProvider | null = null;
 
   constructor(
     config: AutonomousConfig,
@@ -722,13 +727,23 @@ export class AutonomousLoop {
           : {}),
       });
 
-      // 4. Build toolkit (with Phase 4 context manager)
+      // 4. Build toolkit (with Phase 4 context manager + roadmap state)
       const agentState: AgentState = {
         worldModel: this.worldModel,
         goalStack: this.goalStack,
         issueLog: this.issueLog,
         contextManager: this.contextManager,
         journal: this.journal,
+        // Roadmap Phase 1/3: Event bus for peek_queue
+        eventBus: this.eventBus,
+        // Roadmap Phase 3: Self-model for assess_self
+        ...(this.selfModelSummary !== null ? { selfModelSummary: this.selfModelSummary } : {}),
+        // Roadmap Phase 5: Job store for schedule/list_schedules/cancel_schedule
+        ...(this.jobStore ? { jobStore: this.jobStore } : {}),
+        // Supporting: Embedding provider for semantic_recall
+        ...(this.embeddingProvider ? { embeddingProvider: this.embeddingProvider } : {}),
+        // Supporting: Concurrent provider for parallel_reason
+        ...(this.concurrentProvider ? { concurrentProvider: this.concurrentProvider } : {}),
       };
 
       this.agentToolkit = buildAgentToolkit(

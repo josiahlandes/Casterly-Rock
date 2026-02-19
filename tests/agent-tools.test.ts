@@ -93,9 +93,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 49 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(49);
-    expect(toolkit.toolNames).toHaveLength(49);
+  it('exposes all 66 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(66);
+    expect(toolkit.toolNames).toHaveLength(66);
   });
 
   it('includes all expected tool names', () => {
@@ -122,6 +122,13 @@ describe('AgentToolkit — Schema Validation', () => {
       'run_challenges', 'challenge_history', 'evolve_prompt',
       'evolution_status', 'extract_training_data', 'list_adapters',
       'load_adapter',
+      // Roadmap Phases 1-5 + Supporting
+      'meta',
+      'classify', 'plan', 'verify',
+      'peek_queue', 'check_budget', 'list_context', 'review_steps', 'assess_self',
+      'load_context', 'evict_context', 'set_budget',
+      'schedule', 'list_schedules', 'cancel_schedule',
+      'semantic_recall', 'parallel_reason',
     ];
     for (const name of expected) {
       expect(names).toContain(name);

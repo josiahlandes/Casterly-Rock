@@ -37,7 +37,7 @@
 
 import { getTracer } from './debug.js';
 import { buildIdentityPrompt } from './identity.js';
-import type { AgentToolkit, AgentState } from './agent-tools.js';
+import type { AgentToolkit, AgentState, CycleIntrospection } from './agent-tools.js';
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
 import type { ToolSchema, NativeToolCall, NativeToolResult, ToolResultMessage } from '../tools/schemas/types.js';
 import type { WorldModel } from './world-model.js';
@@ -402,6 +402,19 @@ export class AgentLoop {
 
       totalTokensEstimate += estimateTokens(fullSystemPrompt);
 
+      // ── Phase 3: Initialize cycle introspection state ──────────────────
+      if (this.state.cycleState !== undefined || true) {
+        this.state.cycleState = {
+          cycleId: this.config.cycleId ?? `cycle-${Date.now().toString(36)}`,
+          currentTurn: 0,
+          maxTurns: this.config.maxTurns,
+          tokensUsed: totalTokensEstimate,
+          maxTokens: this.config.maxTokensPerCycle,
+          startedAt,
+          stepHistory: [],
+        };
+      }
+
       // ── Conversation history ─────────────────────────────────────────
 
       // The conversation accumulates tool call results across turns.
@@ -438,6 +451,12 @@ export class AgentLoop {
 
         const turnStartMs = Date.now();
         const turnTimestamp = new Date().toISOString();
+
+        // Update introspection state each turn (Phase 3)
+        if (this.state.cycleState) {
+          this.state.cycleState.currentTurn = turnNumber;
+          this.state.cycleState.tokensUsed = totalTokensEstimate;
+        }
 
         tracer.log('agent-loop', 'debug', `── Turn ${turnNumber}/${this.config.maxTurns} ──`);
 
@@ -524,6 +543,16 @@ export class AgentLoop {
               issuesFiled,
               goalsUpdated,
             );
+
+            // Update cycle introspection state (Phase 3)
+            if (this.state.cycleState) {
+              this.state.cycleState.stepHistory.push({
+                turn: turnNumber,
+                tool: toolCall.name,
+                success: result.success,
+                durationMs: Date.now() - turnStartMs,
+              });
+            }
 
             // Add tokens for tool result
             totalTokensEstimate += estimateTokens(toolResultMsg.result);

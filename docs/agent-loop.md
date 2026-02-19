@@ -152,6 +152,13 @@ Tool output is capped at 10,000 characters. See [docs/skills-and-tools.md](skill
 | Self-knowledge | `crystallize`, `dissolve`, `list_crystals`, `create_rule`, `update_rule`, `list_rules`, `replay`, `compare_traces`, `search_traces` |
 | Self-improvement | `edit_prompt`, `revert_prompt`, `get_prompt`, `shadow`, `list_shadows`, `create_tool`, `manage_tools`, `list_custom_tools` |
 | Advanced self-improvement | `run_challenges`, `challenge_history`, `evolve_prompt`, `evolution_status`, `extract_training_data`, `list_adapters`, `load_adapter` |
+| Pipeline control | `meta` |
+| Promoted pipeline | `classify`, `plan`, `verify` |
+| Introspection | `peek_queue`, `check_budget`, `list_context`, `review_steps`, `assess_self` |
+| Context control | `load_context`, `evict_context`, `set_budget` |
+| Self-initiated triggers | `schedule`, `list_schedules`, `cancel_schedule` |
+| Semantic memory | `semantic_recall` |
+| Parallel reasoning | `parallel_reason` |
 | World | `update_world_model`, `adversarial_test` |
 | Communication | `message_user` (placeholder) |
 

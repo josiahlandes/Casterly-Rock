@@ -86,7 +86,7 @@ Each turn in the loop:
 
 The loop checks an `aborted` flag before each turn. External code (e.g. the message handler) can call `agentLoop.abort()` to preempt autonomous work when a user message arrives. The current turn completes, but no new turn starts.
 
-## Agent Toolkit (49 tools)
+## Agent Toolkit (66 tools)
 
 The agent has its own expanded tool set beyond the 13 core native tools. These are organized into categories:
 
@@ -249,6 +249,58 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 | `extract_training_data` | Extract training examples from journal and issue log. Produces instruction/completion pairs and DPO preference pairs grouped by skill domain. |
 | `list_adapters` | List all LoRA adapters with status, improvement scores, and load counts. Optionally filter by status (active, training, archived, discarded). |
 | `load_adapter` | Load a specific LoRA adapter for the current task. Records the load event and returns adapter metadata. |
+
+### Pipeline Control — Roadmap Phase 1 (1)
+
+| Tool | Description |
+|------|-------------|
+| `meta` | Override default pipeline behavior (skip classification, skip planning, force verification, or change strategy). Overrides are journaled for self-improvement analysis. |
+
+### Promoted Pipeline — Roadmap Phase 2 (3)
+
+| Tool | Description |
+|------|-------------|
+| `classify` | Optionally classify a message or task description. Returns task class, confidence, and task type. Skip for tasks you understand clearly. |
+| `plan` | Optionally generate a structured execution plan for complex tasks. Returns ordered steps with dependencies and verification criteria. |
+| `verify` | Optionally verify task completion against criteria. Returns pass/partial/fail verdict with evidence matching. |
+
+### Introspection — Roadmap Phase 3 (5)
+
+| Tool | Description |
+|------|-------------|
+| `peek_queue` | See the event queue: pending triggers, their types, and priorities. |
+| `check_budget` | Check resource consumption: turns used, tokens consumed, time elapsed, remaining budget. |
+| `list_context` | See what's loaded in each memory tier with token counts and entry keys. |
+| `review_steps` | Review tool call history for the current cycle: tools called, success/failure, duration. |
+| `assess_self` | Query the self-model for strengths and weaknesses relevant to the current task. |
+
+### Context Control — Roadmap Phase 4 (3)
+
+| Tool | Description |
+|------|-------------|
+| `load_context` | Search cool/cold memory and load matching entries into the warm tier for immediate access. |
+| `evict_context` | Remove specific content from the warm tier to free working memory. |
+| `set_budget` | Adjust warm tier token budget for the current cycle. |
+
+### Self-Initiated Triggers — Roadmap Phase 5 (3)
+
+| Tool | Description |
+|------|-------------|
+| `schedule` | Create a self-initiated trigger: schedule a future task, set a reminder, or create a recurring check. |
+| `list_schedules` | List all active scheduled jobs. |
+| `cancel_schedule` | Cancel an active scheduled job by ID. |
+
+### Semantic Memory (1)
+
+| Tool | Description |
+|------|-------------|
+| `semantic_recall` | Search memory using semantic similarity (embedding-based) combined with keyword matching. Falls back to keyword-only if embeddings are unavailable. |
+
+### Parallel Reasoning (1)
+
+| Tool | Description |
+|------|-------------|
+| `parallel_reason` | Send a problem to multiple models in parallel. Returns both responses or has a judge model pick the best. |
 
 ## Agent State
 
@@ -439,7 +491,7 @@ The most recent handoff note is included in the identity prompt for session cont
 The controller manages the full lifecycle of an autonomous session:
 
 1. Load state (world model, goals, issues) from disk
-2. Build the agent toolkit with all 49 tools
+2. Build the agent toolkit with all 66 tools
 3. Construct the agent loop with config + provider + state
 4. Run the loop for a given trigger
 5. Persist updated state back to disk
@@ -551,6 +603,8 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | `src/autonomous/dream/prompt-evolution.ts` | Prompt genetic algorithm (Vision Tier 3) |
 | `src/autonomous/dream/training-extractor.ts` | LoRA training data extraction (Vision Tier 3) |
 | `src/autonomous/dream/lora-trainer.ts` | LoRA adapter lifecycle management (Vision Tier 3) |
+| `src/providers/embedding.ts` | On-device embedding provider via Ollama (Semantic Memory) |
+| `src/utils/semaphore.ts` | Promise-based concurrency limiter (Parallelism) |
 | `src/autonomous/types.ts` | Shared type definitions |
 | `src/autonomous/index.ts` | Public exports |
 

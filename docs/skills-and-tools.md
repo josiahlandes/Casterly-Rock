@@ -157,9 +157,9 @@ Bash execution is registered separately.
 
 ---
 
-## Agent Tools (49)
+## Agent Tools (67)
 
-In addition to the 13 native tools above, the autonomous agent loop has 36 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
+In addition to the 13 native tools above, the autonomous agent loop has 54 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
 
 See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categories:
 
@@ -183,6 +183,13 @@ See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categor
 | Advanced self-improvement (challenges) | `run_challenges`, `challenge_history` |
 | Advanced self-improvement (evolution) | `evolve_prompt`, `evolution_status` |
 | Advanced self-improvement (LoRA) | `extract_training_data`, `list_adapters`, `load_adapter` |
+| Pipeline control (Roadmap Phase 1) | `meta` |
+| Promoted pipeline (Roadmap Phase 2) | `classify`, `plan`, `verify` |
+| Introspection (Roadmap Phase 3) | `peek_queue`, `check_budget`, `list_context`, `review_steps`, `assess_self` |
+| Context control (Roadmap Phase 4) | `load_context`, `evict_context`, `set_budget` |
+| Self-initiated triggers (Roadmap Phase 5) | `schedule`, `list_schedules`, `cancel_schedule` |
+| Semantic memory | `semantic_recall` |
+| Parallel reasoning | `parallel_reason` |
 | Delegation | `delegate` |
 | Communication | `message_user` |
 
@@ -191,6 +198,8 @@ The self-knowledge tools (9 total) are part of Vision Tier 1. They enable the ag
 The self-improvement tools (8 total) are part of Vision Tier 2. They enable the agent to modify its own prompts, record and analyze alternative approaches (shadows), and synthesize new tools.
 
 The advanced self-improvement tools (7 total) are part of Vision Tier 3. They enable the agent to generate adversarial challenges for self-testing (`run_challenges`, `challenge_history`), evolve its system prompt through genetic algorithms (`evolve_prompt`, `evolution_status`), and manage LoRA fine-tuning data and adapters (`extract_training_data`, `list_adapters`, `load_adapter`).
+
+The roadmap tools (18 total) implement the Vision Roadmap Phases 1-5 plus supporting work. They enable the LLM to override the pipeline (`meta`), optionally classify/plan/verify (`classify`, `plan`, `verify`), introspect its own state (`peek_queue`, `check_budget`, `list_context`, `review_steps`, `assess_self`), control its context window (`load_context`, `evict_context`, `set_budget`), create its own triggers (`schedule`, `list_schedules`, `cancel_schedule`), use semantic memory (`semantic_recall`), and request parallel multi-model inference (`parallel_reason`).
 
 ---
 

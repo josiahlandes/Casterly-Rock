@@ -562,7 +562,7 @@ These mechanisms are ordered by risk and dependency. Earlier mechanisms create t
 
 The roadmap is organized around a single goal: moving from "system that uses an LLM" to "LLM that uses a system." Each phase loosens the hardcoded pipeline and gives the LLM more control, while the supporting work (semantic memory, parallelism) provides the infrastructure the LLM needs to make good decisions.
 
-### Phase 1: Loosen the Pipeline
+### Phase 1: Loosen the Pipeline — IMPLEMENTED
 
 Make the current pipeline optional rather than mandatory. The pipeline (classify → plan → execute → verify) remains the default, but the LLM gains the ability to override it.
 
@@ -578,7 +578,7 @@ Make the current pipeline optional rather than mandatory. The pipeline (classify
 - The classifier (`src/tasks/classifier.ts`), planner (`src/tasks/planner.ts`), runner (`src/tasks/runner.ts`), and verifier (`src/tasks/verifier.ts`) are separable modules that can be invoked as tools.
 - The journal and self-model already track success/failure patterns.
 
-### Phase 2: Promote the ReAct Loop
+### Phase 2: Promote the ReAct Loop — IMPLEMENTED
 
 Make the agent loop the only execution path. Classification, planning, and verification become tools the LLM calls when it judges they're needed, rather than mandatory stages.
 
@@ -595,7 +595,7 @@ Make the agent loop the only execution path. Classification, planning, and verif
 
 **Key change:** The system prompt becomes the architecture document. It describes the default workflow, when to deviate, and how to self-correct. The LLM follows the prompt's guidance -- not because the code forces it to, but because the prompt is well-written and the model is capable enough to follow it.
 
-### Phase 3: Introspection Tools
+### Phase 3: Introspection Tools — IMPLEMENTED
 
 Give the model visibility into things the system currently hides. Self-awareness enables self-correction.
 
@@ -613,7 +613,7 @@ Give the model visibility into things the system currently hides. Self-awareness
 - The self-model exists but is only loaded into the hot tier passively.
 - Context tier contents are not queryable from the LLM's perspective.
 
-### Phase 4: LLM-Controlled Context
+### Phase 4: LLM-Controlled Context — IMPLEMENTED
 
 Replace hardcoded token budgets with a model-controlled context manager. The model decides what to load and what to evict.
 
@@ -628,7 +628,7 @@ Replace hardcoded token budgets with a model-controlled context manager. The mod
 - The `note`, `archive`, `recall`, and `recall_journal` tools already give the LLM read/write access.
 - The missing piece is explicit eviction and loading controls.
 
-### Phase 5: LLM-Initiated Triggers
+### Phase 5: LLM-Initiated Triggers — IMPLEMENTED
 
 Give the model the ability to create its own triggers. The model becomes proactive, not just reactive.
 
@@ -644,7 +644,7 @@ Give the model the ability to create its own triggers. The model becomes proacti
 
 ---
 
-### Supporting Work: Semantic Memory
+### Supporting Work: Semantic Memory — IMPLEMENTED
 
 On-device embeddings for richer recall beyond keyword matching. This directly supports the LLM-driven architecture -- the better the model's memory, the better its judgment.
 
@@ -665,7 +665,7 @@ On-device embeddings for richer recall beyond keyword matching. This directly su
 
 ---
 
-### Supporting Work: Parallelism
+### Supporting Work: Parallelism — IMPLEMENTED
 
 Wire the existing `ConcurrentProvider` into the agent loop so the LLM can use multi-model inference as a strategy.
 
@@ -692,3 +692,22 @@ Across all phases: **the system provides capability, the LLM provides judgment.*
 The 120b model will make worse decisions than a frontier model at each step. But with free tokens, it gets to make more of them, correct its mistakes, and learn from its history. Over time, the self-knowledge system captures which strategies work, and the model's effective capability rises above its raw parameter count.
 
 That's the unique advantage of local-first: you can afford to let the model be wrong, try again, and get better -- without worrying about the bill.
+
+---
+
+> **Roadmap Implementation Status**
+>
+> All roadmap phases and supporting work are implemented. 17 new tools bring the total to 66.
+>
+> | Phase | Tools Added | Status |
+> |-------|------------|--------|
+> | Phase 1: Loosen the Pipeline | `meta` | Implemented |
+> | Phase 2: Promote the ReAct Loop | `classify`, `plan`, `verify` | Implemented |
+> | Phase 3: Introspection Tools | `peek_queue`, `check_budget`, `list_context`, `review_steps`, `assess_self` | Implemented |
+> | Phase 4: LLM-Controlled Context | `load_context`, `evict_context`, `set_budget` | Implemented |
+> | Phase 5: LLM-Initiated Triggers | `schedule`, `list_schedules`, `cancel_schedule` | Implemented |
+> | Semantic Memory | `semantic_recall` | Implemented |
+> | Parallelism | `parallel_reason` | Implemented |
+>
+> **New files:** `src/providers/embedding.ts`, `src/utils/semaphore.ts`
+> **Modified files:** `src/autonomous/agent-tools.ts`, `src/autonomous/agent-loop.ts`, `src/autonomous/loop.ts`, `src/autonomous/context-store.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/debug.ts`

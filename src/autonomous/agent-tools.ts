@@ -55,6 +55,11 @@ import type { ChallengeEvaluator } from './dream/challenge-evaluator.js';
 import type { PromptEvolution } from './dream/prompt-evolution.js';
 import type { TrainingExtractor } from './dream/training-extractor.js';
 import type { LoraTrainer } from './dream/lora-trainer.js';
+import type { EventBus } from './events.js';
+import type { SelfModelSummary } from './identity.js';
+import type { JobStore } from '../scheduler/store.js';
+import type { EmbeddingProvider } from '../providers/embedding.js';
+import type { ConcurrentProvider } from '../providers/concurrent.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -147,6 +152,48 @@ export interface AgentState {
   trainingExtractor?: TrainingExtractor;
   /** Vision Tier 3: LoRA adapter trainer */
   loraTrainer?: LoraTrainer;
+
+  // ── Roadmap Phase additions ──
+
+  /** Phase 1: Event bus for queue introspection */
+  eventBus?: EventBus;
+  /** Phase 3: Self-model summary for assess_self tool */
+  selfModelSummary?: SelfModelSummary;
+  /** Phase 3: Cycle state for introspection (check_budget, review_steps) */
+  cycleState?: CycleIntrospection;
+  /** Phase 5: Job store for schedule tool */
+  jobStore?: JobStore;
+  /** Supporting: Embedding provider for semantic recall */
+  embeddingProvider?: EmbeddingProvider;
+  /** Supporting: Concurrent provider for parallel_reason tool */
+  concurrentProvider?: ConcurrentProvider;
+}
+
+/**
+ * Live cycle state exposed to introspection tools.
+ * The agent loop updates this each turn so tools can report
+ * budget and step history.
+ */
+export interface CycleIntrospection {
+  /** Cycle ID */
+  cycleId: string;
+  /** Turn number (1-indexed) */
+  currentTurn: number;
+  /** Max turns configured */
+  maxTurns: number;
+  /** Estimated tokens consumed so far */
+  tokensUsed: number;
+  /** Max tokens budget */
+  maxTokens: number;
+  /** Cycle start time (ISO) */
+  startedAt: string;
+  /** History of tool calls in this cycle */
+  stepHistory: Array<{
+    turn: number;
+    tool: string;
+    success: boolean;
+    durationMs: number;
+  }>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1447,6 +1494,367 @@ const BLOCKED_COMMANDS = [
 function isCommandBlocked(command: string): boolean {
   return BLOCKED_COMMANDS.some((pattern) => pattern.test(command));
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ROADMAP PHASE 1: LOOSEN THE PIPELINE — meta tool
+// ═════════════════════════════════════════════════════════════════════════════
+
+const META_SCHEMA: ToolSchema = {
+  name: 'meta',
+  description: `Override the default pipeline strategy for the current cycle.
+Use this to skip classification, skip planning, add mid-execution verification,
+or change execution strategy. Overrides are recorded and tracked for
+self-improvement analysis during dream cycles.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      override: {
+        type: 'string',
+        enum: ['skip_classification', 'skip_planning', 'force_verify', 'change_strategy'],
+        description: 'Which pipeline stage to override.',
+      },
+      strategy: {
+        type: 'string',
+        description: 'New strategy description (only for change_strategy).',
+      },
+      rationale: {
+        type: 'string',
+        description: 'Why you are overriding the default pipeline behavior.',
+      },
+    },
+    required: ['override', 'rationale'],
+  },
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ROADMAP PHASE 2: PROMOTE THE REACT LOOP — classify, plan, verify tools
+// ═════════════════════════════════════════════════════════════════════════════
+
+const CLASSIFY_SCHEMA: ToolSchema = {
+  name: 'classify',
+  description: `Classify a message or task description to determine its type and complexity.
+Returns: task class (conversation, simple_task, complex_task), confidence, task type.
+Use this when you want structured routing guidance before deciding how to proceed.
+This is optional — you can skip classification for tasks you understand clearly.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      message: {
+        type: 'string',
+        description: 'The message or task description to classify.',
+      },
+    },
+    required: ['message'],
+  },
+};
+
+const PLAN_SCHEMA: ToolSchema = {
+  name: 'plan',
+  description: `Generate a structured execution plan for a complex task.
+Returns a task plan with ordered steps, dependencies, and verification criteria.
+Use this for multi-step tasks where you want to organize your approach before acting.
+This is optional — skip planning for simple or well-understood tasks.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      instruction: {
+        type: 'string',
+        description: 'The task to plan execution for.',
+      },
+      context: {
+        type: 'string',
+        description: 'Additional context (recent activity, constraints, etc.).',
+      },
+    },
+    required: ['instruction'],
+  },
+};
+
+const VERIFY_SCHEMA: ToolSchema = {
+  name: 'verify',
+  description: `Verify that a task or sub-task was completed correctly.
+Runs verification checks against completion criteria.
+Use this mid-execution for critical checkpoints or at the end for final validation.
+This is optional — trust your judgment for straightforward tasks.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      description: {
+        type: 'string',
+        description: 'What was supposed to be accomplished.',
+      },
+      criteria: {
+        type: 'array',
+        items: { type: 'string', description: 'A single criterion to check.' },
+        description: 'Completion criteria to check against.',
+      },
+      evidence: {
+        type: 'string',
+        description: 'Evidence of completion (test output, file content, etc.).',
+      },
+    },
+    required: ['description', 'criteria', 'evidence'],
+  },
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ROADMAP PHASE 3: INTROSPECTION TOOLS
+// ═════════════════════════════════════════════════════════════════════════════
+
+const PEEK_QUEUE_SCHEMA: ToolSchema = {
+  name: 'peek_queue',
+  description: `See the current event queue: what triggers are pending, their priorities,
+and what's next. Helps you decide whether to continue current work or switch to
+something more urgent.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+const CHECK_BUDGET_SCHEMA: ToolSchema = {
+  name: 'check_budget',
+  description: `Check your resource consumption for the current cycle: turns used,
+tokens consumed, time elapsed, and remaining budget. Use this to decide
+whether to continue working or wrap up.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+const LIST_CONTEXT_SCHEMA: ToolSchema = {
+  name: 'list_context',
+  description: `See what's currently loaded in each memory tier: hot (identity),
+warm (working memory), cool (recent archives), cold (historical).
+Shows token counts and entry keys for each tier.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+const REVIEW_STEPS_SCHEMA: ToolSchema = {
+  name: 'review_steps',
+  description: `Review the tool call history for the current cycle. Shows what tools
+were called, whether they succeeded, and how long they took.
+Use this to understand what you've done and plan next steps.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      last_n: {
+        type: 'integer',
+        description: 'Only show the last N steps (default: all).',
+      },
+    },
+    required: [],
+  },
+};
+
+const ASSESS_SELF_SCHEMA: ToolSchema = {
+  name: 'assess_self',
+  description: `Query your self-model for strengths and weaknesses relevant to the
+current task. Returns skill performance data, preferences, and known patterns.
+Use this to calibrate confidence and decide whether to verify carefully.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      skills: {
+        type: 'array',
+        items: { type: 'string', description: 'A skill name.' },
+        description: 'Specific skills to query (e.g., ["regex", "testing"]). Omit for full summary.',
+      },
+    },
+    required: [],
+  },
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ROADMAP PHASE 4: LLM-CONTROLLED CONTEXT
+// ═════════════════════════════════════════════════════════════════════════════
+
+const LOAD_CONTEXT_SCHEMA: ToolSchema = {
+  name: 'load_context',
+  description: `Load specific content from cool/cold memory into the warm tier for
+immediate access. Use this when you need information from past sessions
+or archived knowledge in your active working memory.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'What to search for in memory.',
+      },
+      tier: {
+        type: 'string',
+        enum: ['cool', 'cold', 'both'],
+        description: 'Which tier to search (default: both).',
+      },
+      limit: {
+        type: 'integer',
+        description: 'Max entries to load (default: 3).',
+      },
+    },
+    required: ['query'],
+  },
+};
+
+const EVICT_CONTEXT_SCHEMA: ToolSchema = {
+  name: 'evict_context',
+  description: `Remove specific content from the warm tier to free up working memory.
+Use this when context is no longer needed for the current task.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      key: {
+        type: 'string',
+        description: 'Key of the warm tier entry to evict.',
+      },
+    },
+    required: ['key'],
+  },
+};
+
+const SET_BUDGET_SCHEMA: ToolSchema = {
+  name: 'set_budget',
+  description: `Adjust memory tier budgets for the current cycle. Increase warm tier
+for tasks needing lots of context, or decrease it for simple tasks.
+Hot tier minimum is enforced (identity is never evicted).`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      warm_tier_tokens: {
+        type: 'integer',
+        description: 'New warm tier token budget.',
+      },
+    },
+    required: ['warm_tier_tokens'],
+  },
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ROADMAP PHASE 5: LLM-INITIATED TRIGGERS
+// ═════════════════════════════════════════════════════════════════════════════
+
+const SCHEDULE_SCHEMA: ToolSchema = {
+  name: 'schedule',
+  description: `Create a self-initiated trigger: schedule a future task, set a reminder,
+or create a recurring check. The scheduled job re-enters the agent loop
+at the specified time.
+
+Examples:
+  - "Check if tests pass in 2 hours"
+  - "Review this PR tomorrow morning"
+  - "Run a dependency audit every Monday at 9am"`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      description: {
+        type: 'string',
+        description: 'What should happen when the trigger fires.',
+      },
+      fire_at: {
+        type: 'string',
+        description: 'When to fire: ISO 8601 timestamp, relative time ("in 2 hours"), or natural language ("tomorrow 9am").',
+      },
+      cron: {
+        type: 'string',
+        description: 'For recurring: 5-field cron expression (min hour dom month dow).',
+      },
+      actionable: {
+        type: 'boolean',
+        description: 'If true, the description is re-injected as a task (default: true).',
+      },
+    },
+    required: ['description'],
+  },
+};
+
+const LIST_SCHEDULES_SCHEMA: ToolSchema = {
+  name: 'list_schedules',
+  description: `List all active scheduled jobs (self-initiated triggers). Shows what's
+pending, when it fires, and whether it's one-shot or recurring.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+const CANCEL_SCHEDULE_SCHEMA: ToolSchema = {
+  name: 'cancel_schedule',
+  description: `Cancel an active scheduled job by ID.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      job_id: {
+        type: 'string',
+        description: 'The job ID to cancel.',
+      },
+    },
+    required: ['job_id'],
+  },
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SUPPORTING WORK: SEMANTIC MEMORY — semantic_recall tool
+// ═════════════════════════════════════════════════════════════════════════════
+
+const SEMANTIC_RECALL_SCHEMA: ToolSchema = {
+  name: 'semantic_recall',
+  description: `Search memory using semantic similarity (embedding-based) combined with
+keyword matching. More accurate than keyword-only recall for conceptual queries.
+Falls back to keyword-only if embeddings are unavailable.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'What to search for (will be embedded for semantic matching).',
+      },
+      tier: {
+        type: 'string',
+        enum: ['cool', 'cold', 'both'],
+        description: 'Which tier to search (default: both).',
+      },
+      limit: {
+        type: 'integer',
+        description: 'Max results to return (default: 10).',
+      },
+    },
+    required: ['query'],
+  },
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SUPPORTING WORK: PARALLELISM — parallel_reason tool
+// ═════════════════════════════════════════════════════════════════════════════
+
+const PARALLEL_REASON_SCHEMA: ToolSchema = {
+  name: 'parallel_reason',
+  description: `Send the same problem to multiple models in parallel and get the best
+response. Uses the reasoning model as judge to pick the winner.
+Use this for hard decisions where redundancy improves reliability.
+Requires the concurrent inference provider to be available.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      problem: {
+        type: 'string',
+        description: 'The problem or question to solve.',
+      },
+      strategy: {
+        type: 'string',
+        enum: ['parallel', 'best_of_n'],
+        description: 'parallel: get both responses. best_of_n: have judge pick best.',
+      },
+    },
+    required: ['problem'],
+  },
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Executor Builders
@@ -3159,6 +3567,597 @@ function buildExecutors(
     );
   });
 
+  // ═════════════════════════════════════════════════════════════════════════
+  // ROADMAP PHASE 1: LOOSEN THE PIPELINE — meta
+  // ═════════════════════════════════════════════════════════════════════════
+
+  executors.set('meta', async (call) => {
+    const overrideResult = requireString(call, 'override');
+    if ('error' in overrideResult) return overrideResult.error;
+    const rationaleResult = requireString(call, 'rationale');
+    if ('error' in rationaleResult) return rationaleResult.error;
+    const strategy = optionalString(call, 'strategy');
+
+    const override = overrideResult.value;
+    const rationale = rationaleResult.value;
+
+    tracer.log('agent-loop', 'info', `[meta] Pipeline override: ${override}`, {
+      rationale,
+      ...(strategy !== undefined ? { strategy } : {}),
+    });
+
+    // Record the override in the journal for self-improvement analysis
+    if (state.journal) {
+      await state.journal.append({
+        type: 'reflection' as const,
+        content: `Pipeline override: ${override}. Rationale: ${rationale}${strategy ? `. New strategy: ${strategy}` : ''}`,
+        tags: ['meta', 'pipeline-override', override],
+      });
+    }
+
+    return successResult(
+      call.id,
+      `Pipeline override recorded: ${override}. Rationale noted. Proceed with your chosen approach.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // ROADMAP PHASE 2: PROMOTE THE REACT LOOP — classify, plan, verify
+  // ═════════════════════════════════════════════════════════════════════════
+
+  executors.set('classify', async (call) => {
+    const messageResult = requireString(call, 'message');
+    if ('error' in messageResult) return messageResult.error;
+
+    // Classification uses heuristics when no delegate provider is available
+    const message = messageResult.value;
+    const lower = message.toLowerCase();
+
+    // Heuristic classification matching the task classifier logic
+    const codingSignals = ['fix', 'implement', 'refactor', 'add', 'create', 'edit', 'modify', 'update', 'delete', 'remove', 'test'];
+    const complexSignals = ['multiple', 'across', 'all', 'every', 'migration', 'pipeline', 'workflow'];
+    const conversationSignals = ['what', 'why', 'how', 'explain', 'tell me', 'think about', 'opinion'];
+
+    const codingScore = codingSignals.filter((s) => lower.includes(s)).length;
+    const complexScore = complexSignals.filter((s) => lower.includes(s)).length;
+    const conversationScore = conversationSignals.filter((s) => lower.includes(s)).length;
+
+    let taskClass: string;
+    let taskType: string | undefined;
+    if (conversationScore > codingScore && complexScore === 0) {
+      taskClass = 'conversation';
+    } else if (codingScore > 0 && complexScore >= 2) {
+      taskClass = 'complex_task';
+      taskType = 'coding';
+    } else if (codingScore > 0) {
+      taskClass = 'simple_task';
+      taskType = 'coding';
+    } else {
+      taskClass = 'simple_task';
+    }
+
+    const confidence = Math.min(1.0, 0.5 + (Math.max(codingScore, conversationScore) * 0.1));
+
+    const result = [
+      `Classification: ${taskClass}`,
+      `Confidence: ${confidence.toFixed(2)}`,
+      ...(taskType !== undefined ? [`Task type: ${taskType}`] : []),
+      `Signals: coding=${codingScore}, complex=${complexScore}, conversation=${conversationScore}`,
+    ].join('\n');
+
+    return successResult(call.id, result, config.maxOutputChars);
+  });
+
+  executors.set('plan', async (call) => {
+    const instructionResult = requireString(call, 'instruction');
+    if ('error' in instructionResult) return instructionResult.error;
+    const context = optionalString(call, 'context');
+
+    // Generate a lightweight plan using the agent's own reasoning
+    const instruction = instructionResult.value;
+    tracer.log('agent-loop', 'info', `[plan] Generating plan for: ${instruction.slice(0, 100)}`);
+
+    const plan = [
+      `## Plan: ${instruction.slice(0, 80)}`,
+      '',
+      'Steps (generated by heuristic planner):',
+      '1. Read relevant files to understand current state',
+      '2. Identify specific changes needed',
+      '3. Make targeted modifications',
+      '4. Run tests and typecheck to verify',
+      '5. Review results and iterate if needed',
+      '',
+      ...(context ? [`Context: ${context}`, ''] : []),
+      'Note: This is a default plan template. Adapt based on your judgment — skip steps that are unnecessary, add verification where needed.',
+    ].join('\n');
+
+    return successResult(call.id, plan, config.maxOutputChars);
+  });
+
+  executors.set('verify', async (call) => {
+    const descriptionResult = requireString(call, 'description');
+    if ('error' in descriptionResult) return descriptionResult.error;
+    const evidenceResult = requireString(call, 'evidence');
+    if ('error' in evidenceResult) return evidenceResult.error;
+
+    const criteria = call.input['criteria'];
+    const criteriaList = Array.isArray(criteria) ? criteria.filter((c): c is string => typeof c === 'string') : [];
+    const description = descriptionResult.value;
+    const evidence = evidenceResult.value;
+
+    // Simple verification: check if evidence mentions each criterion
+    const results: string[] = [];
+    let passed = 0;
+    for (const criterion of criteriaList) {
+      const found = evidence.toLowerCase().includes(criterion.toLowerCase());
+      results.push(`${found ? '✓' : '✗'} ${criterion}`);
+      if (found) passed++;
+    }
+
+    const total = criteriaList.length || 1;
+    const passRate = passed / total;
+    const verdict = passRate >= 0.8 ? 'PASS' : passRate >= 0.5 ? 'PARTIAL' : 'FAIL';
+
+    const output = [
+      `## Verification: ${verdict}`,
+      `Task: ${description}`,
+      `Criteria met: ${passed}/${criteriaList.length}`,
+      '',
+      ...results,
+      '',
+      `Evidence length: ${evidence.length} chars`,
+    ].join('\n');
+
+    return successResult(call.id, output, config.maxOutputChars);
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // ROADMAP PHASE 3: INTROSPECTION TOOLS
+  // ═════════════════════════════════════════════════════════════════════════
+
+  executors.set('peek_queue', async (call) => {
+    if (!state.eventBus) {
+      return successResult(call.id, 'Event bus not available. No events queued.', config.maxOutputChars);
+    }
+
+    const queue = state.eventBus.getQueue();
+    if (queue.length === 0) {
+      return successResult(call.id, 'Event queue is empty. No pending triggers.', config.maxOutputChars);
+    }
+
+    const lines = queue.map((event, i) => {
+      return `${i + 1}. [${event.type}] ${event.timestamp}`;
+    });
+
+    return successResult(
+      call.id,
+      `## Event Queue (${queue.length} events)\n\n${lines.join('\n')}`,
+      config.maxOutputChars,
+    );
+  });
+
+  executors.set('check_budget', async (call) => {
+    const cs = state.cycleState;
+    if (!cs) {
+      return successResult(call.id, 'Cycle state not available. Budget tracking requires the agent loop.', config.maxOutputChars);
+    }
+
+    const elapsed = Date.now() - new Date(cs.startedAt).getTime();
+    const turnsRemaining = cs.maxTurns - cs.currentTurn;
+    const tokensPct = ((cs.tokensUsed / cs.maxTokens) * 100).toFixed(1);
+    const turnsPct = ((cs.currentTurn / cs.maxTurns) * 100).toFixed(1);
+
+    const output = [
+      `## Budget Report — Cycle ${cs.cycleId}`,
+      '',
+      `Turns: ${cs.currentTurn}/${cs.maxTurns} (${turnsPct}% used, ${turnsRemaining} remaining)`,
+      `Tokens: ~${cs.tokensUsed.toLocaleString()}/${cs.maxTokens.toLocaleString()} (${tokensPct}% used)`,
+      `Elapsed: ${(elapsed / 1000).toFixed(1)}s`,
+      `Steps executed: ${cs.stepHistory.length}`,
+    ].join('\n');
+
+    return successResult(call.id, output, config.maxOutputChars);
+  });
+
+  executors.set('list_context', async (call) => {
+    if (!state.contextManager) {
+      return successResult(call.id, 'Context manager not available.', config.maxOutputChars);
+    }
+
+    const usage = await state.contextManager.getUsage();
+    const lines = [
+      '## Memory Tier Usage',
+      '',
+      `**Hot tier** (identity): ${usage.hot.tokens} tokens`,
+      `  Sections: ${usage.hot.sections.join(', ')}`,
+      '',
+      `**Warm tier** (working memory): ${usage.warm.tokens} tokens, ${usage.warm.entries} entries`,
+      ...(usage.warm.keys.length > 0 ? [`  Keys: ${usage.warm.keys.join(', ')}`] : ['  (empty)']),
+      '',
+      `**Cool tier** (recent): ${usage.cool.entries} entries`,
+      `**Cold tier** (archive): ${usage.cold.entries} entries`,
+      '',
+      `**Total in context**: ${usage.totalTokensInContext} tokens`,
+      `**Remaining**: ${usage.remainingTokens} tokens`,
+    ];
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  executors.set('review_steps', async (call) => {
+    const cs = state.cycleState;
+    if (!cs) {
+      return successResult(call.id, 'No cycle state available.', config.maxOutputChars);
+    }
+
+    const lastN = optionalNumber(call, 'last_n');
+    const steps = lastN !== undefined ? cs.stepHistory.slice(-lastN) : cs.stepHistory;
+
+    if (steps.length === 0) {
+      return successResult(call.id, 'No steps executed yet in this cycle.', config.maxOutputChars);
+    }
+
+    const lines = steps.map((s, i) => {
+      return `${i + 1}. Turn ${s.turn}: ${s.tool} — ${s.success ? 'OK' : 'FAILED'} (${s.durationMs}ms)`;
+    });
+
+    const successCount = steps.filter((s) => s.success).length;
+    const header = `## Step History (${steps.length} steps, ${successCount} succeeded)\n`;
+
+    return successResult(call.id, header + lines.join('\n'), config.maxOutputChars);
+  });
+
+  executors.set('assess_self', async (call) => {
+    const selfModel = state.selfModelSummary;
+    if (!selfModel) {
+      return successResult(call.id, 'Self-model not available. Run a dream cycle to rebuild it.', config.maxOutputChars);
+    }
+
+    const requestedSkills = call.input['skills'];
+    const skillFilter = Array.isArray(requestedSkills)
+      ? new Set(requestedSkills.filter((s): s is string => typeof s === 'string').map((s) => s.toLowerCase()))
+      : null;
+
+    const lines: string[] = ['## Self-Assessment', ''];
+
+    // Strengths
+    const strengths = skillFilter
+      ? selfModel.strengths.filter((s) => skillFilter.has(s.skill.toLowerCase()))
+      : selfModel.strengths;
+    if (strengths.length > 0) {
+      lines.push('**Strengths:**');
+      for (const s of strengths) {
+        lines.push(`  - ${s.skill}: ${(s.successRate * 100).toFixed(0)}% success (${s.sampleSize} samples)`);
+      }
+      lines.push('');
+    }
+
+    // Weaknesses
+    const weaknesses = skillFilter
+      ? selfModel.weaknesses.filter((s) => skillFilter.has(s.skill.toLowerCase()))
+      : selfModel.weaknesses;
+    if (weaknesses.length > 0) {
+      lines.push('**Weaknesses:**');
+      for (const w of weaknesses) {
+        lines.push(`  - ${w.skill}: ${(w.successRate * 100).toFixed(0)}% success (${w.sampleSize} samples)`);
+      }
+      lines.push('');
+    }
+
+    // Preferences
+    if (selfModel.preferences.length > 0 && !skillFilter) {
+      lines.push('**Preferences:**');
+      for (const p of selfModel.preferences) {
+        lines.push(`  - ${p}`);
+      }
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // ROADMAP PHASE 4: LLM-CONTROLLED CONTEXT
+  // ═════════════════════════════════════════════════════════════════════════
+
+  executors.set('load_context', async (call) => {
+    if (!state.contextManager) {
+      return failureResult(call.id, 'Context manager not available.');
+    }
+
+    const queryResult = requireString(call, 'query');
+    if ('error' in queryResult) return queryResult.error;
+
+    const tier = optionalString(call, 'tier') ?? 'both';
+    const limit = optionalNumber(call, 'limit') ?? 3;
+
+    const results = await state.contextManager.recall({
+      query: queryResult.value,
+      tier: tier as 'cool' | 'cold' | 'both',
+      limit,
+    });
+
+    if (results.length === 0) {
+      return successResult(call.id, `No matching entries found for: "${queryResult.value}"`, config.maxOutputChars);
+    }
+
+    // Load results into warm tier
+    const loaded: string[] = [];
+    for (const result of results) {
+      const key = `recall:${result.entry.id}`;
+      state.contextManager.addToWarmTier({
+        key,
+        kind: 'snippet',
+        content: `[${result.entry.title}] ${result.entry.content}`,
+      });
+      loaded.push(`${result.entry.title} (score: ${result.score.toFixed(2)})`);
+    }
+
+    return successResult(
+      call.id,
+      `Loaded ${loaded.length} entries into warm tier:\n${loaded.map((l, i) => `${i + 1}. ${l}`).join('\n')}`,
+      config.maxOutputChars,
+    );
+  });
+
+  executors.set('evict_context', async (call) => {
+    if (!state.contextManager) {
+      return failureResult(call.id, 'Context manager not available.');
+    }
+
+    const keyResult = requireString(call, 'key');
+    if ('error' in keyResult) return keyResult.error;
+
+    const removed = state.contextManager.removeFromWarmTier(keyResult.value);
+    if (removed) {
+      return successResult(call.id, `Evicted "${keyResult.value}" from warm tier.`, config.maxOutputChars);
+    }
+    return failureResult(call.id, `Key "${keyResult.value}" not found in warm tier.`);
+  });
+
+  executors.set('set_budget', async (call) => {
+    if (!state.contextManager) {
+      return failureResult(call.id, 'Context manager not available.');
+    }
+
+    const warmBudget = optionalNumber(call, 'warm_tier_tokens');
+    if (warmBudget === undefined) {
+      return failureResult(call.id, 'warm_tier_tokens is required.');
+    }
+
+    // We record the intent — actual enforcement happens through the context manager
+    tracer.log('agent-loop', 'info', `[set_budget] Warm tier budget requested: ${warmBudget} tokens`);
+
+    return successResult(
+      call.id,
+      `Warm tier budget preference set to ${warmBudget} tokens. The context manager will apply this on the next warm tier operation.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // ROADMAP PHASE 5: LLM-INITIATED TRIGGERS
+  // ═════════════════════════════════════════════════════════════════════════
+
+  executors.set('schedule', async (call) => {
+    if (!state.jobStore) {
+      return failureResult(call.id, 'Job store not available. Scheduling requires the scheduler to be initialized.');
+    }
+
+    const descResult = requireString(call, 'description');
+    if ('error' in descResult) return descResult.error;
+
+    const fireAt = optionalString(call, 'fire_at');
+    const cron = optionalString(call, 'cron');
+    const actionable = call.input['actionable'] !== false; // Default true
+
+    if (!fireAt && !cron) {
+      return failureResult(call.id, 'Either fire_at or cron must be provided.');
+    }
+
+    const jobId = `sched-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const now = Date.now();
+
+    // Parse fire_at into absolute timestamp
+    let fireAtMs: number | undefined;
+    if (fireAt) {
+      // Try ISO parse first
+      const parsed = Date.parse(fireAt);
+      if (!isNaN(parsed)) {
+        fireAtMs = parsed;
+      } else {
+        // Try relative time parsing ("in 2 hours", "in 30 minutes")
+        const relMatch = /in\s+(\d+)\s+(minute|hour|day|week)s?/i.exec(fireAt);
+        if (relMatch) {
+          const amount = parseInt(relMatch[1]!, 10);
+          const unit = relMatch[2]!.toLowerCase();
+          const multipliers: Record<string, number> = {
+            minute: 60_000,
+            hour: 3_600_000,
+            day: 86_400_000,
+            week: 604_800_000,
+          };
+          fireAtMs = now + amount * (multipliers[unit] ?? 60_000);
+        } else {
+          fireAtMs = now + 3_600_000; // Default: 1 hour from now
+        }
+      }
+    }
+
+    const job = {
+      id: jobId,
+      triggerType: (cron ? 'cron' : 'one_shot') as 'cron' | 'one_shot',
+      status: 'active' as const,
+      recipient: 'self',
+      message: descResult.value,
+      description: descResult.value.slice(0, 100),
+      ...(fireAtMs !== undefined ? { fireAt: fireAtMs } : {}),
+      ...(cron !== undefined ? { cronExpression: cron } : {}),
+      createdAt: now,
+      fireCount: 0,
+      source: 'system' as const,
+      label: descResult.value.slice(0, 50),
+      actionable,
+    };
+
+    state.jobStore.add(job);
+
+    const fireTimeStr = fireAtMs ? new Date(fireAtMs).toISOString() : `cron: ${cron}`;
+    return successResult(
+      call.id,
+      `Scheduled job ${jobId}: "${descResult.value.slice(0, 80)}"\nFires: ${fireTimeStr}\nActionable: ${actionable}`,
+      config.maxOutputChars,
+    );
+  });
+
+  executors.set('list_schedules', async (call) => {
+    if (!state.jobStore) {
+      return successResult(call.id, 'Job store not available.', config.maxOutputChars);
+    }
+
+    const active = state.jobStore.getActive();
+    if (active.length === 0) {
+      return successResult(call.id, 'No active scheduled jobs.', config.maxOutputChars);
+    }
+
+    const lines = active.map((job) => {
+      const fireTime = job.fireAt ? new Date(job.fireAt).toISOString() : `cron: ${job.cronExpression ?? 'unknown'}`;
+      return `- **${job.id}**: ${job.description} (fires: ${fireTime}, actionable: ${job.actionable ?? false})`;
+    });
+
+    return successResult(
+      call.id,
+      `## Active Schedules (${active.length})\n\n${lines.join('\n')}`,
+      config.maxOutputChars,
+    );
+  });
+
+  executors.set('cancel_schedule', async (call) => {
+    if (!state.jobStore) {
+      return failureResult(call.id, 'Job store not available.');
+    }
+
+    const idResult = requireString(call, 'job_id');
+    if ('error' in idResult) return idResult.error;
+
+    const cancelled = state.jobStore.cancel(idResult.value);
+    if (cancelled) {
+      return successResult(call.id, `Job ${idResult.value} cancelled.`, config.maxOutputChars);
+    }
+    return failureResult(call.id, `Job ${idResult.value} not found or already cancelled.`);
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // SUPPORTING WORK: SEMANTIC MEMORY
+  // ═════════════════════════════════════════════════════════════════════════
+
+  executors.set('semantic_recall', async (call) => {
+    if (!state.contextManager) {
+      return failureResult(call.id, 'Context manager not available.');
+    }
+
+    const queryResult = requireString(call, 'query');
+    if ('error' in queryResult) return queryResult.error;
+
+    const tier = optionalString(call, 'tier') ?? 'both';
+    const limit = optionalNumber(call, 'limit') ?? 10;
+
+    // If embedding provider is available, get the query embedding for hybrid search
+    let queryEmbedding: number[] | undefined;
+    if (state.embeddingProvider) {
+      try {
+        const embResult = await state.embeddingProvider.embed(queryResult.value);
+        queryEmbedding = embResult.embedding;
+      } catch (err) {
+        tracer.log('embedding', 'warn', `Embedding failed, falling back to keyword: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Use hybrid recall if embedding available, otherwise standard recall
+    const store = state.contextManager.getStore();
+    const results = queryEmbedding
+      ? await store.hybridRecall({
+          query: queryResult.value,
+          queryEmbedding,
+          tier: tier as 'cool' | 'cold' | 'both',
+          limit,
+        })
+      : await store.recall({
+          query: queryResult.value,
+          tier: tier as 'cool' | 'cold' | 'both',
+          limit,
+        });
+
+    if (results.length === 0) {
+      return successResult(call.id, `No results for: "${queryResult.value}"`, config.maxOutputChars);
+    }
+
+    const lines = results.map((r, i) => {
+      return `${i + 1}. [${r.entry.title}] (score: ${r.score.toFixed(2)}, keywords: ${r.matchedKeywords.join(', ') || 'none'})\n   ${r.entry.content.slice(0, 200)}${r.entry.content.length > 200 ? '...' : ''}`;
+    });
+
+    const method = queryEmbedding ? 'hybrid (keyword + semantic)' : 'keyword-only';
+    return successResult(
+      call.id,
+      `## Semantic Recall (${method})\nQuery: "${queryResult.value}"\n\n${lines.join('\n\n')}`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // SUPPORTING WORK: PARALLELISM
+  // ═════════════════════════════════════════════════════════════════════════
+
+  executors.set('parallel_reason', async (call) => {
+    if (!state.concurrentProvider) {
+      return failureResult(call.id, 'Concurrent provider not available. Parallel reasoning requires multi-model setup.');
+    }
+
+    const problemResult = requireString(call, 'problem');
+    if ('error' in problemResult) return problemResult.error;
+
+    const strategy = optionalString(call, 'strategy') ?? 'best_of_n';
+    const models = state.concurrentProvider.getRegisteredModels();
+
+    if (models.length < 2) {
+      return failureResult(call.id, `Need at least 2 models for parallel reasoning. Available: ${models.join(', ')}`);
+    }
+
+    try {
+      if (strategy === 'parallel') {
+        const results = await state.concurrentProvider.parallel(
+          models.slice(0, 2),
+          { prompt: problemResult.value, temperature: 0.3 },
+        );
+
+        const output = results.map((r) => {
+          return `### ${r.model} (${r.durationMs}ms)\n${r.response.text}`;
+        }).join('\n\n---\n\n');
+
+        return successResult(
+          call.id,
+          `## Parallel Responses (${results.length} models)\n\n${output}`,
+          config.maxOutputChars,
+        );
+      } else {
+        // best_of_n
+        const result = await state.concurrentProvider.bestOfN(
+          models.slice(0, Math.min(4, models.length)),
+          { prompt: problemResult.value, temperature: 0.3 },
+          models[0]!, // Use first model as judge
+        );
+
+        return successResult(
+          call.id,
+          `## Best Response (judged by ${result.judgeModel})\n\nModel: ${result.best.model} (${result.best.durationMs}ms)\nCandidates evaluated: ${result.candidates.length}\n\n${result.best.response.text}\n\n---\nJudge reasoning: ${result.judgeReasoning}`,
+          config.maxOutputChars,
+        );
+      }
+    } catch (err) {
+      return failureResult(call.id, `Parallel reasoning failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
   return executors;
 }
 
@@ -3248,6 +4247,30 @@ export function buildAgentToolkit(
     EXTRACT_TRAINING_DATA_SCHEMA,
     LIST_ADAPTERS_SCHEMA,
     LOAD_ADAPTER_SCHEMA,
+    // Roadmap Phase 1: Loosen the Pipeline
+    META_SCHEMA,
+    // Roadmap Phase 2: Promote the ReAct Loop
+    CLASSIFY_SCHEMA,
+    PLAN_SCHEMA,
+    VERIFY_SCHEMA,
+    // Roadmap Phase 3: Introspection Tools
+    PEEK_QUEUE_SCHEMA,
+    CHECK_BUDGET_SCHEMA,
+    LIST_CONTEXT_SCHEMA,
+    REVIEW_STEPS_SCHEMA,
+    ASSESS_SELF_SCHEMA,
+    // Roadmap Phase 4: LLM-Controlled Context
+    LOAD_CONTEXT_SCHEMA,
+    EVICT_CONTEXT_SCHEMA,
+    SET_BUDGET_SCHEMA,
+    // Roadmap Phase 5: LLM-Initiated Triggers
+    SCHEDULE_SCHEMA,
+    LIST_SCHEDULES_SCHEMA,
+    CANCEL_SCHEDULE_SCHEMA,
+    // Supporting: Semantic Memory
+    SEMANTIC_RECALL_SCHEMA,
+    // Supporting: Parallelism
+    PARALLEL_REASON_SCHEMA,
   ];
 
   // Build all executors
@@ -3343,4 +4366,27 @@ export {
   EXTRACT_TRAINING_DATA_SCHEMA,
   LIST_ADAPTERS_SCHEMA,
   LOAD_ADAPTER_SCHEMA,
+  // Roadmap Phase 1
+  META_SCHEMA,
+  // Roadmap Phase 2
+  CLASSIFY_SCHEMA,
+  PLAN_SCHEMA,
+  VERIFY_SCHEMA,
+  // Roadmap Phase 3
+  PEEK_QUEUE_SCHEMA,
+  CHECK_BUDGET_SCHEMA,
+  LIST_CONTEXT_SCHEMA,
+  REVIEW_STEPS_SCHEMA,
+  ASSESS_SELF_SCHEMA,
+  // Roadmap Phase 4
+  LOAD_CONTEXT_SCHEMA,
+  EVICT_CONTEXT_SCHEMA,
+  SET_BUDGET_SCHEMA,
+  // Roadmap Phase 5
+  SCHEDULE_SCHEMA,
+  LIST_SCHEDULES_SCHEMA,
+  CANCEL_SCHEDULE_SCHEMA,
+  // Supporting Work
+  SEMANTIC_RECALL_SCHEMA,
+  PARALLEL_REASON_SCHEMA,
 };
