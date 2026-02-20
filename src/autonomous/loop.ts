@@ -64,6 +64,11 @@ import { createPromptEvolution, type PromptEvolution } from './dream/prompt-evol
 import { createTrainingExtractor, type TrainingExtractor } from './dream/training-extractor.js';
 import { createLoraTrainer, type LoraTrainer } from './dream/lora-trainer.js';
 
+// Advanced Memory: Zettelkasten Link Network (A-MEM)
+import { createLinkNetwork, type LinkNetwork } from './memory/link-network.js';
+// Advanced Memory: Memory Evolution (A-MEM)
+import { createMemoryEvolution, type MemoryEvolution } from './memory/memory-evolution.js';
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -187,6 +192,11 @@ export class AutonomousLoop {
   private trainingExtractor: TrainingExtractor | null = null;
   private loraTrainer: LoraTrainer | null = null;
 
+  // Advanced Memory: Zettelkasten Link Network (A-MEM)
+  private linkNetwork: LinkNetwork;
+  // Advanced Memory: Memory Evolution (A-MEM)
+  private memoryEvolution: MemoryEvolution;
+
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
   private concurrentProvider: import('../providers/concurrent.js').ConcurrentProvider | null = null;
@@ -277,6 +287,12 @@ export class AutonomousLoop {
       this.trainingExtractor = createTrainingExtractor();
       this.loraTrainer = createLoraTrainer();
     }
+
+    // Advanced Memory: Zettelkasten Link Network + Memory Evolution (A-MEM)
+    this.linkNetwork = createLinkNetwork();
+    this.memoryEvolution = createMemoryEvolution();
+    // Couple: evolution operations auto-create links
+    this.memoryEvolution.setLinkNetwork(this.linkNetwork);
   }
 
   /**
@@ -372,6 +388,8 @@ export class AutonomousLoop {
       this.issueLog.load(),
       this.journal.load(),
       this.loadDreamMeta(),
+      this.linkNetwork.load(),
+      this.memoryEvolution.load(),
       ...this.visionStoreLoadOps(),
     ]);
   }
@@ -402,6 +420,8 @@ export class AutonomousLoop {
       this.goalStack.save(),
       this.issueLog.save(),
       this.saveDreamMeta(),
+      this.linkNetwork.save(),
+      this.memoryEvolution.save(),
       ...this.visionStoreSaveOps(),
     ]);
   }
@@ -710,6 +730,9 @@ export class AutonomousLoop {
         // Communication
         ...(this.messagePolicy ? { messagePolicy: this.messagePolicy } : {}),
         ...(this.messageDelivery ? { messageDelivery: this.messageDelivery } : {}),
+        // Advanced Memory: Zettelkasten + Evolution (A-MEM)
+        linkNetwork: this.linkNetwork,
+        memoryEvolution: this.memoryEvolution,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -858,6 +881,7 @@ export class AutonomousLoop {
         this.trainingExtractor ?? undefined,
         this.loraTrainer ?? undefined,
         this.journal,
+        this.linkNetwork,
       );
 
       this.lastDreamCycleDate = today;

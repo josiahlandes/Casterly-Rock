@@ -40,6 +40,7 @@ import type { PromptEvolution } from './prompt-evolution.js';
 import type { TrainingExtractor } from './training-extractor.js';
 import type { LoraTrainer } from './lora-trainer.js';
 import type { Journal } from '../journal.js';
+import type { LinkNetwork } from '../memory/link-network.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -120,6 +121,9 @@ export interface DreamOutcome {
   /** Number of training examples extracted (Vision Tier 3) */
   trainingExamplesExtracted: number;
 
+  /** Number of weak memory links pruned by decay (Advanced Memory) */
+  linksPruned: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -181,6 +185,7 @@ export class DreamCycleRunner {
     trainingExtractor?: TrainingExtractor,
     loraTrainer?: LoraTrainer,
     journal?: Journal,
+    linkNetwork?: LinkNetwork,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -204,6 +209,7 @@ export class DreamCycleRunner {
         challengesPassed: 0,
         promptEvolutionRan: false,
         trainingExamplesExtracted: 0,
+        linksPruned: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -395,6 +401,21 @@ export class DreamCycleRunner {
       } catch (err) {
         tracer.log('dream', 'warn', `Retrospective failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('writeRetrospective');
+      }
+
+      // Phase 10: Link network decay (Advanced Memory: Zettelkasten A-MEM)
+      if (linkNetwork) {
+        try {
+          outcome.linksPruned = linkNetwork.applyDecay();
+          if (outcome.linksPruned > 0 || linkNetwork.count() > 0) {
+            await linkNetwork.save();
+          }
+          outcome.phasesCompleted.push('linkDecay');
+          tracer.log('dream', 'info', `Link decay: ${outcome.linksPruned} weak links pruned, ${linkNetwork.count()} remaining`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Link decay failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('linkDecay');
+        }
       }
 
       // Promote stale context entries

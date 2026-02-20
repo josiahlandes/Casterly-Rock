@@ -64,6 +64,8 @@ import type { CrystalStore } from './crystal-store.js';
 import type { ConstitutionStore } from './constitution-store.js';
 import type { TraceReplayStore } from './trace-replay.js';
 import type { EmbeddingProvider } from '../providers/embedding.js';
+import type { LinkNetwork, LinkType } from './memory/link-network.js';
+import type { MemoryEvolution } from './memory/memory-evolution.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -185,6 +187,13 @@ export interface AgentState {
   messagePolicy?: MessagePolicy;
   /** Message delivery backend (iMessage, console outbox) */
   messageDelivery?: MessageDelivery;
+
+  // ── Advanced Memory (A-MEM) ──
+
+  /** Zettelkasten bidirectional link network */
+  linkNetwork?: LinkNetwork;
+  /** Memory evolution engine (strengthen, weaken, merge, split, etc.) */
+  memoryEvolution?: MemoryEvolution;
 }
 
 /**
@@ -1927,6 +1936,86 @@ between retrospectives. This is a dream cycle phase that can now be invoked at y
     type: 'object',
     properties: {},
     required: [],
+  },
+};
+
+// ── ADVANCED MEMORY: ZETTELKASTEN LINK NETWORK (A-MEM) ──────────────────────
+
+const LINK_MEMORIES_SCHEMA: ToolSchema = {
+  name: 'link_memories',
+  description: `Create a typed bidirectional link between two memory entries (crystals, journal entries,
+constitution rules, etc.). If a link already exists between the pair, it is strengthened instead of duplicated.
+
+Link types:
+- supports: Evidence or reasoning that supports another entry
+- contradicts: Evidence that contradicts another entry
+- extends: Builds upon or elaborates on another entry
+- derived_from: Created as a consequence of another entry
+- related: General topical relationship`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      source_id: {
+        type: 'string',
+        description: 'ID of the source memory entry (e.g. crystal ID, journal entry ID).',
+      },
+      target_id: {
+        type: 'string',
+        description: 'ID of the target memory entry.',
+      },
+      link_type: {
+        type: 'string',
+        enum: ['supports', 'contradicts', 'extends', 'derived_from', 'related'],
+        description: 'The relationship type of the link.',
+      },
+      annotation: {
+        type: 'string',
+        description: 'Optional annotation explaining why this link exists.',
+      },
+    },
+    required: ['source_id', 'target_id', 'link_type'],
+  },
+};
+
+const GET_LINKS_SCHEMA: ToolSchema = {
+  name: 'get_links',
+  description: `Retrieve all links connected to a memory entry, sorted by strength (strongest first).
+Use this to understand how a memory entry relates to the rest of the knowledge network.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entry_id: {
+        type: 'string',
+        description: 'The memory entry ID to get links for.',
+      },
+      link_type: {
+        type: 'string',
+        enum: ['supports', 'contradicts', 'extends', 'derived_from', 'related'],
+        description: 'Optional: filter links by relationship type.',
+      },
+    },
+    required: ['entry_id'],
+  },
+};
+
+const TRAVERSE_LINKS_SCHEMA: ToolSchema = {
+  name: 'traverse_links',
+  description: `Traverse the memory link network from a starting entry, returning all reachable entries
+within the given number of hops (breadth-first). Useful for finding related context across the entire
+memory surface — crystals, journal entries, constitution rules, and more.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entry_id: {
+        type: 'string',
+        description: 'The starting memory entry ID.',
+      },
+      hops: {
+        type: 'number',
+        description: 'How many hops to traverse (1 = direct neighbors, 2 = neighbors of neighbors). Default: 2.',
+      },
+    },
+    required: ['entry_id'],
   },
 };
 
@@ -4432,6 +4521,116 @@ function buildExecutors(
     });
   });
 
+  // ── link_memories (Advanced Memory: Zettelkasten A-MEM) ──────────────────
+
+  executors.set('link_memories', async (call) => {
+    if (!state.linkNetwork) {
+      return failureResult(call.id, 'Link network not available.');
+    }
+
+    const sourceId = requireString(call, 'source_id');
+    if ('error' in sourceId) return sourceId.error;
+    const targetId = requireString(call, 'target_id');
+    if ('error' in targetId) return targetId.error;
+    const linkType = requireString(call, 'link_type');
+    if ('error' in linkType) return linkType.error;
+
+    const validTypes = ['supports', 'contradicts', 'extends', 'derived_from', 'related'];
+    if (!validTypes.includes(linkType.value)) {
+      return failureResult(call.id, `Invalid link_type: ${linkType.value}. Must be one of: ${validTypes.join(', ')}`);
+    }
+
+    const annotation = optionalString(call, 'annotation');
+
+    const result = state.linkNetwork.createLink({
+      sourceId: sourceId.value,
+      targetId: targetId.value,
+      type: linkType.value as LinkType,
+      annotation,
+    });
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Failed to create link.');
+    }
+
+    await state.linkNetwork.save();
+    return successResult(
+      call.id,
+      `Link created: ${result.linkId} (${sourceId.value} -[${linkType.value}]-> ${targetId.value})`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── get_links (Advanced Memory: Zettelkasten A-MEM) ────────────────────
+
+  executors.set('get_links', async (call) => {
+    if (!state.linkNetwork) {
+      return failureResult(call.id, 'Link network not available.');
+    }
+
+    const entryId = requireString(call, 'entry_id');
+    if ('error' in entryId) return entryId.error;
+    const filterType = optionalString(call, 'link_type');
+
+    let links = state.linkNetwork.getLinksForEntry(entryId.value);
+
+    if (filterType) {
+      links = links.filter((l) => l.type === filterType);
+    }
+
+    if (links.length === 0) {
+      return successResult(
+        call.id,
+        `No links found for entry "${entryId.value}"${filterType ? ` with type "${filterType}"` : ''}.`,
+        config.maxOutputChars,
+      );
+    }
+
+    const lines: string[] = [
+      `## Links for ${entryId.value} (${links.length} total)`,
+      '',
+    ];
+    for (const link of links) {
+      const other = link.sourceId === entryId.value ? link.targetId : link.sourceId;
+      const direction = link.sourceId === entryId.value ? '→' : '←';
+      const pct = Math.round(link.strength * 100);
+      lines.push(`- ${direction} **${other}** [${link.type}] (${pct}% strength)`);
+      if (link.annotation) lines.push(`  _${link.annotation}_`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── traverse_links (Advanced Memory: Zettelkasten A-MEM) ───────────────
+
+  executors.set('traverse_links', async (call) => {
+    if (!state.linkNetwork) {
+      return failureResult(call.id, 'Link network not available.');
+    }
+
+    const entryId = requireString(call, 'entry_id');
+    if ('error' in entryId) return entryId.error;
+    const hops = optionalNumber(call, 'hops') ?? 2;
+
+    const neighborhood = state.linkNetwork.getNeighborhood(entryId.value, hops);
+
+    if (neighborhood.length === 0) {
+      return successResult(
+        call.id,
+        `No entries reachable from "${entryId.value}" within ${hops} hop(s).`,
+        config.maxOutputChars,
+      );
+    }
+
+    const lines: string[] = [
+      `## Neighborhood of ${entryId.value} (${hops} hops, ${neighborhood.length} entries)`,
+      '',
+      ...neighborhood.map((id) => `- ${id}`),
+    ];
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   return executors;
 }
 
@@ -4551,6 +4750,10 @@ export function buildAgentToolkit(
     EXPLORE_CODEBASE_SCHEMA,
     REBUILD_SELF_MODEL_SCHEMA,
     WRITE_RETROSPECTIVE_SCHEMA,
+    // Advanced Memory: Zettelkasten Link Network (A-MEM)
+    LINK_MEMORIES_SCHEMA,
+    GET_LINKS_SCHEMA,
+    TRAVERSE_LINKS_SCHEMA,
   ];
 
   // Build all executors
@@ -4675,4 +4878,8 @@ export {
   EXPLORE_CODEBASE_SCHEMA,
   REBUILD_SELF_MODEL_SCHEMA,
   WRITE_RETROSPECTIVE_SCHEMA,
+  // Advanced Memory: Zettelkasten Link Network (A-MEM)
+  LINK_MEMORIES_SCHEMA,
+  GET_LINKS_SCHEMA,
+  TRAVERSE_LINKS_SCHEMA,
 };
