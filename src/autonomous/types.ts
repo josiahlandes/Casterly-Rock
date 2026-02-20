@@ -242,6 +242,67 @@ export interface AutonomousConfig {
     };
   };
 
+  // Vision tier toggles — controls which self-improvement stores are active
+  visionTiers?: VisionTiersConfig | undefined;
+
+  // Communication — proactive user messaging
+  communication?: CommunicationConfig | undefined;
+
+  // Dream cycle scheduling — controls automatic dream cycle triggering
+  dreamCycles?: DreamCyclesConfig | undefined;
+}
+
+// ============================================================================
+// VISION TIERS
+// ============================================================================
+
+export interface VisionTiersConfig {
+  /** Enable Vision Tier 2: prompt-store, shadow-store, tool-synthesizer */
+  tier2: boolean;
+  /** Enable Vision Tier 3: challenges, prompt-evolution, LoRA training */
+  tier3: boolean;
+}
+
+// ============================================================================
+// DREAM CYCLES
+// ============================================================================
+
+export interface DreamCyclesConfig {
+  /** Hours between consolidation runs (default: 24) */
+  consolidationIntervalHours: number;
+  /** Maximum turns for the exploration phase (default: 50) */
+  explorationBudgetTurns: number;
+  /** Hours between self-model rebuilds (default: 48) */
+  selfModelRebuildIntervalHours: number;
+  /** Days to look back for code archaeology (default: 90) */
+  archaeologyLookbackDays: number;
+  /** Days between retrospective writes (default: 7) */
+  retrospectiveIntervalDays: number;
+}
+
+// ============================================================================
+// COMMUNICATION
+// ============================================================================
+
+export interface CommunicationConfig {
+  /** Whether messaging is enabled */
+  enabled: boolean;
+  /** Delivery channel */
+  deliveryChannel?: 'imessage' | 'console' | undefined;
+  /** iMessage recipient (required when channel is imessage) */
+  recipient?: string | undefined;
+  /** Throttle settings */
+  throttle?: {
+    maxPerHour: number;
+    maxPerDay: number;
+    quietHours: boolean;
+    quietStart: string;
+    quietEnd: string;
+  } | undefined;
+  /** Test failure notification threshold */
+  testFailureMinSeverity?: 'always' | 'unresolvable' | undefined;
+  /** Whether to send daily summary notifications */
+  dailySummaryEnabled?: boolean | undefined;
 }
 
 // ============================================================================

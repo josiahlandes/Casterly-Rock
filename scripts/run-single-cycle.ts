@@ -1,8 +1,9 @@
 /**
- * Run a Single Autonomous Cycle — Full Pipeline
+ * Run a Single Autonomous Agent Cycle
  *
- * Runs the complete cycle: analyze → hypothesize → implement → validate → integrate → reflect
- * against real Ollama. Creates auto/ branches for validated work (approval_required mode).
+ * Runs a single agent cycle (ReAct loop) against real Ollama.
+ * The agent loop is the sole execution path — it picks a trigger
+ * (goal from the stack, or a scheduled cycle) and executes it.
  *
  * Usage: npx tsx scripts/run-single-cycle.ts
  */
@@ -15,16 +16,13 @@ const projectRoot = path.resolve(import.meta.dirname, '..');
 const configPath = path.join(projectRoot, 'config', 'autonomous.yaml');
 
 async function main(): Promise<void> {
-  console.log('=== Single Autonomous Cycle — Full Pipeline ===\n');
+  console.log('=== Single Autonomous Agent Cycle ===\n');
 
   // 1. Load config
   console.log('[1] Loading config...');
   const config = await loadConfig(configPath);
   console.log(`  Model: ${config.model}`);
   console.log(`  Integration mode: ${config.git.integrationMode}`);
-  console.log(`  Attempt threshold: ${config.attemptThreshold}`);
-  console.log(`  Auto-integrate threshold: ${config.autoIntegrateThreshold}`);
-  console.log(`  Max attempts per cycle: ${config.maxAttemptsPerCycle}`);
   console.log(`  Backlog path: ${config.backlogPath}`);
   console.log('');
 
@@ -46,15 +44,19 @@ async function main(): Promise<void> {
   console.log(`  Provider: ${provider.name}, Model: ${provider.model}`);
   console.log('');
 
-  // 4. Create loop and run single cycle
-  console.log('[4] Running full cycle...');
+  // 4. Create loop and run single agent cycle
+  console.log('[4] Running agent cycle...');
   console.log('  (This may take 5-15 minutes with local inference)\n');
 
   const startTime = Date.now();
   const loop = new AutonomousLoop(config, projectRoot, provider);
 
   try {
-    await loop.runCycle();
+    const outcome = await loop.runAgentCycle();
+    console.log(`\n  Stop reason: ${outcome.stopReason}`);
+    console.log(`  Turns: ${outcome.totalTurns}`);
+    console.log(`  Files modified: ${outcome.filesModified.length}`);
+    console.log(`  Issues filed: ${outcome.issuesFiled.length}`);
   } catch (err) {
     console.error('\n  Cycle error:', err instanceof Error ? err.message : String(err));
   }
