@@ -152,11 +152,22 @@ string. There is also no actual delivery mechanism.
 - `config/autonomous.yaml` (messaging config)
 
 **Acceptance Criteria:**
-- [ ] `message_user` tool routes through `MessagePolicy.shouldNotify()`.
-- [ ] Messages are delivered via iMessage when configured.
-- [ ] Throttle and quiet hours are respected.
-- [ ] Blocked messages return a clear reason to the agent.
-- [ ] `npm run check` passes.
+- [x] `message_user` tool routes through `MessagePolicy.shouldNotify()`.
+- [x] Messages are delivered via iMessage when configured.
+- [x] Throttle and quiet hours are respected.
+- [x] Blocked messages return a clear reason to the agent.
+- [x] `npm run check` passes.
+
+**Status: IMPLEMENTED** — `message_user` executor rewritten to route through
+`MessagePolicy.shouldNotify()` and `MessageDelivery.send()`. New
+`src/autonomous/communication/delivery.ts` module provides `IMessageDelivery`
+(via AppleScript) and `ConsoleDelivery` (JSONL outbox) backends with a
+`createDelivery()` factory. `MessagePolicy` and `MessageDelivery` are added to
+`AgentState` and instantiated in the `AutonomousLoop` constructor when
+`communication.enabled: true` in config. The old `userMessagingEnabled` boolean
+is removed. `CommunicationConfig` added to `types.ts` and parsed in
+`loadConfig()`. 12 new tests added covering delivery backends, factory, and
+config parsing. Pre-existing test failures unchanged.
 
 ### 1C. Auto-Trigger Dream Cycles in the Modern Path
 

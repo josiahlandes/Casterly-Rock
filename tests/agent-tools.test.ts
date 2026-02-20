@@ -59,7 +59,6 @@ async function setupToolkit(configOverrides?: Partial<AgentToolkitConfig>): Prom
       allowedDirectories: ['src/', 'tests/', 'scripts/'],
       forbiddenPatterns: ['**/*.env*', '**/secrets*'],
       delegationEnabled: false,
-      userMessagingEnabled: false,
       ...configOverrides,
     },
     state,
@@ -542,14 +541,14 @@ describe('AgentToolkit — delegate', () => {
 });
 
 describe('AgentToolkit — message_user', () => {
-  it('fails when messaging is disabled', async () => {
+  it('fails when messaging is not configured', async () => {
     const result = await toolkit.execute(makeCall('message_user', {
       message: 'Tests are passing!',
       urgency: 'low',
     }));
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('not yet enabled');
+    expect(result.error).toContain('not configured');
   });
 });
 

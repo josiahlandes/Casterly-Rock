@@ -100,7 +100,6 @@ async function setupToolkit(
       allowedDirectories: ['src/', 'tests/', 'scripts/'],
       forbiddenPatterns: ['**/*.env*', '**/secrets*'],
       delegationEnabled: false,
-      userMessagingEnabled: false,
       ...configOverrides,
     },
     state,

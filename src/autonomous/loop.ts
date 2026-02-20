@@ -53,6 +53,10 @@ import { ReasoningScaler } from './reasoning/scaling.js';
 import { DreamCycleRunner } from './dream/runner.js';
 import type { SelfModelSummary } from './identity.js';
 
+// Communication: MessagePolicy + delivery
+import { createMessagePolicy, type MessagePolicy } from './communication/policy.js';
+import { createDelivery, type MessageDelivery } from './communication/delivery.js';
+
 // Vision Tier 2: Self-improvement stores
 import { createPromptStore, type PromptStore } from './prompt-store.js';
 import { createShadowStore, type ShadowStore } from './shadow-store.js';
@@ -172,6 +176,10 @@ export class AutonomousLoop {
   private dailyTurnCount: number = 0;
   private eventsConfig: EventsConfig;
 
+  // Communication
+  private messagePolicy: MessagePolicy | null = null;
+  private messageDelivery: MessageDelivery | null = null;
+
   // Vision Tier 2: Self-improvement stores
   private promptStore: PromptStore | null = null;
   private shadowStore: ShadowStore | null = null;
@@ -240,6 +248,23 @@ export class AutonomousLoop {
 
     // Phase 1: Initialize journal
     this.journal = createJournal();
+
+    // Communication: MessagePolicy + delivery backend
+    // Reads from the `communication` section of autonomous.yaml
+    // via the AutonomousConfig (which stores the raw communication block).
+    if (config.communication?.enabled) {
+      const policyOpts: Record<string, unknown> = { enabled: true };
+      if (config.communication.throttle) policyOpts['throttle'] = config.communication.throttle;
+      if (config.communication.testFailureMinSeverity) policyOpts['testFailureMinSeverity'] = config.communication.testFailureMinSeverity;
+      if (config.communication.dailySummaryEnabled !== undefined) policyOpts['dailySummaryEnabled'] = config.communication.dailySummaryEnabled;
+      this.messagePolicy = createMessagePolicy(policyOpts as Parameters<typeof createMessagePolicy>[0]);
+
+      const channel = config.communication.deliveryChannel ?? 'console';
+      this.messageDelivery = createDelivery({
+        channel,
+        recipient: config.communication.recipient,
+      });
+    }
 
     // Vision Tier 2: Self-improvement stores
     if (config.visionTiers?.tier2 !== false) {
@@ -796,6 +821,9 @@ export class AutonomousLoop {
         ...(this.promptEvolution ? { promptEvolution: this.promptEvolution } : {}),
         ...(this.trainingExtractor ? { trainingExtractor: this.trainingExtractor } : {}),
         ...(this.loraTrainer ? { loraTrainer: this.loraTrainer } : {}),
+        // Communication
+        ...(this.messagePolicy ? { messagePolicy: this.messagePolicy } : {}),
+        ...(this.messageDelivery ? { messageDelivery: this.messageDelivery } : {}),
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -1301,6 +1329,24 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
       tier2: raw.self_improvement !== undefined,
       tier3: raw.advanced_self_improvement !== undefined,
     },
+    communication: raw.communication?.enabled
+      ? {
+          enabled: true,
+          deliveryChannel: raw.communication.delivery_channel ?? raw.notifications?.method ?? 'console',
+          recipient: raw.communication.recipient ?? raw.notifications?.recipient ?? undefined,
+          throttle: raw.communication.throttle
+            ? {
+                maxPerHour: raw.communication.throttle.max_per_hour ?? 3,
+                maxPerDay: raw.communication.throttle.max_per_day ?? 10,
+                quietHours: raw.communication.throttle.quiet_hours ?? true,
+                quietStart: raw.communication.throttle.quiet_start ?? '22:00',
+                quietEnd: raw.communication.throttle.quiet_end ?? '08:00',
+              }
+            : undefined,
+          testFailureMinSeverity: raw.communication.test_failure_min_severity ?? 'unresolvable',
+          dailySummaryEnabled: raw.communication.daily_summary_enabled ?? true,
+        }
+      : undefined,
   };
 }
 

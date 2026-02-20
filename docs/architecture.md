@@ -56,7 +56,7 @@ Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
 | **Security & Privacy** | Sensitive data detection, redaction, safe logging, command gates | [security-and-privacy.md](security-and-privacy.md) |
 | **Configuration** | YAML + Zod validation, model routing, data layout | [configuration-and-environment.md](configuration-and-environment.md) |
 | **Testing & Quality Gates** | 5-gate pipeline, trace collection, test cases, benchmarking | [testing-and-quality-gates.md](testing-and-quality-gates.md) |
-| **Autonomous Agent** | ReAct loop, agent tools (71), budget controls, identity, dream cycles, self-knowledge (crystals, constitution, traces), self-improvement (prompts, shadows, tools), advanced self-improvement (challenges, evolution, LoRA), roadmap tools (meta, classify, plan, verify, introspection, context control, scheduling, semantic recall, parallel reasoning), dream cycle phase tools (consolidate_reflections, reorganize_goals, explore_codebase, rebuild_self_model, write_retrospective). **Vision Tier 2/3 stores** (PromptStore, ShadowStore, ToolSynthesizer, ChallengeGenerator, ChallengeEvaluator, PromptEvolution, TrainingExtractor, LoraTrainer) are wired into the agent loop via `AgentState` and toggled by `config/autonomous.yaml` vision tier settings. | [autonomous-agent.md](autonomous-agent.md) |
+| **Autonomous Agent** | ReAct loop, agent tools (71), budget controls, identity, dream cycles, self-knowledge (crystals, constitution, traces), self-improvement (prompts, shadows, tools), advanced self-improvement (challenges, evolution, LoRA), roadmap tools (meta, classify, plan, verify, introspection, context control, scheduling, semantic recall, parallel reasoning), dream cycle phase tools (consolidate_reflections, reorganize_goals, explore_codebase, rebuild_self_model, write_retrospective). **Vision Tier 2/3 stores** wired via `AgentState` and toggled by `config/autonomous.yaml` vision tier settings. **Communication** — `message_user` routes through `MessagePolicy` (throttle, quiet hours, event filtering) and `MessageDelivery` (iMessage or console JSONL outbox), configured via `communication` section in `config/autonomous.yaml`. | [autonomous-agent.md](autonomous-agent.md) |
 | **API Reference** | Provider interface, tool schemas, key function signatures | [api-reference.md](api-reference.md) |
 | **Error Codes** | Structured error system (E1xx–E9xx), auto-detection | [error-codes.md](error-codes.md) |
 | **Installation** | Prerequisites, setup, configuration | [install.md](install.md) |
@@ -89,6 +89,7 @@ src/
 │                             # events, triggers, identity, delegation,
 │                             # crystal store, constitution, trace replay,
 │                             # prompt store, shadow store,
+│                             # communication/ (delivery backends, policy),
 │                             # dream/ (challenge gen/eval, prompt evolution,
 │                             #         training extractor, LoRA trainer)
 ├── utils/                    # Shared utilities (semaphore)

@@ -17,7 +17,7 @@
  *   - STATE: file_issue, close_issue, update_goal, update_world_model
  *   - REASONING: think (no-op for explicit reasoning steps)
  *   - DELEGATION: delegate (send sub-task to a specific model)
- *   - COMMUNICATION: message_user (placeholder for Phase 7)
+ *   - COMMUNICATION: message_user (via MessagePolicy + delivery backend)
  *
  * Design principles:
  *   - Every tool call is logged through the debug tracer.
@@ -58,6 +58,8 @@ import type { JobStore } from '../scheduler/store.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { DreamCycleRunner } from './dream/runner.js';
 import type { Reflector } from './reflector.js';
+import type { MessagePolicy } from './communication/policy.js';
+import type { MessageDelivery } from './communication/delivery.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -86,9 +88,6 @@ export interface AgentToolkitConfig {
 
   /** Whether delegation to other models is enabled */
   delegationEnabled: boolean;
-
-  /** Whether user messaging is enabled (Phase 7 placeholder) */
-  userMessagingEnabled: boolean;
 }
 
 /**
@@ -164,6 +163,13 @@ export interface AgentState {
   dreamCycleRunner?: DreamCycleRunner;
   /** Reflector for consolidation and retrospective phases */
   reflector?: Reflector;
+
+  // ── Communication ──
+
+  /** Message policy for throttling and filtering outbound messages */
+  messagePolicy?: MessagePolicy;
+  /** Message delivery backend (iMessage, console outbox) */
+  messageDelivery?: MessageDelivery;
 }
 
 /**
@@ -204,7 +210,6 @@ const DEFAULT_CONFIG: AgentToolkitConfig = {
   allowedDirectories: ['src/', 'scripts/', 'tests/', 'config/', 'skills/'],
   forbiddenPatterns: ['**/*.env*', '**/credentials*', '**/secrets*', '**/.git/**'],
   delegationEnabled: true,
-  userMessagingEnabled: false,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2360,10 +2365,6 @@ function buildExecutors(
   // ── message_user ────────────────────────────────────────────────────────
 
   executors.set('message_user', async (call) => {
-    if (!config.userMessagingEnabled) {
-      return failureResult(call.id, 'User messaging is not yet enabled (Phase 7). The message has been logged but not delivered.');
-    }
-
     const messageResult = requireString(call, 'message');
     if ('error' in messageResult) return messageResult.error;
 
@@ -2371,11 +2372,53 @@ function buildExecutors(
 
     tracer.log('agent-loop', 'info', `[message_user] [${urgency}] ${messageResult.value}`);
 
-    // Phase 7 placeholder — for now, just log the message
-    return successResult(
+    // Route through MessagePolicy if available
+    const policy = state.messagePolicy;
+    const delivery = state.messageDelivery;
+
+    if (!policy || !delivery) {
+      return failureResult(
+        call.id,
+        'User messaging is not configured. Set communication.enabled: true in config/autonomous.yaml.',
+      );
+    }
+
+    // Map urgency to a NotifiableEvent. The agent provides a free-text
+    // message, so we wrap it as a decision_needed or fix_complete event
+    // depending on urgency. This ensures the policy's throttle and quiet
+    // hours logic applies uniformly.
+    const event = urgency === 'high'
+      ? { type: 'security_concern' as const, description: messageResult.value, severity: 'medium' as const }
+      : { type: 'fix_complete' as const, description: messageResult.value, branch: '(agent)' };
+
+    const decision = policy.shouldNotify(event);
+
+    if (!decision.allowed) {
+      return successResult(
+        call.id,
+        `Message blocked by policy: ${decision.reason ?? 'unknown reason'}. The message was not delivered.`,
+        config.maxOutputChars,
+      );
+    }
+
+    const result = await delivery.send(
+      decision.formattedMessage ?? messageResult.value,
+      urgency,
+    );
+
+    policy.recordSent(event);
+
+    if (result.delivered) {
+      return successResult(
+        call.id,
+        `Message delivered via ${result.channel}.`,
+        config.maxOutputChars,
+      );
+    }
+
+    return failureResult(
       call.id,
-      `Message logged (delivery not yet implemented): "${messageResult.value}" [${urgency}]`,
-      config.maxOutputChars,
+      `Message delivery failed (${result.channel}): ${result.error ?? 'unknown error'}`,
     );
   });
 
