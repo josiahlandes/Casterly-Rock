@@ -307,3 +307,71 @@ describe('loadConfig — error handling', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// loadConfig — vision tiers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('loadConfig — vision tiers', () => {
+  it('enables tier2 when self_improvement section exists', async () => {
+    const fp = writeYaml('tier2.yaml', `
+autonomous:
+  enabled: true
+self_improvement:
+  prompts:
+    max_versions: 20
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers).toBeDefined();
+    expect(config.visionTiers!.tier2).toBe(true);
+  });
+
+  it('enables tier3 when advanced_self_improvement section exists', async () => {
+    const fp = writeYaml('tier3.yaml', `
+autonomous:
+  enabled: true
+advanced_self_improvement:
+  adversarial:
+    challenge_budget: 20
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers).toBeDefined();
+    expect(config.visionTiers!.tier3).toBe(true);
+  });
+
+  it('disables tier2 when self_improvement section is absent', async () => {
+    const fp = writeYaml('no-tier2.yaml', `
+autonomous:
+  enabled: true
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers).toBeDefined();
+    expect(config.visionTiers!.tier2).toBe(false);
+  });
+
+  it('disables tier3 when advanced_self_improvement section is absent', async () => {
+    const fp = writeYaml('no-tier3.yaml', `
+autonomous:
+  enabled: true
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers).toBeDefined();
+    expect(config.visionTiers!.tier3).toBe(false);
+  });
+
+  it('enables both tiers when both sections are present', async () => {
+    const fp = writeYaml('both-tiers.yaml', `
+autonomous:
+  enabled: true
+self_improvement:
+  prompts:
+    max_versions: 10
+advanced_self_improvement:
+  adversarial:
+    challenge_budget: 5
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers!.tier2).toBe(true);
+    expect(config.visionTiers!.tier3).toBe(true);
+  });
+});

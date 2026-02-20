@@ -53,6 +53,18 @@ import { ReasoningScaler } from './reasoning/scaling.js';
 import { DreamCycleRunner } from './dream/runner.js';
 import type { SelfModelSummary } from './identity.js';
 
+// Vision Tier 2: Self-improvement stores
+import { createPromptStore, type PromptStore } from './prompt-store.js';
+import { createShadowStore, type ShadowStore } from './shadow-store.js';
+import { createToolSynthesizer, type ToolSynthesizer } from '../tools/synthesizer.js';
+
+// Vision Tier 3: Advanced self-improvement
+import { createChallengeGenerator, type ChallengeGenerator } from './dream/challenge-generator.js';
+import { createChallengeEvaluator, type ChallengeEvaluator } from './dream/challenge-evaluator.js';
+import { createPromptEvolution, type PromptEvolution } from './dream/prompt-evolution.js';
+import { createTrainingExtractor, type TrainingExtractor } from './dream/training-extractor.js';
+import { createLoraTrainer, type LoraTrainer } from './dream/lora-trainer.js';
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -160,6 +172,18 @@ export class AutonomousLoop {
   private dailyTurnCount: number = 0;
   private eventsConfig: EventsConfig;
 
+  // Vision Tier 2: Self-improvement stores
+  private promptStore: PromptStore | null = null;
+  private shadowStore: ShadowStore | null = null;
+  private toolSynthesizer: ToolSynthesizer | null = null;
+
+  // Vision Tier 3: Advanced self-improvement
+  private challengeGenerator: ChallengeGenerator | null = null;
+  private challengeEvaluator: ChallengeEvaluator | null = null;
+  private promptEvolution: PromptEvolution | null = null;
+  private trainingExtractor: TrainingExtractor | null = null;
+  private loraTrainer: LoraTrainer | null = null;
+
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
   private concurrentProvider: import('../providers/concurrent.js').ConcurrentProvider | null = null;
@@ -216,6 +240,22 @@ export class AutonomousLoop {
 
     // Phase 1: Initialize journal
     this.journal = createJournal();
+
+    // Vision Tier 2: Self-improvement stores
+    if (config.visionTiers?.tier2 !== false) {
+      this.promptStore = createPromptStore();
+      this.shadowStore = createShadowStore();
+      this.toolSynthesizer = createToolSynthesizer();
+    }
+
+    // Vision Tier 3: Advanced self-improvement
+    if (config.visionTiers?.tier3 !== false) {
+      this.challengeGenerator = createChallengeGenerator();
+      this.challengeEvaluator = createChallengeEvaluator();
+      this.promptEvolution = createPromptEvolution();
+      this.trainingExtractor = createTrainingExtractor();
+      this.loraTrainer = createLoraTrainer();
+    }
   }
 
   /**
@@ -445,7 +485,23 @@ export class AutonomousLoop {
       this.goalStack.load(),
       this.issueLog.load(),
       this.journal.load(),
+      ...this.visionStoreLoadOps(),
     ]);
+  }
+
+  /**
+   * Return load() promises for all active vision stores.
+   * ChallengeGenerator and TrainingExtractor are stateless — no load needed.
+   */
+  private visionStoreLoadOps(): Promise<void>[] {
+    const ops: Promise<void>[] = [];
+    if (this.promptStore) ops.push(this.promptStore.load());
+    if (this.shadowStore) ops.push(this.shadowStore.load());
+    if (this.toolSynthesizer) ops.push(this.toolSynthesizer.load());
+    if (this.challengeEvaluator) ops.push(this.challengeEvaluator.load());
+    if (this.promptEvolution) ops.push(this.promptEvolution.load());
+    if (this.loraTrainer) ops.push(this.loraTrainer.load());
+    return ops;
   }
 
   /**
@@ -458,7 +514,23 @@ export class AutonomousLoop {
       this.worldModel.save(),
       this.goalStack.save(),
       this.issueLog.save(),
+      ...this.visionStoreSaveOps(),
     ]);
+  }
+
+  /**
+   * Return save() promises for all active vision stores.
+   * ChallengeGenerator and TrainingExtractor are stateless — no save needed.
+   */
+  private visionStoreSaveOps(): Promise<void>[] {
+    const ops: Promise<void>[] = [];
+    if (this.promptStore) ops.push(this.promptStore.save());
+    if (this.shadowStore) ops.push(this.shadowStore.save());
+    if (this.toolSynthesizer) ops.push(this.toolSynthesizer.save());
+    if (this.challengeEvaluator) ops.push(this.challengeEvaluator.save());
+    if (this.promptEvolution) ops.push(this.promptEvolution.save());
+    if (this.loraTrainer) ops.push(this.loraTrainer.save());
+    return ops;
   }
 
   /**
@@ -714,6 +786,16 @@ export class AutonomousLoop {
         // Reconciliation: Dream cycle phases as tools
         dreamCycleRunner: this.dreamCycleRunner,
         reflector: this.reflector,
+        // Vision Tier 2: Self-improvement stores
+        ...(this.promptStore ? { promptStore: this.promptStore } : {}),
+        ...(this.shadowStore ? { shadowStore: this.shadowStore } : {}),
+        ...(this.toolSynthesizer ? { toolSynthesizer: this.toolSynthesizer } : {}),
+        // Vision Tier 3: Advanced self-improvement
+        ...(this.challengeGenerator ? { challengeGenerator: this.challengeGenerator } : {}),
+        ...(this.challengeEvaluator ? { challengeEvaluator: this.challengeEvaluator } : {}),
+        ...(this.promptEvolution ? { promptEvolution: this.promptEvolution } : {}),
+        ...(this.trainingExtractor ? { trainingExtractor: this.trainingExtractor } : {}),
+        ...(this.loraTrainer ? { loraTrainer: this.loraTrainer } : {}),
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -1214,6 +1296,10 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
         deleteFailedBranches: raw.git?.cleanup?.delete_failed_branches ?? true,
         maxStaleBranchAgeHours: raw.git?.cleanup?.max_stale_branch_age_hours ?? 48,
       },
+    },
+    visionTiers: {
+      tier2: raw.self_improvement !== undefined,
+      tier3: raw.advanced_self_improvement !== undefined,
     },
   };
 }

@@ -242,6 +242,19 @@ export interface AutonomousConfig {
     };
   };
 
+  // Vision tier toggles — controls which self-improvement stores are active
+  visionTiers?: VisionTiersConfig | undefined;
+}
+
+// ============================================================================
+// VISION TIERS
+// ============================================================================
+
+export interface VisionTiersConfig {
+  /** Enable Vision Tier 2: prompt-store, shadow-store, tool-synthesizer */
+  tier2: boolean;
+  /** Enable Vision Tier 3: challenges, prompt-evolution, LoRA training */
+  tier3: boolean;
 }
 
 // ============================================================================

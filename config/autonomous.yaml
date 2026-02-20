@@ -319,6 +319,19 @@ self_knowledge:
     max_traces: 500
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# VISION TIER TOGGLES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Controls which self-improvement subsystems are active. When a tier is
+# disabled, the corresponding agent tools gracefully return "not enabled".
+# Presence of the self_improvement / advanced_self_improvement sections
+# below automatically enables their respective tier.
+#
+# vision_tiers:
+#   tier2: true   # prompt-store, shadow-store, tool-synthesizer
+#   tier3: true   # challenges, prompt-evolution, LoRA training
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SELF-IMPROVEMENT TIER 2 (Vision: Prompts, Shadows, Tool Synthesis)
 # ═══════════════════════════════════════════════════════════════════════════════
 
