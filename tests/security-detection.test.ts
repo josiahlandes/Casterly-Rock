@@ -240,7 +240,7 @@ describe('detectSensitiveContent', () => {
 
   it('works with all categories as always-local', () => {
     const allCategories: SensitiveCategory[] = [
-      'calendar', 'finances', 'voice_memos', 'health', 'credentials', 'documents', 'contacts',
+      'calendar', 'finances', 'voice_memos', 'health', 'credentials', 'documents', 'contacts', 'location',
     ];
     const options: { alwaysLocalCategories: SensitiveCategory[] } = {
       alwaysLocalCategories: allCategories,

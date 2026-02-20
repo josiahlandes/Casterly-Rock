@@ -113,8 +113,23 @@ export function isValidCronExpression(expression: string): boolean {
 }
 
 /**
+ * Check whether a field is an unrestricted wildcard (contains every value in its range).
+ */
+function isWildcard(field: Set<number>, min: number, max: number): boolean {
+  if (field.size !== max - min + 1) return false;
+  for (let i = min; i <= max; i++) {
+    if (!field.has(i)) return false;
+  }
+  return true;
+}
+
+/**
  * Compute the next fire time after a given date.
  * Iterates forward minute-by-minute, capped at 366 days to prevent infinite loops.
+ *
+ * Standard cron semantics: when both day-of-month and day-of-week are
+ * restricted (non-wildcard), the day matches if *either* field matches.
+ * When only one is restricted, it alone determines the day match.
  */
 export function getNextFireTime(cron: CronParts, after: Date): Date {
   // Start from the next minute boundary
@@ -124,6 +139,9 @@ export function getNextFireTime(cron: CronParts, after: Date): Date {
 
   const maxIterations = 366 * 24 * 60; // 366 days in minutes
 
+  const domIsWildcard = isWildcard(cron.daysOfMonth, 1, 31);
+  const dowIsWildcard = isWildcard(cron.daysOfWeek, 0, 6);
+
   for (let i = 0; i < maxIterations; i++) {
     const month = candidate.getMonth() + 1; // 1-12
     const dayOfMonth = candidate.getDate();
@@ -131,10 +149,17 @@ export function getNextFireTime(cron: CronParts, after: Date): Date {
     const hour = candidate.getHours();
     const minute = candidate.getMinutes();
 
+    // Standard cron day matching: OR when both DOM and DOW are restricted
+    let dayMatches: boolean;
+    if (!domIsWildcard && !dowIsWildcard) {
+      dayMatches = cron.daysOfMonth.has(dayOfMonth) || cron.daysOfWeek.has(dayOfWeek);
+    } else {
+      dayMatches = cron.daysOfMonth.has(dayOfMonth) && cron.daysOfWeek.has(dayOfWeek);
+    }
+
     if (
       cron.months.has(month) &&
-      cron.daysOfMonth.has(dayOfMonth) &&
-      cron.daysOfWeek.has(dayOfWeek) &&
+      dayMatches &&
       cron.hours.has(hour) &&
       cron.minutes.has(minute)
     ) {

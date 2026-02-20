@@ -11,7 +11,7 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('SENSITIVE_PATTERNS', () => {
-  it('defines all seven categories', () => {
+  it('defines all eight categories', () => {
     const expected: SensitiveCategory[] = [
       'calendar',
       'finances',
@@ -20,6 +20,7 @@ describe('SENSITIVE_PATTERNS', () => {
       'credentials',
       'documents',
       'contacts',
+      'location',
     ];
 
     for (const cat of expected) {
@@ -169,6 +170,36 @@ describe('matchSensitiveCategories — contacts', () => {
 
   it('matches "my friend"', () => {
     expect(matchSensitiveCategories('Text my friend about dinner')).toContain('contacts');
+  });
+});
+
+describe('matchSensitiveCategories — location', () => {
+  it('matches "my location"', () => {
+    expect(matchSensitiveCategories('Share my location with them')).toContain('location');
+  });
+
+  it('matches "gps"', () => {
+    expect(matchSensitiveCategories('Turn on the GPS tracker')).toContain('location');
+  });
+
+  it('matches "coordinates"', () => {
+    expect(matchSensitiveCategories('What are the coordinates?')).toContain('location');
+  });
+
+  it('matches "my address"', () => {
+    expect(matchSensitiveCategories('Send it to my address')).toContain('location');
+  });
+
+  it('matches "home address"', () => {
+    expect(matchSensitiveCategories('My home address is 123 Main St')).toContain('location');
+  });
+
+  it('matches "where i live"', () => {
+    expect(matchSensitiveCategories('Do you know where I live?')).toContain('location');
+  });
+
+  it('matches lat/lon coordinate pair', () => {
+    expect(matchSensitiveCategories('Location: 37.7749, -122.4194')).toContain('location');
   });
 });
 

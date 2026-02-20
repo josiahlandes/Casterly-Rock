@@ -380,6 +380,8 @@ export class ToolSynthesizer {
 
   /**
    * Render a tool's bash template with parameter substitution.
+   * Re-scans the rendered output for dangerous patterns to prevent
+   * bypass via crafted parameter values.
    */
   renderTemplate(
     toolName: string,
@@ -397,6 +399,15 @@ export class ToolSynthesizer {
         new RegExp(`\\{\\{${key}\\}\\}`, 'g'),
         safeValue,
       );
+    }
+
+    // Re-scan after substitution to catch dangerous patterns injected via params
+    const violations = this.scanForDangerousPatterns(rendered);
+    if (violations.length > 0) {
+      getTracer().log('agent-loop', 'warn', `Rendered template rejected: ${toolName}`, {
+        violations,
+      });
+      return null;
     }
 
     return rendered;
