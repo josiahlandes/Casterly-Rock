@@ -17,6 +17,7 @@ import { PROFILES } from '../interface/context-profiles.js';
 import type { LlmProvider } from '../providers/base.js';
 import type { ToolSchema, GenerateWithToolsResponse } from '../tools/schemas/types.js';
 import type { TaskPlan, TaskStep, Verification, ExecutionRecord } from './types.js';
+import { TOOL_REQUIRED_PARAMS } from './tool-params.js';
 
 /**
  * Format tool input parameters as a concise param list for the planner.
@@ -250,28 +251,6 @@ function parsePlan(response: GenerateWithToolsResponse): TaskPlan | null {
     steps,
   };
 }
-
-/**
- * Known required parameters for common tools.
- * Used to validate planner output and trigger re-planning
- * when required parameters are missing.
- */
-const TOOL_REQUIRED_PARAMS: Record<string, string[]> = {
-  bash: ['command'],
-  read_file: ['path'],
-  write_file: ['path', 'content'],
-  edit_file: ['path', 'old_text', 'new_text'],
-  search_files: ['query'],
-  grep_files: ['pattern'],
-  list_files: ['path'],
-  glob_files: ['pattern'],
-  read_document: ['path'],
-  calendar_read: [],
-  reminder_create: ['message'],
-  http_get: ['url'],
-  schedule_reminder: ['message'],
-  send_message: ['recipient', 'text'],
-};
 
 /**
  * Validate a plan's steps for missing required tool parameters.

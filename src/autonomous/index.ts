@@ -9,6 +9,8 @@
 export * from './types.js';
 
 // Provider abstraction
+// @deprecated — Legacy 4-phase provider. Use LlmProvider from providers/base.js instead.
+// Retained for test/script compatibility; will be removed in a future release.
 export { createProvider, BaseAutonomousProvider, PROMPTS } from './provider.js';
 export type {
   AutonomousProvider,

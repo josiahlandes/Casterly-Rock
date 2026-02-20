@@ -19,6 +19,9 @@ export type {
   ExecutionRecord,
 } from './types.js';
 
+// Tool parameter registry (shared between planner and runner)
+export { TOOL_REQUIRED_PARAMS } from './tool-params.js';
+
 // Classifier
 export { classifyMessage } from './classifier.js';
 
