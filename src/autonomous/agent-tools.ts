@@ -63,6 +63,7 @@ import type { MessageDelivery } from './communication/delivery.js';
 import type { CrystalStore } from './crystal-store.js';
 import type { ConstitutionStore } from './constitution-store.js';
 import type { TraceReplayStore } from './trace-replay.js';
+import type { EmbeddingProvider } from '../providers/embedding.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -159,6 +160,8 @@ export interface AgentState {
   jobStore?: JobStore;
   /** Supporting: Concurrent provider for parallel_reason tool */
   concurrentProvider?: ConcurrentProvider;
+  /** Supporting: Embedding provider for semantic_recall tool */
+  embeddingProvider?: EmbeddingProvider;
 
   // ── Vision Tier 1: Self-Knowledge ──
 
@@ -1815,7 +1818,9 @@ const CANCEL_SCHEDULE_SCHEMA: ToolSchema = {
 
 const SEMANTIC_RECALL_SCHEMA: ToolSchema = {
   name: 'semantic_recall',
-  description: `Search memory using keyword matching. Returns relevant entries from the tiered memory store.`,
+  description: `Search memory using hybrid keyword + semantic matching. When the embedding provider
+is available, your query is embedded and compared against stored entry embeddings using cosine
+similarity, blended with keyword scores. Falls back to keyword-only when embeddings are unavailable.`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -4161,11 +4166,31 @@ function buildExecutors(
     const limit = optionalNumber(call, 'limit') ?? 10;
 
     const store = state.contextManager.getStore();
-    const results = await store.recall({
-      query: queryResult.value,
-      tier: tier as 'cool' | 'cold' | 'both',
-      limit,
-    });
+
+    // Compute query embedding if embedding provider is available
+    let queryEmbedding: number[] | undefined;
+    let mode = 'keyword-only';
+    if (state.embeddingProvider) {
+      const embedding = await state.embeddingProvider.embed(queryResult.value);
+      if (embedding) {
+        queryEmbedding = embedding;
+        mode = 'hybrid (keyword + semantic)';
+      }
+    }
+
+    // Use hybrid recall when embedding is available, otherwise keyword recall
+    const results = queryEmbedding
+      ? await store.hybridRecall({
+          query: queryResult.value,
+          queryEmbedding,
+          tier: tier as 'cool' | 'cold' | 'both',
+          limit,
+        })
+      : await store.recall({
+          query: queryResult.value,
+          tier: tier as 'cool' | 'cold' | 'both',
+          limit,
+        });
 
     if (results.length === 0) {
       return successResult(call.id, `No results for: "${queryResult.value}"`, config.maxOutputChars);
@@ -4177,7 +4202,7 @@ function buildExecutors(
 
     return successResult(
       call.id,
-      `## Semantic Recall (keyword-only)\nQuery: "${queryResult.value}"\n\n${lines.join('\n\n')}`,
+      `## Semantic Recall (${mode})\nQuery: "${queryResult.value}"\n\n${lines.join('\n\n')}`,
       config.maxOutputChars,
     );
   });
