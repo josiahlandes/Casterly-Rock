@@ -12,7 +12,8 @@ export type SensitiveCategory =
   | 'health'
   | 'credentials'
   | 'documents'
-  | 'contacts';
+  | 'contacts'
+  | 'location';
 
 export const SENSITIVE_PATTERNS: Record<SensitiveCategory, RegExp[]> = {
   calendar: [/\bmy calendar\b/i, /\bschedule\b/i, /\bappointment\b/i],
@@ -28,6 +29,16 @@ export const SENSITIVE_PATTERNS: Record<SensitiveCategory, RegExp[]> = {
   credentials: [/password/i, /api[_-]?key/i, /bearer\s+[a-z0-9\-\._~\+\/]+=*/i],
   documents: [/contract/i, /confidential/i, /private document/i, /nda/i],
   contacts: [/my contact/i, /phone number/i, /address book/i, /my friend/i],
+  location: [
+    /\bmy location\b/i,
+    /\bgps\b/i,
+    /\bcoordinates?\b/i,
+    /\bmy address\b/i,
+    /\bhome address\b/i,
+    /\bwork address\b/i,
+    /\bwhere i (am|live|work)\b/i,
+    /\b\d{1,3}\.\d{4,},\s*-?\d{1,3}\.\d{4,}\b/, // lat,lon pair
+  ],
 };
 
 export function matchSensitiveCategories(text: string): SensitiveCategory[] {

@@ -44,7 +44,7 @@ Inbound Message
 
 > **Source**: `src/security/patterns.ts`
 
-Seven categories of data are handled with extra care:
+Eight categories of data are handled with extra care:
 
 | Category | Pattern Examples | Handling |
 |----------|-----------------|----------|
@@ -55,10 +55,11 @@ Seven categories of data are handled with extra care:
 | `credentials` | "password", "api_key", bearer tokens | Detect, redact, never log |
 | `documents` | "contract", "confidential", "private document", "NDA" | Detect, flag |
 | `contacts` | "my contact", "phone number", "address book", "my friend" | Detect, flag |
+| `location` | "my location", "GPS", "coordinates", "my address", "where I live", lat/lon pairs | Detect, flag, keep local |
 
 These categories feed into two systems:
 1. **Sensitivity detection** (`detectSensitiveContent`) — returns which categories match a text
-2. **Configuration** (`config/default.yaml` → `sensitivity.alwaysLocal`) — declares which categories always route locally (currently all 7 + `location`)
+2. **Configuration** (`config/default.yaml` → `sensitivity.alwaysLocal`) — declares which categories always route locally (all 8 categories)
 
 ## Input Guard (Pre-LLM)
 
@@ -74,7 +75,7 @@ Deterministic checks that run **before** any message reaches the LLM. These are 
 | 2 | **Control chars** | Strip | Remove C0 controls (except `\t`, `\n`, `\r`) and DEL |
 | 3 | **Rate limit** | Block | Max 20 messages per 60 seconds, per sender |
 | 4 | **Injection detection** | Block | 11 pattern categories (see below) |
-| 5 | **Sensitive content** | Warn (non-blocking) | Returns `warnings[]` for all 7 categories |
+| 5 | **Sensitive content** | Warn (non-blocking) | Returns `warnings[]` for all 8 categories |
 
 ### Injection Patterns Detected
 
@@ -110,7 +111,7 @@ interface InputGuardResult {
 
 ### Category Patterns
 
-All regex patterns from all 7 sensitive categories in `patterns.ts`.
+All regex patterns from all 8 sensitive categories in `patterns.ts`.
 
 ### Secret-Like Patterns
 
@@ -230,14 +231,14 @@ tools:
 
 > **Source**: `src/logging/safe-logger.ts`
 
-All logging goes through `safeLogger`, which applies `redactSensitiveText()` to every message and metadata object before output. There is no direct `console.log` for user-facing data.
+All logging goes through `safeLogger`, which applies `redactSensitiveText()` to every message and metadata object before output. There is no direct `console.log` for user-facing data. Log-level filtering suppresses messages below the configured minimum level.
 
 ```typescript
 safeLogger.info('Processing message', { content: userMessage });
 // Output: [INFO] Processing message {"content":"[REDACTED]"}
 ```
 
-Levels: `info`, `warn`, `error`, `debug`.
+Levels (in order of priority): `debug`, `info`, `warn`, `error`. Set `LOG_LEVEL` environment variable to control the minimum level (default: `info`). Use `safeLogger.setLevel('debug')` for runtime adjustment.
 
 Unserializable metadata is replaced with `[UNSERIALIZABLE]`.
 
@@ -355,7 +356,7 @@ If any invariant fails, the change is reverted — it never reaches the main bra
 
 | File | Purpose |
 |------|---------|
-| `src/security/patterns.ts` | 7 sensitive categories with regex patterns |
+| `src/security/patterns.ts` | 8 sensitive categories with regex patterns |
 | `src/security/detector.ts` | `detectSensitiveContent()` — category matching |
 | `src/security/redactor.ts` | `redactSensitiveText()` — replace matches with [REDACTED] |
 | `src/security/tool-output-sanitizer.ts` | Injection detection + stripping + fencing for tool results |

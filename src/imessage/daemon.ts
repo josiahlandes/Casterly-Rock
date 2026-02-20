@@ -621,15 +621,32 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   // Set up interval
   const intervalId = setInterval(poll, pollIntervalMs);
 
-  // Handle shutdown
-  const shutdown = () => {
-    safeLogger.info('iMessage daemon shutting down');
+  // Handle graceful shutdown — wait for in-flight work to finish
+  let shuttingDown = false;
+
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    safeLogger.info('iMessage daemon shutting down gracefully...');
     clearInterval(intervalId);
+
+    // Wait for any in-flight poll cycle to complete (up to 30s)
+    const deadline = Date.now() + 30_000;
+    while (isPolling && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    if (isPolling) {
+      safeLogger.warn('Shutdown timeout — in-flight poll cycle did not complete');
+    }
+
+    safeLogger.info('iMessage daemon stopped');
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
 
   safeLogger.info('iMessage daemon running. Press Ctrl+C to stop.');
 

@@ -140,7 +140,7 @@ function detectInjection(text: string): InjectionPattern | undefined {
 // ─── Sensitive Content Warnings ──────────────────────────────────────────────
 
 const ALL_SENSITIVE_CATEGORIES: SensitiveCategory[] = [
-  'calendar', 'finances', 'voice_memos', 'health', 'credentials', 'documents', 'contacts',
+  'calendar', 'finances', 'voice_memos', 'health', 'credentials', 'documents', 'contacts', 'location',
 ];
 
 function getSensitiveWarnings(text: string): string[] {

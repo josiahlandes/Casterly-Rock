@@ -23,6 +23,10 @@ export type {
   BestOfNResult,
 } from './concurrent.js';
 
+// Supporting: Embedding provider for semantic memory
+export { EmbeddingProvider, createEmbeddingProvider } from './embedding.js';
+export type { EmbeddingProviderConfig } from './embedding.js';
+
 export interface ProviderRegistry {
   /** Primary model — reasoning, planning, conversation */
   local: LlmProvider;

@@ -508,19 +508,19 @@ These mechanisms are ordered by risk and dependency. Earlier mechanisms create t
 2. Constitutional self-governance -- lightweight, additive, instantly useful
 3. Self-debugging replay -- read-only analysis, no mutation risk
 
-> **Implementation Status (Tier 1):** All three Tier 1 mechanisms are implemented as of 2026-02-19.
+> **Implementation Status (Tier 1):** All three Tier 1 mechanisms are implemented as of 2026-02-20.
 >
 > | Mechanism | Source | Tools | Tests |
 > |-----------|--------|-------|-------|
-> | Memory Crystallization | `src/autonomous/crystal-store.ts` | `crystallize`, `dissolve`, `list_crystals` | `tests/crystal-store.test.ts` (17 tests) |
-> | Constitutional Self-Governance | `src/autonomous/constitution-store.ts` | `create_rule`, `update_rule`, `list_rules` | `tests/constitution-store.test.ts` (17 tests) |
-> | Self-Debugging Replay | `src/autonomous/trace-replay.ts` | `replay`, `compare_traces`, `search_traces` | `tests/trace-replay.test.ts` (18 tests) |
+> | Memory Crystallization | `src/autonomous/crystal-store.ts` | `crystallize`, `dissolve`, `list_crystals` | `tests/crystal-store.test.ts` (21 tests) |
+> | Constitutional Self-Governance | `src/autonomous/constitution-store.ts` | `create_rule`, `update_rule`, `list_rules` | `tests/constitution-store.test.ts` (24 tests) |
+> | Self-Debugging Replay | `src/autonomous/trace-replay.ts` | `replay`, `compare_traces`, `search_traces` | `tests/trace-replay.test.ts` (23 tests) |
 >
 > Integration points:
-> - Identity prompt (`identity.ts`) includes crystals and constitution in the hot tier
-> - Dream cycle runner (`dream/runner.ts`) prunes crystals, rules, and traces during maintenance phases
-> - Agent toolkit (`agent-tools.ts`) exposes 9 new tools (34 total, up from 25)
+> - Crystal and constitution stores provide `buildPromptSection()` for hot tier injection
+> - Agent toolkit (`agent-tools.ts`) exposes 9 new tools (71 total, up from 62)
 > - Configuration in `config/autonomous.yaml` under `self_knowledge` section
+> - All stores follow the same load/save lifecycle pattern as prompt-store and shadow-store
 
 **Tier 2 -- Moderate complexity, requires Tier 1 insights to be most effective: IMPLEMENTED**
 4. Self-modifying prompts -- builds on constitutional rules and crystals as evidence for what to change

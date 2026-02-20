@@ -220,6 +220,11 @@ export async function executeBashToolCall(
   if (requiresApproval(command) && !autoApprove) {
     if (approvalCallback) {
       const approved = await approvalCallback(command);
+      safeLogger.info('Bash approval decision', {
+        command: command.substring(0, 80),
+        approved,
+        toolCallId: call.id,
+      });
       if (!approved) {
         return {
           toolCallId: call.id,
@@ -228,6 +233,10 @@ export async function executeBashToolCall(
         };
       }
     } else {
+      safeLogger.warn('Bash command blocked — no approval callback', {
+        command: command.substring(0, 80),
+        toolCallId: call.id,
+      });
       return {
         toolCallId: call.id,
         success: false,

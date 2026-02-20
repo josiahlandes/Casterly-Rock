@@ -60,6 +60,10 @@ import type { DreamCycleRunner } from './dream/runner.js';
 import type { Reflector } from './reflector.js';
 import type { MessagePolicy } from './communication/policy.js';
 import type { MessageDelivery } from './communication/delivery.js';
+import type { CrystalStore } from './crystal-store.js';
+import type { ConstitutionStore } from './constitution-store.js';
+import type { TraceReplayStore } from './trace-replay.js';
+import type { EmbeddingProvider } from '../providers/embedding.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -156,6 +160,17 @@ export interface AgentState {
   jobStore?: JobStore;
   /** Supporting: Concurrent provider for parallel_reason tool */
   concurrentProvider?: ConcurrentProvider;
+  /** Supporting: Embedding provider for semantic_recall tool */
+  embeddingProvider?: EmbeddingProvider;
+
+  // ── Vision Tier 1: Self-Knowledge ──
+
+  /** Vision Tier 1: Crystal store for memory crystallization */
+  crystalStore?: CrystalStore;
+  /** Vision Tier 1: Constitution store for operational rules */
+  constitutionStore?: ConstitutionStore;
+  /** Vision Tier 1: Trace replay store for self-debugging */
+  traceReplayStore?: TraceReplayStore;
 
   // ── Reconciliation: Dream cycle phases as tools ──
 
@@ -873,6 +888,229 @@ This is a deliberate act of memory management — choose what to remember and wh
 };
 
 
+// ── VISION TIER 1: MEMORY CRYSTALLIZATION ────────────────────────────────────
+
+const CRYSTALLIZE_SCHEMA: ToolSchema = {
+  name: 'crystallize',
+  description: `Promote a high-value insight to a permanent crystal. Crystals are always loaded
+into your hot tier context — knowledge you never have to re-derive from the journal.
+
+Examples: "Tests in this repo use Vitest with vi.fn()", "The user prefers functional over class patterns",
+"I perform better when I read the full file before planning."
+
+Crystals have a token budget (default 500 tokens) and a count limit (default 30).`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        description: 'The knowledge to crystallize. Keep concise — every token counts.',
+      },
+      source_entries: {
+        type: 'array',
+        description: 'IDs of memory entries or journal entries that support this crystal.',
+        items: { type: 'string', description: 'A source entry ID.' },
+      },
+      confidence: {
+        type: 'number',
+        description: 'Initial confidence (0-1, default 0.8). Higher = more certain.',
+      },
+    },
+    required: ['content'],
+  },
+};
+
+const DISSOLVE_SCHEMA: ToolSchema = {
+  name: 'dissolve',
+  description: `Remove a crystal that is no longer valid or useful.
+
+Use this when a crystal contradicts recent experience, is obsolete, or needs to be replaced
+with an updated version.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      crystal_id: {
+        type: 'string',
+        description: 'The ID of the crystal to dissolve.',
+      },
+      reason: {
+        type: 'string',
+        description: 'Why this crystal is being dissolved.',
+      },
+    },
+    required: ['crystal_id'],
+  },
+};
+
+const LIST_CRYSTALS_SCHEMA: ToolSchema = {
+  name: 'list_crystals',
+  description: `List all crystals with their confidence scores and metadata.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+// ── VISION TIER 1: CONSTITUTIONAL SELF-GOVERNANCE ────────────────────────────
+
+const CREATE_RULE_SCHEMA: ToolSchema = {
+  name: 'create_rule',
+  description: `Create a new operational rule for yourself. Rules are tactical patterns discovered
+through experience — not safety rules (those are immutable), but operational guidelines.
+
+Examples:
+  - "For tasks touching 3+ files, generate a plan before starting."
+  - "When the coding model returns TypeScript with \`any\`, flag for review."
+  - "Prefer recall_journal over recall for debugging context."
+
+Each rule tracks confidence, invocations, and success rate. Low-confidence rules
+are pruned during dream cycles.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      rule: {
+        type: 'string',
+        description: 'The rule text.',
+      },
+      motivation: {
+        type: 'string',
+        description: 'Why this rule was created — reference a journal entry or describe the experience.',
+      },
+      confidence: {
+        type: 'number',
+        description: 'Initial confidence (0-1, default 0.8).',
+      },
+    },
+    required: ['rule', 'motivation'],
+  },
+};
+
+const UPDATE_RULE_SCHEMA: ToolSchema = {
+  name: 'update_rule',
+  description: `Update an existing constitutional rule. Use to refine rule text, adjust confidence,
+or update motivation based on new evidence.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      rule_id: {
+        type: 'string',
+        description: 'The ID of the rule to update.',
+      },
+      rule: {
+        type: 'string',
+        description: 'Updated rule text (optional).',
+      },
+      motivation: {
+        type: 'string',
+        description: 'Updated motivation (optional).',
+      },
+      confidence: {
+        type: 'number',
+        description: 'Updated confidence (0-1, optional).',
+      },
+    },
+    required: ['rule_id'],
+  },
+};
+
+const LIST_RULES_SCHEMA: ToolSchema = {
+  name: 'list_rules',
+  description: `List all constitutional rules with their confidence scores and invocation history.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+// ── VISION TIER 1: SELF-DEBUGGING REPLAY ─────────────────────────────────────
+
+const REPLAY_SCHEMA: ToolSchema = {
+  name: 'replay',
+  description: `Load a past execution trace and walk through it step by step. Shows what tools
+were called, what parameters were used, what results came back, and where things went wrong.
+
+Use this for post-mortem analysis of failed cycles, or to understand what happened during
+a specific cycle. Supports filtering by step range or tool type.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      cycle_id: {
+        type: 'string',
+        description: 'The cycle ID to replay.',
+      },
+      step_start: {
+        type: 'integer',
+        description: 'Start step (1-based, optional — defaults to beginning).',
+      },
+      step_end: {
+        type: 'integer',
+        description: 'End step (optional — defaults to end).',
+      },
+      tool_filter: {
+        type: 'string',
+        description: 'Only show steps using this tool (optional).',
+      },
+    },
+    required: ['cycle_id'],
+  },
+};
+
+const COMPARE_TRACES_SCHEMA: ToolSchema = {
+  name: 'compare_traces',
+  description: `Compare two execution traces side by side. Shows common tools, unique tools,
+step count differences, and a step-by-step sequence comparison. Useful for understanding
+why one approach succeeded and another failed.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      cycle_id_a: {
+        type: 'string',
+        description: 'First cycle ID.',
+      },
+      cycle_id_b: {
+        type: 'string',
+        description: 'Second cycle ID.',
+      },
+    },
+    required: ['cycle_id_a', 'cycle_id_b'],
+  },
+};
+
+const SEARCH_TRACES_SCHEMA: ToolSchema = {
+  name: 'search_traces',
+  description: `Search past execution traces by outcome, trigger, tool usage, tag, or date range.
+Returns index entries (not full traces) — use \`replay\` to load the full trace.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      outcome: {
+        type: 'string',
+        description: 'Filter by outcome: "success", "failure", or "partial".',
+        enum: ['success', 'failure', 'partial'],
+      },
+      trigger: {
+        type: 'string',
+        description: 'Filter by trigger type (substring match).',
+      },
+      tool: {
+        type: 'string',
+        description: 'Filter by tool usage (traces that used this tool).',
+      },
+      tag: {
+        type: 'string',
+        description: 'Filter by tag.',
+      },
+      limit: {
+        type: 'integer',
+        description: 'Maximum number of results (default 20).',
+      },
+    },
+    required: [],
+  },
+};
+
 // ── VISION TIER 2: SELF-MODIFYING PROMPTS ────────────────────────────────────
 
 const EDIT_PROMPT_SCHEMA: ToolSchema = {
@@ -1580,7 +1818,9 @@ const CANCEL_SCHEDULE_SCHEMA: ToolSchema = {
 
 const SEMANTIC_RECALL_SCHEMA: ToolSchema = {
   name: 'semantic_recall',
-  description: `Search memory using keyword matching. Returns relevant entries from the tiered memory store.`,
+  description: `Search memory using hybrid keyword + semantic matching. When the embedding provider
+is available, your query is embedded and compared against stored entry embeddings using cosine
+similarity, blended with keyword scores. Falls back to keyword-only when embeddings are unavailable.`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -2702,6 +2942,309 @@ function buildExecutors(
     });
   });
 
+  // ── crystallize (Vision Tier 1) ───────────────────────────────────────
+
+  executors.set('crystallize', async (call) => {
+    if (!state.crystalStore) {
+      return failureResult(call.id, 'Crystal store not available.');
+    }
+
+    const content = requireString(call, 'content');
+    if ('error' in content) return content.error;
+
+    const sourceEntries = Array.isArray(call.input['source_entries'])
+      ? (call.input['source_entries'] as string[])
+      : [];
+
+    const crystallizeParams: { content: string; sourceEntries?: string[]; confidence?: number } = {
+      content: content.value,
+      sourceEntries,
+    };
+    if (typeof call.input['confidence'] === 'number') {
+      crystallizeParams.confidence = call.input['confidence'] as number;
+    }
+
+    const result = state.crystalStore.crystallize(crystallizeParams);
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Crystallize failed.');
+    }
+
+    await state.crystalStore.save();
+    return successResult(
+      call.id,
+      `Crystal formed: ${result.crystalId}. This knowledge will be available in every future cycle.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── dissolve (Vision Tier 1) ─────────────────────────────────────────
+
+  executors.set('dissolve', async (call) => {
+    if (!state.crystalStore) {
+      return failureResult(call.id, 'Crystal store not available.');
+    }
+
+    const crystalId = requireString(call, 'crystal_id');
+    if ('error' in crystalId) return crystalId.error;
+    const reason = optionalString(call, 'reason');
+
+    const result = state.crystalStore.dissolve(crystalId.value, reason);
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Dissolve failed.');
+    }
+
+    await state.crystalStore.save();
+    return successResult(call.id, `Crystal dissolved: ${crystalId.value}.`, config.maxOutputChars);
+  });
+
+  // ── list_crystals (Vision Tier 1) ────────────────────────────────────
+
+  executors.set('list_crystals', async (call) => {
+    if (!state.crystalStore) {
+      return failureResult(call.id, 'Crystal store not available.');
+    }
+
+    const crystals = state.crystalStore.getAll();
+    if (crystals.length === 0) {
+      return successResult(call.id, 'No crystals yet. Use `crystallize` to promote high-value knowledge.', config.maxOutputChars);
+    }
+
+    const totalTokens = state.crystalStore.estimateTotalTokens();
+    const lines: string[] = [
+      `## Crystals (${crystals.length} total, ~${totalTokens} tokens)`,
+      '',
+    ];
+
+    for (const c of crystals) {
+      const pct = Math.round(c.confidence * 100);
+      lines.push(`- **${c.id}** (${pct}% confidence, ${c.recallCount} recalls)`);
+      lines.push(`  ${c.content}`);
+      lines.push(`  Formed: ${c.formedDate.split('T')[0]} | Validated: ${c.lastValidated.split('T')[0]}`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── create_rule (Vision Tier 1) ──────────────────────────────────────
+
+  executors.set('create_rule', async (call) => {
+    if (!state.constitutionStore) {
+      return failureResult(call.id, 'Constitution store not available.');
+    }
+
+    const rule = requireString(call, 'rule');
+    if ('error' in rule) return rule.error;
+    const motivation = requireString(call, 'motivation');
+    if ('error' in motivation) return motivation.error;
+
+    const createParams: { rule: string; motivation: string; confidence?: number } = {
+      rule: rule.value,
+      motivation: motivation.value,
+    };
+    if (typeof call.input['confidence'] === 'number') {
+      createParams.confidence = call.input['confidence'] as number;
+    }
+
+    const result = state.constitutionStore.createRule(createParams);
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Rule creation failed.');
+    }
+
+    await state.constitutionStore.save();
+    return successResult(
+      call.id,
+      `Rule created: ${result.ruleId}. This operational rule will be loaded into your context.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── update_rule (Vision Tier 1) ──────────────────────────────────────
+
+  executors.set('update_rule', async (call) => {
+    if (!state.constitutionStore) {
+      return failureResult(call.id, 'Constitution store not available.');
+    }
+
+    const ruleId = requireString(call, 'rule_id');
+    if ('error' in ruleId) return ruleId.error;
+
+    const updates: { rule?: string; motivation?: string; confidence?: number } = {};
+    const ruleText = optionalString(call, 'rule');
+    if (ruleText) updates.rule = ruleText;
+    const motivation = optionalString(call, 'motivation');
+    if (motivation) updates.motivation = motivation;
+    if (typeof call.input['confidence'] === 'number') {
+      updates.confidence = call.input['confidence'] as number;
+    }
+
+    const result = state.constitutionStore.updateRule(ruleId.value, updates);
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Rule update failed.');
+    }
+
+    await state.constitutionStore.save();
+    return successResult(call.id, `Rule updated: ${ruleId.value}.`, config.maxOutputChars);
+  });
+
+  // ── list_rules (Vision Tier 1) ───────────────────────────────────────
+
+  executors.set('list_rules', async (call) => {
+    if (!state.constitutionStore) {
+      return failureResult(call.id, 'Constitution store not available.');
+    }
+
+    const rules = state.constitutionStore.getAll();
+    if (rules.length === 0) {
+      return successResult(call.id, 'No constitutional rules yet. Use `create_rule` to add operational guidelines.', config.maxOutputChars);
+    }
+
+    const totalTokens = state.constitutionStore.estimateTotalTokens();
+    const lines: string[] = [
+      `## Constitution (${rules.length} rules, ~${totalTokens} tokens)`,
+      '',
+    ];
+
+    for (const r of rules) {
+      const pct = Math.round(r.confidence * 100);
+      const successRate = r.invocations > 0
+        ? ` | ${Math.round((r.successes / r.invocations) * 100)}% success`
+        : '';
+      lines.push(`- **${r.id}** (${pct}% confidence, ${r.invocations} invocations${successRate})`);
+      lines.push(`  ${r.rule}`);
+      lines.push(`  Motivation: ${r.motivation.slice(0, 100)}`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── replay (Vision Tier 1) ───────────────────────────────────────────
+
+  executors.set('replay', async (call) => {
+    if (!state.traceReplayStore) {
+      return failureResult(call.id, 'Trace replay store not available.');
+    }
+
+    const cycleId = requireString(call, 'cycle_id');
+    if ('error' in cycleId) return cycleId.error;
+
+    const stepStart = optionalNumber(call, 'step_start');
+    const stepEnd = optionalNumber(call, 'step_end');
+    const toolFilter = optionalString(call, 'tool_filter');
+
+    const replayOpts: { stepRange?: [number, number]; toolFilter?: string } = {};
+    if (stepStart !== undefined && stepEnd !== undefined) {
+      replayOpts.stepRange = [stepStart, stepEnd];
+    }
+    if (toolFilter !== undefined) {
+      replayOpts.toolFilter = toolFilter;
+    }
+
+    const trace = await state.traceReplayStore.replay(cycleId.value, replayOpts);
+
+    if (!trace) {
+      return failureResult(call.id, `Trace not found: ${cycleId.value}`);
+    }
+
+    const lines: string[] = [
+      `## Trace Replay: ${trace.cycleId}`,
+      `Outcome: ${trace.outcome} | Trigger: ${trace.trigger}`,
+      `Duration: ${trace.startedAt} → ${trace.endedAt}`,
+      `Tools used: ${trace.toolsUsed.join(', ')}`,
+      '',
+      '### Steps',
+      '',
+    ];
+
+    for (const step of trace.steps) {
+      const dur = step.durationMs ? ` (${step.durationMs}ms)` : '';
+      lines.push(`**Step ${step.step}: ${step.toolCalled}**${dur}`);
+      if (step.reasoning) {
+        lines.push(`  Reasoning: ${step.reasoning.slice(0, 200)}`);
+      }
+      lines.push(`  Params: ${JSON.stringify(step.parameters).slice(0, 200)}`);
+      lines.push(`  Result: ${step.result.slice(0, 200)}`);
+      lines.push('');
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── compare_traces (Vision Tier 1) ───────────────────────────────────
+
+  executors.set('compare_traces', async (call) => {
+    if (!state.traceReplayStore) {
+      return failureResult(call.id, 'Trace replay store not available.');
+    }
+
+    const cycleIdA = requireString(call, 'cycle_id_a');
+    if ('error' in cycleIdA) return cycleIdA.error;
+    const cycleIdB = requireString(call, 'cycle_id_b');
+    if ('error' in cycleIdB) return cycleIdB.error;
+
+    const comparison = await state.traceReplayStore.compareTraces(
+      cycleIdA.value,
+      cycleIdB.value,
+    );
+
+    if (!comparison) {
+      return failureResult(call.id, 'One or both traces not found.');
+    }
+
+    return successResult(call.id, comparison.summary, config.maxOutputChars);
+  });
+
+  // ── search_traces (Vision Tier 1) ────────────────────────────────────
+
+  executors.set('search_traces', async (call) => {
+    if (!state.traceReplayStore) {
+      return failureResult(call.id, 'Trace replay store not available.');
+    }
+
+    const searchCriteria: {
+      outcome?: 'success' | 'failure' | 'partial';
+      trigger?: string;
+      tool?: string;
+      tag?: string;
+      limit?: number;
+    } = {};
+
+    const outcome = optionalString(call, 'outcome');
+    if (outcome === 'success' || outcome === 'failure' || outcome === 'partial') {
+      searchCriteria.outcome = outcome;
+    }
+    const trigger = optionalString(call, 'trigger');
+    if (trigger !== undefined) searchCriteria.trigger = trigger;
+    const tool = optionalString(call, 'tool');
+    if (tool !== undefined) searchCriteria.tool = tool;
+    const tag = optionalString(call, 'tag');
+    if (tag !== undefined) searchCriteria.tag = tag;
+    const limit = optionalNumber(call, 'limit');
+    if (limit !== undefined) searchCriteria.limit = limit;
+
+    const results = state.traceReplayStore.searchTraces(searchCriteria);
+
+    if (results.length === 0) {
+      return successResult(call.id, 'No traces match your search criteria.', config.maxOutputChars);
+    }
+
+    const lines: string[] = [
+      `## Trace Search Results (${results.length} matches)`,
+      '',
+    ];
+
+    for (const entry of results) {
+      const pinnedTag = entry.pinned ? ' [pinned]' : '';
+      lines.push(`- **${entry.cycleId}** ${entry.outcome}${pinnedTag} (${entry.startedAt.split('T')[0]})`);
+      lines.push(`  Trigger: ${entry.trigger} | Steps: ${entry.stepCount} | Tools: ${entry.toolsUsed.join(', ')}`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   // ── edit_prompt (Vision Tier 2) ────────────────────────────────────────
 
   executors.set('edit_prompt', async (call) => {
@@ -3623,11 +4166,31 @@ function buildExecutors(
     const limit = optionalNumber(call, 'limit') ?? 10;
 
     const store = state.contextManager.getStore();
-    const results = await store.recall({
-      query: queryResult.value,
-      tier: tier as 'cool' | 'cold' | 'both',
-      limit,
-    });
+
+    // Compute query embedding if embedding provider is available
+    let queryEmbedding: number[] | undefined;
+    let mode = 'keyword-only';
+    if (state.embeddingProvider) {
+      const embedding = await state.embeddingProvider.embed(queryResult.value);
+      if (embedding) {
+        queryEmbedding = embedding;
+        mode = 'hybrid (keyword + semantic)';
+      }
+    }
+
+    // Use hybrid recall when embedding is available, otherwise keyword recall
+    const results = queryEmbedding
+      ? await store.hybridRecall({
+          query: queryResult.value,
+          queryEmbedding,
+          tier: tier as 'cool' | 'cold' | 'both',
+          limit,
+        })
+      : await store.recall({
+          query: queryResult.value,
+          tier: tier as 'cool' | 'cold' | 'both',
+          limit,
+        });
 
     if (results.length === 0) {
       return successResult(call.id, `No results for: "${queryResult.value}"`, config.maxOutputChars);
@@ -3639,7 +4202,7 @@ function buildExecutors(
 
     return successResult(
       call.id,
-      `## Semantic Recall (keyword-only)\nQuery: "${queryResult.value}"\n\n${lines.join('\n\n')}`,
+      `## Semantic Recall (${mode})\nQuery: "${queryResult.value}"\n\n${lines.join('\n\n')}`,
       config.maxOutputChars,
     );
   });
@@ -3925,6 +4488,18 @@ export function buildAgentToolkit(
     UPDATE_WORLD_MODEL_SCHEMA,
     RECALL_JOURNAL_SCHEMA,
     CONSOLIDATE_SCHEMA,
+    // Vision Tier 1: Memory Crystallization
+    CRYSTALLIZE_SCHEMA,
+    DISSOLVE_SCHEMA,
+    LIST_CRYSTALS_SCHEMA,
+    // Vision Tier 1: Constitutional Self-Governance
+    CREATE_RULE_SCHEMA,
+    UPDATE_RULE_SCHEMA,
+    LIST_RULES_SCHEMA,
+    // Vision Tier 1: Self-Debugging Replay
+    REPLAY_SCHEMA,
+    COMPARE_TRACES_SCHEMA,
+    SEARCH_TRACES_SCHEMA,
     // Vision Tier 2: Self-Modifying Prompts
     EDIT_PROMPT_SCHEMA,
     REVERT_PROMPT_SCHEMA,
@@ -4044,6 +4619,16 @@ export {
   MESSAGE_USER_SCHEMA,
   RECALL_JOURNAL_SCHEMA,
   CONSOLIDATE_SCHEMA,
+  // Vision Tier 1
+  CRYSTALLIZE_SCHEMA,
+  DISSOLVE_SCHEMA,
+  LIST_CRYSTALS_SCHEMA,
+  CREATE_RULE_SCHEMA,
+  UPDATE_RULE_SCHEMA,
+  LIST_RULES_SCHEMA,
+  REPLAY_SCHEMA,
+  COMPARE_TRACES_SCHEMA,
+  SEARCH_TRACES_SCHEMA,
   // Vision Tier 2
   EDIT_PROMPT_SCHEMA,
   REVERT_PROMPT_SCHEMA,

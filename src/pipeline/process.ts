@@ -46,9 +46,51 @@ import {
   applyResponseHints,
   getGenerationOverrides,
 } from '../models/index.js';
-import type { TaskManager } from '../tasks/index.js';
+import type { TaskManager, ClassificationResult } from '../tasks/index.js';
 import type { ModeManager } from '../coding/modes/index.js';
 import type { GenerateRequest } from '../providers/base.js';
+import { createHash } from 'node:crypto';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Classification Cache
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CLASSIFICATION_CACHE_SIZE = 32;
+
+/**
+ * Simple LRU cache for classification results.
+ * Avoids redundant LLM calls for repeated or similar messages.
+ * Keyed on a SHA-256 hash of (message text + recent history summary).
+ */
+const classificationCache = new Map<string, { result: ClassificationResult; ts: number }>();
+
+function classificationCacheKey(text: string, history: string[]): string {
+  const raw = text + '\x00' + history.join('\x00');
+  return createHash('sha256').update(raw).digest('hex').slice(0, 16);
+}
+
+function getCachedClassification(key: string): ClassificationResult | null {
+  const entry = classificationCache.get(key);
+  if (!entry) return null;
+  // Expire after 5 minutes (context may have changed)
+  if (Date.now() - entry.ts > 5 * 60 * 1000) {
+    classificationCache.delete(key);
+    return null;
+  }
+  // LRU: move to end
+  classificationCache.delete(key);
+  classificationCache.set(key, entry);
+  return entry.result;
+}
+
+function setCachedClassification(key: string, result: ClassificationResult): void {
+  // Evict oldest entry if at capacity
+  if (classificationCache.size >= CLASSIFICATION_CACHE_SIZE) {
+    const oldest = classificationCache.keys().next().value;
+    if (oldest !== undefined) classificationCache.delete(oldest);
+  }
+  classificationCache.set(key, { result, ts: Date.now() });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -266,9 +308,19 @@ export async function processChatMessage(
         return `${m.role}: ${text.substring(0, 200)}`;
       });
 
-      // Classify first to decide routing (cheap — single LLM call)
-      const { classifyMessage } = await import('../tasks/classifier.js');
-      const classification = await classifyMessage(input.text, recentHistory, provider);
+      // Classify first to decide routing — cached to avoid redundant LLM calls
+      const cacheKey = classificationCacheKey(input.text, recentHistory);
+      let classification = getCachedClassification(cacheKey);
+      if (!classification) {
+        const { classifyMessage } = await import('../tasks/classifier.js');
+        classification = await classifyMessage(input.text, recentHistory, provider);
+        setCachedClassification(cacheKey, classification);
+      } else {
+        safeLogger.info('Classification cache hit', {
+          taskClass: classification.taskClass,
+          confidence: classification.confidence,
+        });
+      }
 
       const taskType = classification.taskType ?? '';
       const shouldUseFlat = FLAT_LOOP_TASK_TYPES.has(taskType);

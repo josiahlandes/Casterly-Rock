@@ -39,6 +39,7 @@ interface SearchFilesInput {
   path?: string;
   filePattern?: string;
   maxResults?: number;
+  ignoreCase?: boolean;
 }
 
 interface SearchMatch {
@@ -152,6 +153,7 @@ export function createSearchFilesExecutor(): NativeToolExecutor {
         path: searchPath = '.',
         filePattern,
         maxResults = MAX_RESULTS,
+        ignoreCase = false,
       } = call.input as unknown as SearchFilesInput;
 
       if (typeof pattern !== 'string' || pattern.trim() === '') {
@@ -174,7 +176,7 @@ export function createSearchFilesExecutor(): NativeToolExecutor {
 
       let regex: RegExp;
       try {
-        regex = new RegExp(pattern, 'i');
+        regex = new RegExp(pattern, ignoreCase ? 'i' : '');
       } catch {
         return {
           toolCallId: call.id,
