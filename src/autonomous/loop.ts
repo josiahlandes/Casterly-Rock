@@ -11,17 +11,11 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 
 import { createProvider, type AutonomousProvider } from './provider.js';
-import { Analyzer } from './analyzer.js';
 import { GitOperations } from './git.js';
-import { Validator, buildInvariants } from './validator.js';
 import { Reflector } from './reflector.js';
 import type { ApprovalBridge } from '../approval/index.js';
 import type {
   AutonomousConfig,
-  CycleMetrics,
-  CycleOutcome,
-  Hypothesis,
-  Implementation,
   PendingBranch,
 } from './types.js';
 
@@ -126,9 +120,7 @@ export class AutonomousLoop {
   private readonly config: AutonomousConfig;
   private readonly projectRoot: string;
   private readonly provider: AutonomousProvider;
-  private readonly analyzer: Analyzer;
   private readonly git: GitOperations;
-  private readonly validator: Validator;
   private readonly reflector: Reflector;
   private readonly approvalBridge?: ApprovalBridge | undefined;
   private readonly approvalRecipient?: string | undefined;
@@ -213,13 +205,7 @@ export class AutonomousLoop {
     this.approvalBridge = options?.approvalBridge;
     this.approvalRecipient = options?.approvalRecipient;
 
-    this.analyzer = new Analyzer(projectRoot, config.backlogPath ? {
-      backlogPath: config.backlogPath,
-    } : undefined);
     this.git = new GitOperations(projectRoot, config.git);
-    this.validator = new Validator(projectRoot, {
-      invariants: buildInvariants(config),
-    });
     this.reflector = new Reflector({ projectRoot });
 
     // Phase 2: Initialize persistent state
@@ -371,144 +357,6 @@ export class AutonomousLoop {
     return true;
   }
 
-  /**
-   * @deprecated Legacy 4-phase pipeline (analyze → hypothesize → implement → validate).
-   * Use runAgentCycle() instead — the agent loop is the sole execution path.
-   * Retained temporarily for test compatibility.
-   */
-  async runCycle(signal?: AbortSignal): Promise<void> {
-    this.cycleCount++;
-    this.dailyCycleCount++;
-
-    const cycleId = this.generateCycleId();
-    const startTime = new Date();
-
-    this.log(`=== Starting cycle ${cycleId} ===`, 'CYCLE');
-
-    // Reset token usage for this cycle
-    this.provider.resetTokenUsage();
-
-    const metrics: CycleMetrics = {
-      cycleId,
-      startTime: startTime.toISOString(),
-      observationsFound: 0,
-      hypothesesGenerated: 0,
-      hypothesesAttempted: 0,
-      hypothesesSucceeded: 0,
-      tokensUsed: { input: 0, output: 0 },
-    };
-
-    try {
-      // 1. ANALYZE
-      this.checkAborted(signal, cycleId);
-      this.log('Phase 1: Analyzing codebase...', 'INFO');
-      await this.git.fetchLatest();
-      await this.git.checkoutBase();
-
-      const context = await this.analyzer.gatherContext();
-      const analyzeResult = await this.provider.analyze(context);
-
-      metrics.observationsFound = analyzeResult.observations.length;
-      this.log(`Found ${analyzeResult.observations.length} observations`, 'INFO');
-
-      if (analyzeResult.observations.length === 0) {
-        this.log('No observations found, skipping cycle', 'INFO');
-        return;
-      }
-
-      // 2. HYPOTHESIZE
-      this.checkAborted(signal, cycleId);
-      this.log('Phase 2: Generating hypotheses...', 'INFO');
-      const hypothesizeResult = await this.provider.hypothesize(analyzeResult.observations);
-
-      metrics.hypothesesGenerated = hypothesizeResult.hypotheses.length;
-      this.log(`Generated ${hypothesizeResult.hypotheses.length} hypotheses`, 'INFO');
-
-      // Filter hypotheses by confidence threshold
-      const viableHypotheses = hypothesizeResult.hypotheses.filter(
-        (h) => h.confidence >= this.config.attemptThreshold
-      );
-
-      if (viableHypotheses.length === 0) {
-        this.log('No viable hypotheses (all below confidence threshold)', 'INFO');
-        return;
-      }
-
-      // Priority sort: backlog P1-P2 items first, then by confidence * impact
-      const impactScore: Record<string, number> = { low: 1, medium: 2, high: 3 };
-      viableHypotheses.sort((a, b) => {
-        const aIsBacklogHighPri =
-          a.observation.source === 'backlog' &&
-          ((a.observation.context['priority'] as number) ?? 5) <= 2;
-        const bIsBacklogHighPri =
-          b.observation.source === 'backlog' &&
-          ((b.observation.context['priority'] as number) ?? 5) <= 2;
-
-        if (aIsBacklogHighPri && !bIsBacklogHighPri) return -1;
-        if (!aIsBacklogHighPri && bIsBacklogHighPri) return 1;
-
-        return (
-          b.confidence * (impactScore[b.expectedImpact] ?? 1) -
-          a.confidence * (impactScore[a.expectedImpact] ?? 1)
-        );
-      });
-
-      // 3. ATTEMPT HYPOTHESES
-      const maxAttempts = Math.min(viableHypotheses.length, this.config.maxAttemptsPerCycle);
-
-      for (let i = 0; i < maxAttempts; i++) {
-        this.checkAborted(signal, cycleId);
-
-        const hypothesis = viableHypotheses[i];
-        if (!hypothesis) continue;
-
-        metrics.hypothesesAttempted++;
-
-        this.log(`Attempting hypothesis ${i + 1}/${maxAttempts}: ${hypothesis.proposal}`, 'INFO');
-
-        const success = await this.attemptHypothesis(cycleId, hypothesis, context);
-
-        if (success) {
-          metrics.hypothesesSucceeded++;
-          this.log(`Hypothesis succeeded!`, 'SUCCESS');
-        } else {
-          this.log(`Hypothesis failed`, 'FAILURE');
-        }
-      }
-
-      // 4. UPDATE METRICS
-      const endTime = new Date();
-      metrics.endTime = endTime.toISOString();
-      metrics.durationMs = endTime.getTime() - startTime.getTime();
-      metrics.tokensUsed = this.provider.getTokenUsage();
-
-      if ('estimateCostUsd' in this.provider) {
-        metrics.estimatedCostUsd = (this.provider as { estimateCostUsd: () => number }).estimateCostUsd();
-      }
-
-      await this.reflector.logMetrics(metrics);
-
-      this.log(
-        `=== Cycle ${cycleId} complete: ${metrics.hypothesesSucceeded}/${metrics.hypothesesAttempted} succeeded ===`,
-        'CYCLE'
-      );
-    } catch (error) {
-      // Re-throw AbortError so the controller can handle it cleanly
-      if (error instanceof AbortError) {
-        throw error;
-      }
-
-      this.log(`Cycle ${cycleId} failed: ${error instanceof Error ? error.message : String(error)}`, 'ERROR');
-
-      // Make sure we're back on main
-      try {
-        await this.git.checkoutBase();
-      } catch {
-        // Ignore
-      }
-    }
-  }
-
   // ── Phase 2: Agent Loop Cycle ─────────────────────────────────────────────
 
   /**
@@ -640,16 +488,6 @@ export class AutonomousLoop {
       issueLog: this.issueLog,
       journal: this.journal,
     };
-  }
-
-  /**
-   * Check if the abort signal has fired and throw if so.
-   */
-  private checkAborted(signal: AbortSignal | undefined, cycleId: string): void {
-    if (signal?.aborted) {
-      this.log(`Cycle ${cycleId} aborted by controller`, 'WARN');
-      throw new AbortError(cycleId);
-    }
   }
 
   /**
@@ -962,276 +800,6 @@ export class AutonomousLoop {
 
       return outcome;
     });
-  }
-
-  /**
-   * Attempt a single hypothesis.
-   * @deprecated Use runAgentCycle() instead. Retained for fallback.
-   */
-  private async attemptHypothesis(
-    cycleId: string,
-    hypothesis: Hypothesis,
-    analysisContext: Awaited<ReturnType<Analyzer['gatherContext']>>
-  ): Promise<boolean> {
-    let branch: string | null = null;
-    let implementation: Implementation | undefined;
-    let outcome: CycleOutcome = 'failure';
-
-    try {
-      // Create branch
-      branch = await this.git.createBranch(hypothesis.id);
-      this.log(`Created branch: ${branch}`, 'INFO');
-
-      // Load files needed for implementation
-      const fileContents = await this.analyzer.readFiles(hypothesis.affectedFiles);
-      const availableFiles = await this.analyzer.listFiles();
-
-      // Implement
-      this.log('Implementing changes...', 'INFO');
-      const implementResult = await this.provider.implement(hypothesis, {
-        fileContents,
-        availableFiles,
-      });
-
-      if (implementResult.changes.length === 0) {
-        this.log('No changes generated', 'WARN');
-        await this.git.revert(branch);
-        return false;
-      }
-
-      // Apply changes
-      await this.git.applyChanges(implementResult.changes);
-
-      // Commit
-      const commitHash = await this.git.commit(implementResult.commitMessage);
-      this.log(`Committed: ${commitHash.substring(0, 8)}`, 'INFO');
-
-      implementation = {
-        hypothesisId: hypothesis.id,
-        branch,
-        commitHash,
-        changes: implementResult.changes,
-        description: implementResult.description,
-        timestamp: new Date().toISOString(),
-      };
-
-      // Push
-      await this.git.push(branch);
-      this.log(`Pushed to ${this.config.git.remote}/${branch}`, 'INFO');
-
-      // Validate
-      this.log('Validating changes...', 'INFO');
-      const validation = await this.validator.validate();
-
-      if (!validation.passed) {
-        this.log(`Validation failed: ${validation.errors.join(', ')}`, 'WARN');
-        await this.git.revert(branch);
-        outcome = 'failure';
-
-        // Reflect on failure
-        await this.reflectAndSave(cycleId, hypothesis, implementation, validation.errors, outcome, false);
-
-        // Mark backlog item as failed if applicable
-        if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
-          await this.analyzer.updateBacklogStatus(
-            hypothesis.observation.context['backlogId'] as string,
-            'failed',
-            { reason: validation.errors.join('; ') },
-          );
-        }
-        return false;
-      }
-
-      this.log('Validation passed!', 'INFO');
-
-      // Pending review (for integration_mode: approval_required)
-      // Branch stays alive for owner to review at their leisure.
-      // No blocking wait, no timeout, no auto-revert.
-      if (this.config.git.integrationMode === 'approval_required') {
-        outcome = 'pending_review';
-        this.log(`Branch ${branch} validated and pushed — awaiting owner review`, 'INFO');
-
-        // Record pending branch for handoff
-        this._pendingBranches.push({
-          branch,
-          hypothesisId: hypothesis.id,
-          proposal: hypothesis.proposal,
-          approach: hypothesis.approach,
-          confidence: hypothesis.confidence,
-          impact: hypothesis.expectedImpact,
-          filesChanged: implementation.changes.map((c) => ({ path: c.path, type: c.type })),
-          validatedAt: new Date().toISOString(),
-          commitHash: implementation.commitHash ?? '',
-        });
-
-        // Reflect on pending_review
-        await this.reflectAndSave(cycleId, hypothesis, implementation, [], outcome, false);
-
-        // Mark backlog item as completed if applicable
-        if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
-          await this.analyzer.updateBacklogStatus(
-            hypothesis.observation.context['backlogId'] as string,
-            'completed',
-            { branch },
-          );
-        }
-
-        // Return to base branch for next hypothesis
-        await this.git.checkoutBase();
-        return true; // Counted as success (validation passed)
-      }
-
-      // Integrate (for direct or pull_request modes)
-      this.log('Integrating changes...', 'INFO');
-      const integrationResult = await this.git.integrate(branch);
-
-      if (!integrationResult.success) {
-        this.log(`Integration failed: ${integrationResult.error}`, 'WARN');
-        await this.git.revert(branch);
-        outcome = 'failure';
-
-        await this.reflectAndSave(
-          cycleId,
-          hypothesis,
-          implementation,
-          [integrationResult.error || 'Integration failed'],
-          outcome,
-          false
-        );
-        return false;
-      }
-
-      outcome = 'success';
-      this.log(
-        `Integrated via ${integrationResult.mode}${integrationResult.pullRequestUrl ? `: ${integrationResult.pullRequestUrl}` : ''}`,
-        'INFO'
-      );
-
-      // Reflect on success
-      await this.reflectAndSave(cycleId, hypothesis, implementation, [], outcome, true);
-
-      // Mark backlog item as completed if applicable
-      if (hypothesis.observation.source === 'backlog' && hypothesis.observation.context['backlogId']) {
-        await this.analyzer.updateBacklogStatus(
-          hypothesis.observation.context['backlogId'] as string,
-          'completed',
-          { branch: branch ?? undefined },
-        );
-      }
-
-      // Add to MEMORY.md if significant
-      if (hypothesis.expectedImpact === 'high' || hypothesis.confidence >= 0.9) {
-        await this.reflector.appendToMemory({
-          cycleId,
-          title: hypothesis.proposal,
-          content: `**Approach**: ${hypothesis.approach}\n**Files changed**: ${hypothesis.affectedFiles.join(', ')}\n\n${implementation.description}`,
-        });
-      }
-
-      return true;
-    } catch (error) {
-      this.log(`Error attempting hypothesis: ${error instanceof Error ? error.message : String(error)}`, 'ERROR');
-
-      if (branch) {
-        try {
-          await this.git.revert(branch);
-        } catch {
-          // Ignore revert errors
-        }
-      }
-
-      outcome = 'failure';
-      await this.reflectAndSave(
-        cycleId,
-        hypothesis,
-        implementation,
-        [error instanceof Error ? error.message : String(error)],
-        outcome,
-        false
-      );
-
-      return false;
-    }
-  }
-
-  /**
-   * Request owner approval via iMessage before merging.
-   * Returns true if approved, false if denied or timed out.
-   *
-   * If no approval bridge is configured, logs a warning and returns false
-   * (safety: never auto-merge when approval_required but bridge is missing).
-   */
-  private async requestApproval(
-    hypothesis: Hypothesis,
-    implementation: Implementation,
-    branch: string,
-  ): Promise<boolean> {
-    if (!this.approvalBridge || !this.approvalRecipient) {
-      this.log(
-        'integration_mode is approval_required but no approval bridge or recipient configured — denying by default',
-        'WARN'
-      );
-      return false;
-    }
-
-    // Build human-readable summary
-    const filesChanged = implementation.changes
-      .map((c) => `  - ${c.path} (${c.type})`)
-      .join('\n');
-
-    const summary = [
-      'Autonomous improvement ready for review:',
-      '',
-      `Hypothesis: ${hypothesis.proposal}`,
-      `Approach: ${hypothesis.approach}`,
-      `Confidence: ${hypothesis.confidence.toFixed(2)} | Impact: ${hypothesis.expectedImpact}`,
-      `Branch: ${branch}`,
-      '',
-      'Files changed:',
-      filesChanged,
-      '',
-      'Validation: All quality gates passed',
-      '',
-      `Reply "yes" to merge to main, or "no" to discard.`,
-      `(Auto-denied in ${this.config.approvalTimeoutMinutes} minutes)`,
-    ].join('\n');
-
-    this.log('Sending approval request to owner...', 'INFO');
-
-    // Use the approval bridge to request + wait
-    const request = this.approvalBridge.requestApproval(summary, this.approvalRecipient);
-    const approved = await this.approvalBridge.waitForApproval(request.id);
-
-    return approved;
-  }
-
-  /**
-   * Reflect on a hypothesis attempt and save the reflection.
-   */
-  private async reflectAndSave(
-    cycleId: string,
-    hypothesis: Hypothesis,
-    implementation: Implementation | undefined,
-    errors: string[],
-    outcome: CycleOutcome,
-    integrated: boolean
-  ): Promise<void> {
-    try {
-      const reflectResult = await this.provider.reflect({
-        cycleId,
-        observation: hypothesis.observation,
-        hypothesis,
-        implementation,
-        validationPassed: outcome === 'success' || outcome === 'pending_review',
-        validationErrors: errors,
-        integrated,
-        outcome,
-      });
-
-      await this.reflector.saveReflection(reflectResult.reflection);
-    } catch (error) {
-      this.log(`Failed to save reflection: ${error instanceof Error ? error.message : String(error)}`, 'WARN');
-    }
   }
 
   // --------------------------------------------------------------------------

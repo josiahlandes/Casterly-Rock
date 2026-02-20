@@ -5,7 +5,7 @@
  * so the iMessage daemon can manage the autonomous cycle in-process.
  *
  * Key design: we never call AutonomousLoop.start() (blocking). Instead the
- * daemon calls tick() every poll interval, which calls runCycle() once when
+ * daemon calls tick() every poll interval, which calls runAgentCycle() once when
  * the cycle interval has elapsed and the loop is enabled.
  *
  * Handoff: when the work window closes (6am) or a cycle completes with
@@ -171,7 +171,7 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
 
     try {
       safeLogger.info('Autonomous: starting agent cycle');
-      // Use the agent loop (sole execution path) instead of legacy runCycle
+      // The agent loop is the sole execution path
       await loop.runAgentCycle();
 
       totalCycles++;

@@ -68,7 +68,7 @@ function makeStats(overrides: Partial<AggregateStats> = {}): AggregateStats {
 /**
  * Create a mock AutonomousLoop with the minimal interface the controller needs.
  */
-function createMockLoop(runCycleFn?: (signal?: AbortSignal) => Promise<void>) {
+function createMockLoop(runAgentCycleFn?: () => Promise<void>) {
   const mockReflector = {
     getStatistics: vi.fn().mockResolvedValue(makeStats()),
     loadRecentReflections: vi.fn().mockResolvedValue([
@@ -81,7 +81,7 @@ function createMockLoop(runCycleFn?: (signal?: AbortSignal) => Promise<void>) {
   };
 
   const loop = {
-    runCycle: runCycleFn ? vi.fn().mockImplementation(runCycleFn) : vi.fn().mockResolvedValue(undefined),
+    runAgentCycle: runAgentCycleFn ? vi.fn().mockImplementation(runAgentCycleFn) : vi.fn().mockResolvedValue(undefined),
     stop: vi.fn(),
     reflectorInstance: mockReflector,
     configInstance: { cycleIntervalMinutes: 60 },
@@ -203,14 +203,14 @@ describe('createAutonomousController', () => {
 
   it('tick() does nothing when disabled', async () => {
     await controller.tick();
-    expect(mockLoop.loop.runCycle).not.toHaveBeenCalled();
+    expect(mockLoop.loop.runAgentCycle).not.toHaveBeenCalled();
   });
 
   it('tick() runs a cycle when enabled', async () => {
     controller.start();
     await controller.tick();
 
-    expect(mockLoop.loop.runCycle).toHaveBeenCalledOnce();
+    expect(mockLoop.loop.runAgentCycle).toHaveBeenCalledOnce();
     expect(controller.busy).toBe(false);
   });
 
@@ -233,7 +233,7 @@ describe('createAutonomousController', () => {
     // busy should be true now (the runCycle promise hasn't resolved)
     // A second tick should be a no-op
     await ctrl.tick();
-    expect(longRunning.loop.runCycle).toHaveBeenCalledTimes(1);
+    expect(longRunning.loop.runAgentCycle).toHaveBeenCalledTimes(1);
 
     // Let it complete
     resolveRunCycle();
@@ -245,11 +245,11 @@ describe('createAutonomousController', () => {
 
     // First tick runs
     await controller.tick();
-    expect(mockLoop.loop.runCycle).toHaveBeenCalledOnce();
+    expect(mockLoop.loop.runAgentCycle).toHaveBeenCalledOnce();
 
     // Immediately calling tick again should skip (interval not elapsed)
     await controller.tick();
-    expect(mockLoop.loop.runCycle).toHaveBeenCalledOnce();
+    expect(mockLoop.loop.runAgentCycle).toHaveBeenCalledOnce();
   });
 
   it('tick() increments totalCycles on success', async () => {

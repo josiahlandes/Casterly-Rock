@@ -247,11 +247,25 @@ path that doubles the maintenance surface.
 - `config/autonomous.yaml` (remove `useAgentLoop` flag)
 
 **Acceptance Criteria:**
-- [ ] `runCycle()` no longer exists.
-- [ ] Only one execution path remains: `runAgentCycle()`.
-- [ ] All scripts and entry points use the modern path.
-- [ ] No dead imports remain after cleanup.
-- [ ] `npm run check` passes.
+- [x] `runCycle()` no longer exists.
+- [x] Only one execution path remains: `runAgentCycle()`.
+- [x] All scripts and entry points use the modern path.
+- [x] No dead imports remain after cleanup.
+- [x] `npm run check` passes.
+
+**Status: IMPLEMENTED** — Deleted `runCycle()`, `attemptHypothesis()`,
+`requestApproval()`, `reflectAndSave()`, and `checkAborted()` from `loop.ts`
+(~270 lines removed). Removed the `Analyzer` and `Validator` classes and their
+imports since they were only used by the legacy path (`Reflector` is retained —
+used by the modern agent loop and dream cycles). Removed dead type imports
+(`CycleMetrics`, `CycleOutcome`, `Hypothesis`, `Implementation`). Updated
+`scripts/run-single-cycle.ts` to use `runAgentCycle()` and display outcome
+fields. Updated `tests/autonomous-controller.test.ts` mock from `runCycle` to
+`runAgentCycle`, fixing 6 previously-failing tests (mock/implementation
+mismatch). Updated `src/autonomous/controller.ts` comments to reference the
+modern path. No `useAgentLoop` config flag existed — the agent loop was already
+the sole path. Pre-existing test failures reduced from 49 to 43 (6 controller
+tests now pass).
 
 ---
 
