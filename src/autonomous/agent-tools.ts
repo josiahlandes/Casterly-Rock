@@ -68,6 +68,7 @@ import type { LinkNetwork, LinkType } from './memory/link-network.js';
 import type { MemoryEvolution } from './memory/memory-evolution.js';
 import type { AudnConsolidator } from './memory/audn-consolidator.js';
 import type { EntropyMigrator, EntryForScoring, MemoryTier } from './memory/entropy-migrator.js';
+import type { MemoryVersioning } from './memory/memory-versioning.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -200,6 +201,8 @@ export interface AgentState {
   audnConsolidator?: AudnConsolidator;
   /** Entropy-based tier migration (SAGE) */
   entropyMigrator?: EntropyMigrator;
+  /** Git-backed memory versioning (Letta) */
+  memoryVersioning?: MemoryVersioning;
 }
 
 /**
@@ -2117,6 +2120,62 @@ ones. Useful during memory maintenance to optimize tier placement.`,
       },
     },
     required: ['entries'],
+  },
+};
+
+// ── Advanced Memory: Git-Backed Memory Versioning (Letta) ────────────────────
+
+const SNAPSHOT_MEMORY_SCHEMA: ToolSchema = {
+  name: 'snapshot_memory',
+  description: `Create a point-in-time snapshot of all monitored memory files (crystals, constitution,
+goals, issues). Snapshots enable rollback analysis and drift detection. Duplicate snapshots
+(unchanged state) are automatically deduplicated.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      message: {
+        type: 'string',
+        description: 'A short description of why this snapshot is being taken.',
+      },
+    },
+    required: ['message'],
+  },
+};
+
+const LIST_SNAPSHOTS_SCHEMA: ToolSchema = {
+  name: 'list_snapshots',
+  description: `List all memory snapshots, newest first. Shows snapshot ID, timestamp, trigger source,
+and message. Use snapshot IDs with diff_snapshots to compare changes over time.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      limit: {
+        type: 'number',
+        description: 'Maximum number of snapshots to return (default: 10).',
+      },
+    },
+    required: [],
+  },
+};
+
+const DIFF_SNAPSHOTS_SCHEMA: ToolSchema = {
+  name: 'diff_snapshots',
+  description: `Compare two memory snapshots to see what changed. Shows added/removed lines per
+subsystem (crystals, constitution, goals, issues). If only toId is given, diffs against
+the snapshot immediately before it.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      toId: {
+        type: 'string',
+        description: 'The snapshot ID to diff to (the "after" snapshot).',
+      },
+      fromId: {
+        type: 'string',
+        description: 'The snapshot ID to diff from (the "before" snapshot). If omitted, uses the previous snapshot.',
+      },
+    },
+    required: ['toId'],
   },
 };
 
@@ -4877,6 +4936,124 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── snapshot_memory (Advanced Memory: Git-Backed Versioning Letta) ──────
+
+  executors.set('snapshot_memory', async (call) => {
+    if (!state.memoryVersioning) {
+      return failureResult(call.id, 'Memory versioning not available.');
+    }
+
+    const message = requireString(call, 'message');
+    if ('error' in message) return message.error;
+
+    try {
+      const snapshot = await state.memoryVersioning.createSnapshot({
+        trigger: 'agent',
+        message: message.value,
+      });
+      await state.memoryVersioning.save();
+
+      const lines = [
+        `## Snapshot Created`,
+        '',
+        `| Field | Value |`,
+        `|-------|-------|`,
+        `| ID | \`${snapshot.id}\` |`,
+        `| Timestamp | ${snapshot.timestamp} |`,
+        `| Subsystems | ${Object.keys(snapshot.data).join(', ')} |`,
+        `| Hash | ${snapshot.contentHash} |`,
+        '',
+        `Message: ${snapshot.message}`,
+      ];
+
+      return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+    } catch (err) {
+      return failureResult(call.id, `Snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── list_snapshots (Advanced Memory: Git-Backed Versioning Letta) ──────
+
+  executors.set('list_snapshots', async (call) => {
+    if (!state.memoryVersioning) {
+      return failureResult(call.id, 'Memory versioning not available.');
+    }
+
+    const limit = typeof call.input?.limit === 'number' ? call.input.limit : 10;
+    const snapshots = state.memoryVersioning.listSnapshots().slice(0, limit);
+
+    if (snapshots.length === 0) {
+      return successResult(call.id, 'No snapshots found. Use `snapshot_memory` to create one.', config.maxOutputChars);
+    }
+
+    const lines = [
+      `## Memory Snapshots (${snapshots.length} of ${state.memoryVersioning.count()})`,
+      '',
+      '| ID | Date | Trigger | Message |',
+      '|----|------|---------|---------|',
+    ];
+
+    for (const s of snapshots) {
+      lines.push(`| \`${s.id}\` | ${s.timestamp.split('T')[0]} | ${s.trigger} | ${s.message.slice(0, 60)} |`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── diff_snapshots (Advanced Memory: Git-Backed Versioning Letta) ──────
+
+  executors.set('diff_snapshots', async (call) => {
+    if (!state.memoryVersioning) {
+      return failureResult(call.id, 'Memory versioning not available.');
+    }
+
+    const toId = requireString(call, 'toId');
+    if ('error' in toId) return toId.error;
+
+    const fromId = typeof call.input?.fromId === 'string' ? call.input.fromId : undefined;
+
+    const result = state.memoryVersioning.diff(toId.value, fromId);
+    if (!result) {
+      return failureResult(call.id, `Snapshot not found: ${toId.value}`);
+    }
+
+    const lines = [
+      `## Snapshot Diff`,
+      '',
+      `From: \`${result.fromId || '(initial)'}\` → To: \`${result.toId}\``,
+      '',
+    ];
+
+    if (result.subsystemsAdded.length > 0) {
+      lines.push(`**Added subsystems:** ${result.subsystemsAdded.join(', ')}`);
+    }
+    if (result.subsystemsRemoved.length > 0) {
+      lines.push(`**Removed subsystems:** ${result.subsystemsRemoved.join(', ')}`);
+    }
+
+    if (result.diffs.length > 0) {
+      for (const d of result.diffs) {
+        lines.push('', `### ${d.subsystem} (+${d.linesAdded} / -${d.linesRemoved})`);
+        if (d.additions.length > 0) {
+          lines.push('', '**Added:**');
+          for (const a of d.additions.slice(0, 10)) {
+            lines.push(`+ ${a}`);
+          }
+        }
+        if (d.removals.length > 0) {
+          lines.push('', '**Removed:**');
+          for (const r of d.removals.slice(0, 10)) {
+            lines.push(`- ${r}`);
+          }
+        }
+      }
+    } else if (result.subsystemsChanged.length === 0 && result.subsystemsAdded.length === 0 && result.subsystemsRemoved.length === 0) {
+      lines.push('No changes between these snapshots.');
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   return executors;
 }
 
@@ -5006,6 +5183,10 @@ export function buildAgentToolkit(
     // Advanced Memory: Entropy-Based Tier Migration (SAGE)
     ENTROPY_SCORE_SCHEMA,
     EVALUATE_TIERS_SCHEMA,
+    // Advanced Memory: Git-Backed Memory Versioning (Letta)
+    SNAPSHOT_MEMORY_SCHEMA,
+    LIST_SNAPSHOTS_SCHEMA,
+    DIFF_SNAPSHOTS_SCHEMA,
   ];
 
   // Build all executors
@@ -5140,4 +5321,8 @@ export {
   // Advanced Memory: Entropy-Based Tier Migration (SAGE)
   ENTROPY_SCORE_SCHEMA,
   EVALUATE_TIERS_SCHEMA,
+  // Advanced Memory: Git-Backed Memory Versioning (Letta)
+  SNAPSHOT_MEMORY_SCHEMA,
+  LIST_SNAPSHOTS_SCHEMA,
+  DIFF_SNAPSHOTS_SCHEMA,
 };

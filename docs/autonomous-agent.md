@@ -86,7 +86,7 @@ Each turn in the loop:
 
 The loop checks an `aborted` flag before each turn. External code (e.g. the message handler) can call `agentLoop.abort()` to preempt autonomous work when a user message arrives. The current turn completes, but no new turn starts.
 
-## Agent Toolkit (78 tools)
+## Agent Toolkit (81 tools)
 
 The agent has its own expanded tool set beyond the 13 core native tools. These are organized into categories:
 
@@ -318,6 +318,9 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 | `audn_status` | Check the AUDN queue — pending candidate count and source breakdown. |
 | `entropy_score` | Calculate Shannon entropy (information density) of text content. Returns raw bits and normalized 0-1 score. |
 | `evaluate_tiers` | Batch evaluate memory entries for tier migration using entropy, access frequency, and recency. |
+| `snapshot_memory` | Create a point-in-time snapshot of all monitored memory files (crystals, constitution, goals, issues). |
+| `list_snapshots` | List all memory snapshots, newest first. Shows ID, timestamp, trigger, and message. |
+| `diff_snapshots` | Compare two memory snapshots to see what changed per subsystem. |
 
 ## Agent State
 
@@ -508,7 +511,7 @@ The most recent handoff note is included in the identity prompt for session cont
 The controller manages the full lifecycle of an autonomous session:
 
 1. Load state (world model, goals, issues) from disk
-2. Build the agent toolkit with all 78 tools
+2. Build the agent toolkit with all 81 tools
 3. Construct the agent loop with config + provider + state
 4. Run the loop for a given trigger
 5. Persist updated state back to disk
@@ -598,7 +601,7 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | File | Purpose |
 |------|---------|
 | `src/autonomous/agent-loop.ts` | ReAct loop: trigger → turns → outcome |
-| `src/autonomous/agent-tools.ts` | 78 agent tools: schemas + executors |
+| `src/autonomous/agent-tools.ts` | 81 agent tools: schemas + executors |
 | `src/autonomous/controller.ts` | Lifecycle management: load → run → persist |
 | `src/autonomous/world-model.ts` | Codebase health, activity, concerns |
 | `src/autonomous/goal-stack.ts` | Priority queue of goals |
@@ -647,7 +650,7 @@ This module is closest to the vision's target architecture. The ReAct loop, agen
 
 **What to do:** Remove the toggle. Convert the six dream phases into agent tools: `consolidate_reflections`, `update_world_model`, `reorganize_goals`, `explore_codebase`, `update_self_model`, `write_retrospective`. The system prompt should suggest running them during quiet hours as low-priority work. The LLM decides which phases to run, in what order, and when.
 
-> **Status:** Toggle removed. 5 dream cycle phases converted to agent tools (`consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective`). `runCycle` marked `@deprecated`. Total tools: 78.
+> **Status:** Toggle removed. 5 dream cycle phases converted to agent tools (`consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective`). `runCycle` marked `@deprecated`. Total tools: 81.
 
 ### 3. Convert the hardcoded dream sequence into tools — IMPLEMENTED
 

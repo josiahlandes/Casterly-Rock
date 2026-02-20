@@ -157,7 +157,7 @@ Bash execution is registered separately.
 
 ---
 
-## Agent Tools (78)
+## Agent Tools (81)
 
 In addition to the 13 native tools above, the autonomous agent loop has 63 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
 
@@ -194,6 +194,7 @@ See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categor
 | Advanced memory (A-MEM) | `link_memories`, `get_links`, `traverse_links` |
 | AUDN consolidation (Mem0) | `audn_enqueue`, `audn_status` |
 | Entropy tier migration (SAGE) | `entropy_score`, `evaluate_tiers` |
+| Git-backed versioning (Letta) | `snapshot_memory`, `list_snapshots`, `diff_snapshots` |
 | Delegation | `delegate` |
 | Communication | `message_user` |
 

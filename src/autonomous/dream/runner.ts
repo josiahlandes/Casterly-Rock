@@ -43,6 +43,7 @@ import type { Journal } from '../journal.js';
 import type { LinkNetwork } from '../memory/link-network.js';
 import type { AudnConsolidator } from '../memory/audn-consolidator.js';
 import type { EntropyMigrator } from '../memory/entropy-migrator.js';
+import type { MemoryVersioning } from '../memory/memory-versioning.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -138,6 +139,9 @@ export interface DreamOutcome {
   entropyPromotions: number;
   entropyDemotions: number;
 
+  /** Whether a memory snapshot was taken */
+  snapshotTaken: boolean;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -202,6 +206,7 @@ export class DreamCycleRunner {
     linkNetwork?: LinkNetwork,
     audnConsolidator?: AudnConsolidator,
     entropyMigrator?: EntropyMigrator,
+    memoryVersioning?: MemoryVersioning,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -234,6 +239,7 @@ export class DreamCycleRunner {
         entropyEvaluated: 0,
         entropyPromotions: 0,
         entropyDemotions: 0,
+        snapshotTaken: false,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -499,6 +505,23 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Entropy tier migration failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('entropyTierMigration');
+        }
+      }
+
+      // Phase 13: Memory snapshot (Advanced Memory: Git-Backed Versioning Letta)
+      if (memoryVersioning) {
+        try {
+          const snapshot = await memoryVersioning.createSnapshot({
+            trigger: 'dream_cycle',
+            message: `Dream cycle snapshot — ${outcome.phasesCompleted.length} phases completed`,
+          });
+          outcome.snapshotTaken = true;
+          await memoryVersioning.save();
+          outcome.phasesCompleted.push('memorySnapshot');
+          tracer.log('dream', 'info', `Memory snapshot created: ${snapshot.id}`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Memory snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('memorySnapshot');
         }
       }
 

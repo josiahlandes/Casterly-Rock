@@ -72,6 +72,8 @@ import { createMemoryEvolution, type MemoryEvolution } from './memory/memory-evo
 import { createAudnConsolidator, type AudnConsolidator } from './memory/audn-consolidator.js';
 // Advanced Memory: Entropy-Based Tier Migration (SAGE)
 import { createEntropyMigrator, type EntropyMigrator } from './memory/entropy-migrator.js';
+// Advanced Memory: Git-Backed Memory Versioning (Letta)
+import { createMemoryVersioning, type MemoryVersioning } from './memory/memory-versioning.js';
 
 // ============================================================================
 // CONSTANTS
@@ -204,6 +206,8 @@ export class AutonomousLoop {
   private audnConsolidator: AudnConsolidator;
   // Advanced Memory: Entropy-Based Tier Migration (SAGE)
   private entropyMigrator: EntropyMigrator;
+  // Advanced Memory: Git-Backed Memory Versioning (Letta)
+  private memoryVersioning: MemoryVersioning;
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
@@ -307,6 +311,9 @@ export class AutonomousLoop {
 
     // Advanced Memory: Entropy-Based Tier Migration (SAGE)
     this.entropyMigrator = createEntropyMigrator();
+
+    // Advanced Memory: Git-Backed Memory Versioning (Letta)
+    this.memoryVersioning = createMemoryVersioning();
   }
 
   /**
@@ -405,6 +412,7 @@ export class AutonomousLoop {
       this.linkNetwork.load(),
       this.memoryEvolution.load(),
       this.audnConsolidator.load(),
+      this.memoryVersioning.load(),
       ...this.visionStoreLoadOps(),
     ]);
   }
@@ -438,6 +446,7 @@ export class AutonomousLoop {
       this.linkNetwork.save(),
       this.memoryEvolution.save(),
       this.audnConsolidator.save(),
+      this.memoryVersioning.save(),
       ...this.visionStoreSaveOps(),
     ]);
   }
@@ -753,6 +762,8 @@ export class AutonomousLoop {
         audnConsolidator: this.audnConsolidator,
         // Advanced Memory: Entropy-Based Tier Migration (SAGE)
         entropyMigrator: this.entropyMigrator,
+        // Advanced Memory: Git-Backed Memory Versioning (Letta)
+        memoryVersioning: this.memoryVersioning,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -904,6 +915,7 @@ export class AutonomousLoop {
         this.linkNetwork,
         this.audnConsolidator,
         this.entropyMigrator,
+        this.memoryVersioning,
       );
 
       this.lastDreamCycleDate = today;

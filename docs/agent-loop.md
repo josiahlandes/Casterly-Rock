@@ -164,6 +164,7 @@ Tool output is capped at 10,000 characters. See [docs/skills-and-tools.md](skill
 | Advanced memory (A-MEM) | `link_memories`, `get_links`, `traverse_links` |
 | AUDN consolidation (Mem0) | `audn_enqueue`, `audn_status` |
 | Entropy tier migration (SAGE) | `entropy_score`, `evaluate_tiers` |
+| Git-backed versioning (Letta) | `snapshot_memory`, `list_snapshots`, `diff_snapshots` |
 | Communication | `message_user` (placeholder) |
 
 ### Path Security
@@ -278,7 +279,7 @@ Overrideable by passing `Partial<AgentLoopConfig>` to the constructor.
 |------|---------|
 | `src/autonomous/agent-loop.ts` | `AgentLoop` class — the ReAct cycle engine (779 lines) |
 | `src/autonomous/loop.ts` | `AutonomousLoop` — orchestrates cycles, manages state persistence, handles events |
-| `src/autonomous/agent-tools.ts` | `AgentToolkit` — 78 tool schemas and executors |
+| `src/autonomous/agent-tools.ts` | `AgentToolkit` — 81 tool schemas and executors |
 | `src/autonomous/identity.ts` | Identity prompt builder |
 | `src/autonomous/context-manager.ts` | 4-tier memory hierarchy |
 | `src/autonomous/journal.ts` | Append-only JSONL journal |

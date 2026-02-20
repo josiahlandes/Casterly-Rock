@@ -49,6 +49,11 @@ Uses Shannon entropy over word frequency distributions to measure information de
 
 Lightweight internal snapshot system for memory state. Each snapshot captures the contents of key memory files (crystals, constitution, goals, issues) at a point in time. Supports line-level diffing between snapshots and deduplicates unchanged state.
 
+**Integration:**
+- **State lifecycle**: Snapshot index loaded at cycle start, saved at cycle end (`loop.ts` `loadState`/`saveState`).
+- **Agent tools**: Three tools exposed to the LLM — `snapshot_memory` (create a snapshot), `list_snapshots` (view history), `diff_snapshots` (compare changes between snapshots).
+- **Dream cycle**: Phase 13 (`memorySnapshot`) automatically creates a snapshot after all other dream phases complete, capturing the post-consolidation state.
+
 ### 5. Memory Evolution (A-MEM)
 
 Structured transformations that go beyond CRUD: **strengthen** (corroboration), **weaken** (contradiction), **merge** (combine two into one), **split** (decompose into focused parts), **generalize** (abstract to principle), and **specialize** (narrow to context). Full lineage tracking across generations.
