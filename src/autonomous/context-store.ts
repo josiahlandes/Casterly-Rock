@@ -23,6 +23,7 @@
 
 import { readFile, writeFile, appendFile, mkdir, readdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { getTracer } from './debug.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,16 +119,14 @@ const DEFAULT_CONFIG: ContextStoreConfig = {
   similarityThreshold: 0.3,
 };
 
-let entryCounter = 0;
-
 /**
- * Generate a unique entry ID.
+ * Generate a unique entry ID using timestamp + random bytes.
+ * No global mutable counter — safe across concurrent imports.
  */
 function generateEntryId(): string {
-  entryCounter++;
   const ts = Date.now().toString(36);
-  const seq = entryCounter.toString(36).padStart(3, '0');
-  return `mem-${ts}-${seq}`;
+  const rand = randomBytes(4).toString('hex');
+  return `mem-${ts}-${rand}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

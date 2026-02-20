@@ -9,6 +9,7 @@ import {
   getWorkspacePaths,
   loadBootstrapFile,
   loadBootstrapFiles,
+  clearBootstrapCache,
   formatBootstrapSection,
   type BootstrapResult,
 } from '../src/interface/bootstrap.js';
@@ -18,6 +19,7 @@ import {
 const TEST_BASE = join(tmpdir(), `casterly-bootstrap-test-${Date.now()}`);
 
 afterEach(() => {
+  clearBootstrapCache();
   if (existsSync(TEST_BASE)) {
     rmSync(TEST_BASE, { recursive: true, force: true });
   }

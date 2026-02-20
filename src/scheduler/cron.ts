@@ -124,18 +124,66 @@ function isWildcard(field: Set<number>, min: number, max: number): boolean {
 }
 
 /**
+ * Extract date components in a given IANA timezone (or UTC if omitted).
+ */
+function datePartsInTz(
+  date: Date,
+  timezone?: string,
+): { month: number; dayOfMonth: number; dayOfWeek: number; hour: number; minute: number } {
+  if (!timezone) {
+    return {
+      month: date.getUTCMonth() + 1,
+      dayOfMonth: date.getUTCDate(),
+      dayOfWeek: date.getUTCDay(),
+      hour: date.getUTCHours(),
+      minute: date.getUTCMinutes(),
+    };
+  }
+
+  // Use Intl to resolve parts in the target timezone
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    weekday: 'short',
+    hour12: false,
+  });
+
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((p) => [p.type, p.value]),
+  );
+
+  const weekdayMap: Record<string, number> = {
+    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  };
+
+  return {
+    month: parseInt(parts.month ?? '1', 10),
+    dayOfMonth: parseInt(parts.day ?? '1', 10),
+    dayOfWeek: weekdayMap[parts.weekday ?? 'Sun'] ?? 0,
+    hour: parseInt(parts.hour ?? '0', 10),
+    minute: parseInt(parts.minute ?? '0', 10),
+  };
+}
+
+/**
  * Compute the next fire time after a given date.
  * Iterates forward minute-by-minute, capped at 366 days to prevent infinite loops.
  *
  * Standard cron semantics: when both day-of-month and day-of-week are
  * restricted (non-wildcard), the day matches if *either* field matches.
  * When only one is restricted, it alone determines the day match.
+ *
+ * @param timezone - Optional IANA timezone (e.g. "America/New_York"). Defaults to UTC.
  */
-export function getNextFireTime(cron: CronParts, after: Date): Date {
+export function getNextFireTime(cron: CronParts, after: Date, timezone?: string): Date {
   // Start from the next minute boundary
   const candidate = new Date(after.getTime());
-  candidate.setSeconds(0, 0);
-  candidate.setMinutes(candidate.getMinutes() + 1);
+  candidate.setUTCSeconds(0, 0);
+  candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
 
   const maxIterations = 366 * 24 * 60; // 366 days in minutes
 
@@ -143,11 +191,7 @@ export function getNextFireTime(cron: CronParts, after: Date): Date {
   const dowIsWildcard = isWildcard(cron.daysOfWeek, 0, 6);
 
   for (let i = 0; i < maxIterations; i++) {
-    const month = candidate.getMonth() + 1; // 1-12
-    const dayOfMonth = candidate.getDate();
-    const dayOfWeek = candidate.getDay(); // 0=Sun
-    const hour = candidate.getHours();
-    const minute = candidate.getMinutes();
+    const { month, dayOfMonth, dayOfWeek, hour, minute } = datePartsInTz(candidate, timezone);
 
     // Standard cron day matching: OR when both DOM and DOW are restricted
     let dayMatches: boolean;
@@ -167,7 +211,7 @@ export function getNextFireTime(cron: CronParts, after: Date): Date {
     }
 
     // Advance one minute
-    candidate.setMinutes(candidate.getMinutes() + 1);
+    candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
   }
 
   // Fallback: should not reach here for valid cron expressions

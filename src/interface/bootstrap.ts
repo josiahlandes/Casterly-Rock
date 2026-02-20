@@ -129,12 +129,29 @@ export function loadBootstrapFile(
 }
 
 /**
- * Load all bootstrap files from a workspace
+ * TTL cache for bootstrap results keyed on workspace path + config.
+ * Avoids re-reading files on every prompt assembly call.
+ */
+const bootstrapCache = new Map<string, { result: BootstrapResult; ts: number }>();
+const BOOTSTRAP_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Load all bootstrap files from a workspace.
+ * Results are cached per (workspace path + maxFileSize + file list) with a 5-minute TTL.
  */
 export function loadBootstrapFiles(config?: Partial<BootstrapConfig>): BootstrapResult {
   const workspacePath = config?.workspacePath ?? findWorkspacePath() ?? getDefaultWorkspacePath();
   const maxFileSize = config?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
   const fileNames = config?.files ?? BOOTSTRAP_FILES;
+
+  // Cache key includes all parameters that affect the result
+  const cacheKey = `${workspacePath}:${maxFileSize}:${[...fileNames].join(',')}`;
+
+  // Check cache
+  const cached = bootstrapCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < BOOTSTRAP_CACHE_TTL_MS) {
+    return cached.result;
+  }
 
   const files: BootstrapFile[] = [];
 
@@ -154,11 +171,23 @@ export function loadBootstrapFiles(config?: Partial<BootstrapConfig>): Bootstrap
     })
     .join('\n\n---\n\n');
 
-  return {
+  const result: BootstrapResult = {
     files,
     combined,
     workspacePath,
   };
+
+  // Store in cache
+  bootstrapCache.set(cacheKey, { result, ts: Date.now() });
+
+  return result;
+}
+
+/**
+ * Clear the bootstrap file cache. Intended for tests.
+ */
+export function clearBootstrapCache(): void {
+  bootstrapCache.clear();
 }
 
 /**
