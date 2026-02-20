@@ -40,6 +40,11 @@ During dream cycles, each incoming memory candidate is evaluated against existin
 
 Uses Shannon entropy over word frequency distributions to measure information density. Combined with access frequency and recency into a composite migration score that determines whether an entry should be promoted to a hotter tier or demoted to a colder one.
 
+**Integration:**
+- **Agent tools**: Two tools exposed to the LLM — `entropy_score` (quick entropy + normalized score for content), `evaluate_tiers` (batch evaluate entries for tier migration recommendations).
+- **Dream cycle**: Phase 12 (`entropyTierMigration`) evaluates warm-tier entries and produces promotion/demotion recommendations.
+- **Stateless**: No persistent storage — the migrator is a pure computation engine instantiated in the constructor. No load/save lifecycle needed.
+
 ### 4. Git-Backed Memory Versioning (Letta)
 
 Lightweight internal snapshot system for memory state. Each snapshot captures the contents of key memory files (crystals, constitution, goals, issues) at a point in time. Supports line-level diffing between snapshots and deduplicates unchanged state.

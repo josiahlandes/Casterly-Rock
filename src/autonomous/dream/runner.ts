@@ -42,6 +42,7 @@ import type { LoraTrainer } from './lora-trainer.js';
 import type { Journal } from '../journal.js';
 import type { LinkNetwork } from '../memory/link-network.js';
 import type { AudnConsolidator } from '../memory/audn-consolidator.js';
+import type { EntropyMigrator } from '../memory/entropy-migrator.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -132,6 +133,11 @@ export interface DreamOutcome {
   audnDeleted: number;
   audnSkipped: number;
 
+  /** Entropy tier migration: entries evaluated / promotions / demotions */
+  entropyEvaluated: number;
+  entropyPromotions: number;
+  entropyDemotions: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -195,6 +201,7 @@ export class DreamCycleRunner {
     journal?: Journal,
     linkNetwork?: LinkNetwork,
     audnConsolidator?: AudnConsolidator,
+    entropyMigrator?: EntropyMigrator,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -224,6 +231,9 @@ export class DreamCycleRunner {
         audnUpdated: 0,
         audnDeleted: 0,
         audnSkipped: 0,
+        entropyEvaluated: 0,
+        entropyPromotions: 0,
+        entropyDemotions: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -458,6 +468,37 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `AUDN consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('audnConsolidation');
+        }
+      }
+
+      // Phase 12: Entropy-based tier migration evaluation (Advanced Memory: SAGE)
+      if (entropyMigrator && contextManager) {
+        try {
+          // Build entries for scoring from warm tier (the most actionable tier for migration)
+          const warmEntries = contextManager.getWarmTierContents();
+          if (warmEntries.length > 0) {
+            const entries = warmEntries.map((e) => ({
+              id: e.key,
+              content: e.content,
+              currentTier: 'warm' as const,
+              accessCount: e.accessCount,
+              lastAccessedAt: e.addedAt,
+              createdAt: e.addedAt,
+            }));
+
+            const report = entropyMigrator.evaluate(entries);
+            outcome.entropyEvaluated = report.evaluated;
+            outcome.entropyPromotions = report.promotions;
+            outcome.entropyDemotions = report.demotions;
+
+            outcome.phasesCompleted.push('entropyTierMigration');
+            tracer.log('dream', 'info', `Entropy tier migration: ${report.evaluated} evaluated → ${report.promotions} promote, ${report.demotions} demote, ${report.stable} stable`);
+          } else {
+            outcome.phasesSkipped.push('entropyTierMigration');
+          }
+        } catch (err) {
+          tracer.log('dream', 'warn', `Entropy tier migration failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('entropyTierMigration');
         }
       }
 

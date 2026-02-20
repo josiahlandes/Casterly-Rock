@@ -67,6 +67,7 @@ import type { EmbeddingProvider } from '../providers/embedding.js';
 import type { LinkNetwork, LinkType } from './memory/link-network.js';
 import type { MemoryEvolution } from './memory/memory-evolution.js';
 import type { AudnConsolidator } from './memory/audn-consolidator.js';
+import type { EntropyMigrator, EntryForScoring, MemoryTier } from './memory/entropy-migrator.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -197,6 +198,8 @@ export interface AgentState {
   memoryEvolution?: MemoryEvolution;
   /** AUDN consolidation cycle (Add/Update/Delete/Nothing) */
   audnConsolidator?: AudnConsolidator;
+  /** Entropy-based tier migration (SAGE) */
+  entropyMigrator?: EntropyMigrator;
 }
 
 /**
@@ -2060,6 +2063,60 @@ and what their sources are. Useful for deciding whether to trigger consolidation
     type: 'object',
     properties: {},
     required: [],
+  },
+};
+
+// ── Advanced Memory: Entropy-Based Tier Migration (SAGE) ─────────────────────
+
+const ENTROPY_SCORE_SCHEMA: ToolSchema = {
+  name: 'entropy_score',
+  description: `Calculate the Shannon entropy (information density) of a piece of text.
+Returns raw entropy in bits and a normalized 0-1 score. High entropy indicates
+diverse, information-rich content; low entropy indicates repetitive or sparse content.
+Useful for gauging whether a memory entry is worth promoting to a hotter tier.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        description: 'The text content to score for information density.',
+      },
+    },
+    required: ['content'],
+  },
+};
+
+const EVALUATE_TIERS_SCHEMA: ToolSchema = {
+  name: 'evaluate_tiers',
+  description: `Evaluate a batch of memory entries and produce tier migration recommendations.
+Each entry is scored using Shannon entropy, access frequency, and recency. Returns
+a report showing which entries should be promoted to hotter tiers or demoted to colder
+ones. Useful during memory maintenance to optimize tier placement.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entries: {
+        type: 'array',
+        description: 'Memory entries to evaluate for tier placement.',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Entry ID' },
+            content: { type: 'string', description: 'Entry text content' },
+            currentTier: {
+              type: 'string',
+              enum: ['hot', 'warm', 'cool', 'cold'],
+              description: 'Current tier of the entry',
+            },
+            accessCount: { type: 'number', description: 'Number of times this entry has been accessed' },
+            lastAccessedAt: { type: 'string', description: 'ISO timestamp of last access' },
+            createdAt: { type: 'string', description: 'ISO timestamp of entry creation' },
+          },
+          required: ['id', 'content', 'currentTier', 'accessCount', 'lastAccessedAt', 'createdAt'],
+        },
+      },
+    },
+    required: ['entries'],
   },
 };
 
@@ -4744,6 +4801,82 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── entropy_score (Advanced Memory: SAGE) ────────────────────────────────
+
+  executors.set('entropy_score', async (call) => {
+    if (!state.entropyMigrator) {
+      return failureResult(call.id, 'Entropy migrator not available.');
+    }
+
+    const content = requireString(call, 'content');
+    if ('error' in content) return content.error;
+
+    const result = state.entropyMigrator.quickScore(content.value);
+    const lines = [
+      `## Entropy Score`,
+      '',
+      `| Metric | Value |`,
+      `|--------|-------|`,
+      `| Raw entropy | ${result.entropy.toFixed(3)} bits |`,
+      `| Normalized | ${result.normalizedEntropy.toFixed(3)} (0-1) |`,
+      '',
+      result.normalizedEntropy >= 0.7
+        ? 'High information density — good candidate for hot/warm tier.'
+        : result.normalizedEntropy >= 0.4
+          ? 'Moderate information density — warm/cool tier appropriate.'
+          : 'Low information density — cool/cold tier appropriate.',
+    ];
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── evaluate_tiers (Advanced Memory: SAGE) ───────────────────────────────
+
+  executors.set('evaluate_tiers', async (call) => {
+    if (!state.entropyMigrator) {
+      return failureResult(call.id, 'Entropy migrator not available.');
+    }
+
+    const entriesRaw = call.input?.entries;
+    if (!Array.isArray(entriesRaw) || entriesRaw.length === 0) {
+      return failureResult(call.id, 'entries must be a non-empty array of memory entries.');
+    }
+
+    // Validate and cast entries
+    const entries: EntryForScoring[] = entriesRaw.map((e: Record<string, unknown>) => ({
+      id: String(e.id ?? ''),
+      content: String(e.content ?? ''),
+      currentTier: String(e.currentTier ?? 'cold') as MemoryTier,
+      accessCount: Number(e.accessCount ?? 0),
+      lastAccessedAt: String(e.lastAccessedAt ?? new Date().toISOString()),
+      createdAt: String(e.createdAt ?? new Date().toISOString()),
+    }));
+
+    const report = state.entropyMigrator.evaluate(entries);
+
+    const lines = [
+      `## Tier Migration Report`,
+      '',
+      `Evaluated: ${report.evaluated} | Promotions: ${report.promotions} | Demotions: ${report.demotions} | Stable: ${report.stable}`,
+      '',
+    ];
+
+    const migrations = report.candidates.filter((c) => c.shouldMigrate);
+    if (migrations.length > 0) {
+      lines.push('### Recommended Migrations', '', '| ID | Current | Recommended | Score | Direction |', '|-----|---------|-------------|-------|-----------|');
+      for (const c of migrations.slice(0, 20)) {
+        lines.push(`| ${c.id} | ${c.currentTier} | ${c.recommendedTier} | ${c.migrationScore.toFixed(3)} | ${c.direction} |`);
+      }
+      if (migrations.length > 20) {
+        lines.push(``, `... and ${migrations.length - 20} more.`);
+      }
+    } else {
+      lines.push('All entries are in their optimal tiers. No migrations recommended.');
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   return executors;
 }
 
@@ -4870,6 +5003,9 @@ export function buildAgentToolkit(
     // Advanced Memory: AUDN Consolidation Cycle (Mem0)
     AUDN_ENQUEUE_SCHEMA,
     AUDN_STATUS_SCHEMA,
+    // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+    ENTROPY_SCORE_SCHEMA,
+    EVALUATE_TIERS_SCHEMA,
   ];
 
   // Build all executors
@@ -5001,4 +5137,7 @@ export {
   // Advanced Memory: AUDN Consolidation Cycle (Mem0)
   AUDN_ENQUEUE_SCHEMA,
   AUDN_STATUS_SCHEMA,
+  // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+  ENTROPY_SCORE_SCHEMA,
+  EVALUATE_TIERS_SCHEMA,
 };

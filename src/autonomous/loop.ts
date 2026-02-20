@@ -70,6 +70,8 @@ import { createLinkNetwork, type LinkNetwork } from './memory/link-network.js';
 import { createMemoryEvolution, type MemoryEvolution } from './memory/memory-evolution.js';
 // Advanced Memory: AUDN Consolidation Cycle (Mem0)
 import { createAudnConsolidator, type AudnConsolidator } from './memory/audn-consolidator.js';
+// Advanced Memory: Entropy-Based Tier Migration (SAGE)
+import { createEntropyMigrator, type EntropyMigrator } from './memory/entropy-migrator.js';
 
 // ============================================================================
 // CONSTANTS
@@ -200,6 +202,8 @@ export class AutonomousLoop {
   private memoryEvolution: MemoryEvolution;
   // Advanced Memory: AUDN Consolidation Cycle (Mem0)
   private audnConsolidator: AudnConsolidator;
+  // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+  private entropyMigrator: EntropyMigrator;
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
@@ -300,6 +304,9 @@ export class AutonomousLoop {
 
     // Advanced Memory: AUDN Consolidation Cycle (Mem0)
     this.audnConsolidator = createAudnConsolidator();
+
+    // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+    this.entropyMigrator = createEntropyMigrator();
   }
 
   /**
@@ -744,6 +751,8 @@ export class AutonomousLoop {
         memoryEvolution: this.memoryEvolution,
         // Advanced Memory: AUDN Consolidation Cycle (Mem0)
         audnConsolidator: this.audnConsolidator,
+        // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+        entropyMigrator: this.entropyMigrator,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -894,6 +903,7 @@ export class AutonomousLoop {
         this.journal,
         this.linkNetwork,
         this.audnConsolidator,
+        this.entropyMigrator,
       );
 
       this.lastDreamCycleDate = today;
