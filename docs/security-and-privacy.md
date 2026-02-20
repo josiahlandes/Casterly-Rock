@@ -231,14 +231,14 @@ tools:
 
 > **Source**: `src/logging/safe-logger.ts`
 
-All logging goes through `safeLogger`, which applies `redactSensitiveText()` to every message and metadata object before output. There is no direct `console.log` for user-facing data.
+All logging goes through `safeLogger`, which applies `redactSensitiveText()` to every message and metadata object before output. There is no direct `console.log` for user-facing data. Log-level filtering suppresses messages below the configured minimum level.
 
 ```typescript
 safeLogger.info('Processing message', { content: userMessage });
 // Output: [INFO] Processing message {"content":"[REDACTED]"}
 ```
 
-Levels: `info`, `warn`, `error`, `debug`.
+Levels (in order of priority): `debug`, `info`, `warn`, `error`. Set `LOG_LEVEL` environment variable to control the minimum level (default: `info`). Use `safeLogger.setLevel('debug')` for runtime adjustment.
 
 Unserializable metadata is replaced with `[UNSERIALIZABLE]`.
 
