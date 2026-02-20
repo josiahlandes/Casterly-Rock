@@ -10,45 +10,219 @@ Priority scale: **P0** (fix now — correctness/security), **P1** (fix soon — 
 
 ---
 
-## 1. Draw a Line Between Production and Experimental Code
+## 1. Finish and Wire the Autonomous Subsystems
 
-**Weakness:** The autonomous system (`src/autonomous/`) contains 30+ modules, many
-partially implemented. The surface area is expensive to maintain and hasn't been
-battle-tested. There is no clear boundary between what's production-ready and what's
-aspirational.
+**Weakness:** The autonomous system's modules are individually well-implemented,
+but several are not wired into the production agent loop. Vision Tier 2/3 stores
+(`PromptStore`, `ShadowStore`, `ToolSynthesizer`, `ChallengeGenerator`,
+`ChallengeEvaluator`, `PromptEvolution`, `TrainingExtractor`, `LoraTrainer`) are
+defined as optional fields on `AgentState` but never populated in
+`loop.ts:runAgentCycle()`. The `message_user` tool ignores the fully-implemented
+`MessagePolicy`. Dream cycles have no automatic trigger in the modern path. The
+deprecated `runCycle()` creates a second execution path to maintain.
 
 **Priority:** P1
 
-**Goal:** Isolate experimental code so it can't regress production paths, and make the
-boundary visible to every contributor.
+**Goal:** Wire every implemented module into the production agent loop so the full
+vision stack is live and testable. Remove the legacy execution path.
 
-### Steps
+### 1A. Wire Vision Tier 2/3 Stores into AgentState
 
-1. Create a `src/autonomous/experimental/` directory.
-2. Move modules that are not yet wired into the production agent loop into it:
-   - `dream/` (runner, challenge-generator, challenge-evaluator, prompt-evolution,
-     training-extractor, lora-trainer)
-   - `shadow-store.ts`
-   - Any other module that has no call site in the production entry points
-     (`src/index.ts`, `src/imessage-daemon.ts`).
-3. Add an `experimental/README.md` explaining the boundary:
-   - Experimental code is not covered by the quality-gate contract.
-   - It must not be imported by non-experimental modules.
-4. Add an ESLint rule (or a guardrails check in `scripts/guardrails.mjs`) that
-   prevents `src/autonomous/*.ts` from importing `src/autonomous/experimental/*`.
-5. Update `docs/architecture.md` to show the boundary on the module map.
+The following stores are implemented but never instantiated in
+`loop.ts:runAgentCycle()` (lines 700–717). The `agentState` object must be
+extended to include them.
 
-### Affected Paths
+**Steps:**
 
-- `src/autonomous/` (restructure)
-- `scripts/guardrails.mjs` (new import boundary rule)
-- `docs/architecture.md` (update)
+1. In the `AutonomousLoop` class (`src/autonomous/loop.ts`), add private fields
+   and initialization for each store, mirroring the pattern already used for
+   `worldModel`, `goalStack`, `issueLog`, and `journal`:
+   ```typescript
+   private promptStore: PromptStore;
+   private shadowStore: ShadowStore;
+   private toolSynthesizer: ToolSynthesizer;
+   private challengeGenerator: ChallengeGenerator;
+   private challengeEvaluator: ChallengeEvaluator;
+   private promptEvolution: PromptEvolution;
+   private trainingExtractor: TrainingExtractor;
+   private loraTrainer: LoraTrainer;
+   ```
+2. Instantiate each in the constructor or in a `loadVisionStores()` helper called
+   from `loadState()`. Each store already has a `load()` or factory method — use
+   it. Pass the LLM provider where required (e.g., `ChallengeGenerator` needs an
+   LLM for generation).
+3. Populate `agentState` in `runAgentCycle()` (around line 700):
+   ```typescript
+   const agentState: AgentState = {
+     // ... existing fields ...
+     promptStore: this.promptStore,
+     shadowStore: this.shadowStore,
+     toolSynthesizer: this.toolSynthesizer,
+     challengeGenerator: this.challengeGenerator,
+     challengeEvaluator: this.challengeEvaluator,
+     promptEvolution: this.promptEvolution,
+     trainingExtractor: this.trainingExtractor,
+     loraTrainer: this.loraTrainer,
+   };
+   ```
+4. Add `saveVisionStores()` to the `saveState()` path so any mutations during a
+   cycle are persisted.
+5. Add a config toggle in `config/autonomous.yaml`:
+   ```yaml
+   visionTiers:
+     tier2: true   # prompt-store, shadow-store, tool-synthesizer
+     tier3: true   # challenges, prompt-evolution, lora
+   ```
+   When a tier is disabled, those fields remain `undefined` on `AgentState` and
+   the corresponding agent tools gracefully return "not enabled" (which they
+   already do via null-checks in `agent-tools.ts`).
 
-### Acceptance Criteria
+**Affected Paths:**
+- `src/autonomous/loop.ts` (instantiate and wire stores)
+- `config/autonomous.yaml` (add tier toggles)
+- `config/schema.ts` (extend Zod schema)
 
-- [ ] No production entry point transitively imports anything under `experimental/`.
-- [ ] `npm run guardrails` fails if a non-experimental file imports experimental code.
-- [ ] `npm run check` passes after the move.
+**Acceptance Criteria:**
+- [ ] All 8 Vision Tier 2/3 stores are populated in `agentState` when their tier
+      is enabled.
+- [ ] Agent tools that depend on these stores (`edit_prompt`, `shadow`,
+      `run_challenges`, `evolve_prompt`, `extract_training_data`, `load_adapter`)
+      function end-to-end in a test cycle.
+- [ ] Disabling a tier via config causes graceful "not enabled" responses.
+- [ ] `npm run check` passes.
+
+### 1B. Connect `message_user` to MessagePolicy and a Delivery Backend
+
+The `MessagePolicy` class in `src/autonomous/communication/policy.ts` is fully
+implemented (throttle, quiet hours, event filtering, formatting) but the
+`message_user` tool executor (`agent-tools.ts:~2362`) ignores it entirely. It
+checks a boolean `config.userMessagingEnabled` and returns a "Phase 7 not enabled"
+string. There is also no actual delivery mechanism.
+
+**Steps:**
+
+1. Create `src/autonomous/communication/delivery.ts`:
+   - Define a `MessageDelivery` interface:
+     ```typescript
+     export interface MessageDelivery {
+       send(message: string, urgency: string): Promise<{ delivered: boolean; channel: string }>;
+     }
+     ```
+   - Implement `IMessageDelivery` — uses the existing `src/imessage/sender.ts`
+     to send via iMessage (the project's primary communication channel).
+   - Implement `ConsoleDelivery` — writes to a `~/.casterly/outbox.jsonl` file
+     (fallback when iMessage is not configured).
+2. Add a `MessagePolicy` instance and `MessageDelivery` instance to
+   `AgentState`:
+   ```typescript
+   messagePolicy?: MessagePolicy;
+   messageDelivery?: MessageDelivery;
+   ```
+3. Instantiate both in `loop.ts` and populate `agentState`.
+4. Rewrite the `message_user` executor to:
+   - Build a `NotifiableEvent` from the tool call parameters.
+   - Call `messagePolicy.shouldNotify(event)`.
+   - If allowed, call `messageDelivery.send(decision.formattedMessage, urgency)`.
+   - Call `messagePolicy.recordSent(event)`.
+   - Return the delivery result (or the block reason).
+5. Remove the `config.userMessagingEnabled` boolean check — the `MessagePolicy`
+   `enabled` field replaces it.
+6. Add config in `config/autonomous.yaml`:
+   ```yaml
+   messaging:
+     enabled: true
+     deliveryChannel: imessage   # 'imessage' | 'console'
+     throttle:
+       maxPerHour: 3
+       maxPerDay: 10
+       quietStart: '22:00'
+       quietEnd: '08:00'
+   ```
+
+**Affected Paths:**
+- `src/autonomous/communication/delivery.ts` (new)
+- `src/autonomous/agent-tools.ts` (rewrite `message_user` executor)
+- `src/autonomous/loop.ts` (instantiate policy + delivery)
+- `config/autonomous.yaml` (messaging config)
+
+**Acceptance Criteria:**
+- [ ] `message_user` tool routes through `MessagePolicy.shouldNotify()`.
+- [ ] Messages are delivered via iMessage when configured.
+- [ ] Throttle and quiet hours are respected.
+- [ ] Blocked messages return a clear reason to the agent.
+- [ ] `npm run check` passes.
+
+### 1C. Auto-Trigger Dream Cycles in the Modern Path
+
+The legacy `runDreamCycleIfDue()` method exists (line ~1096) but is `private` and
+never called from `runAgentCycle()`. Dream phase tools exist but require the agent
+to decide to use them — there is no automatic scheduling.
+
+**Steps:**
+
+1. Add a `checkDreamCycleDue()` method to `AutonomousLoop`:
+   - Check `lastDreamCycle` timestamp against configured interval (e.g., every
+     24 hours or every N cycles).
+   - Read from `config/autonomous.yaml`:
+     ```yaml
+     dream:
+       intervalHours: 24
+       minCyclesBetween: 10
+     ```
+2. In `runAgentCycle()`, after the main cycle completes (around line 793),
+   call `checkDreamCycleDue()`. If due, fire a follow-up cycle with a
+   `{ type: 'scheduled', reason: 'dream_cycle' }` trigger where the system
+   prompt instructs the agent to run dream phase tools.
+3. Alternative (simpler): add a `dreamCycleTrigger()` to `trigger-router.ts`
+   that the main loop checks on each tick in `tick()`. If due, the next cycle's
+   trigger is the dream trigger instead of a goal or event.
+4. Persist `lastDreamCycleTimestamp` to `~/.casterly/state/dream-meta.json`.
+
+**Affected Paths:**
+- `src/autonomous/loop.ts` (add dream scheduling)
+- `src/autonomous/trigger-router.ts` (add dream trigger type)
+- `config/autonomous.yaml` (dream interval config)
+
+**Acceptance Criteria:**
+- [ ] Dream cycles trigger automatically after the configured interval.
+- [ ] The dream trigger causes the agent to invoke dream phase tools.
+- [ ] Manual `runDreamCycleIfDue()` still works as an escape hatch.
+- [ ] `npm run check` passes.
+
+### 1D. Retire the Legacy `runCycle()` Path
+
+The deprecated `runCycle()` (line ~301) implements the old four-phase
+Analyze → Hypothesize → Implement → Reflect pipeline. It shares code with
+`runAgentCycle()` (state loading, saving) but maintains a parallel execution
+path that doubles the maintenance surface.
+
+**Steps:**
+
+1. Audit all call sites of `runCycle()`:
+   - Internal: the legacy `tick()` path (if `useAgentLoop` is false).
+   - External: `scripts/run-single-cycle.ts`, `scripts/test-autonomous-cycle.ts`.
+2. Update all external call sites to use `runAgentCycle()`.
+3. Remove the `useAgentLoop` config flag — the agent loop is now the only path.
+4. Delete `runCycle()` and its private helpers (`attemptHypothesis`,
+   `generateHypotheses`, etc.).
+5. Remove the `Analyzer`, `Validator`, and `Reflector` imports if they are no
+   longer used by any remaining code. (Check first — `Reflector` is used by
+   dream cycles via `agentState.reflector`; keep it if so.)
+6. Remove the `@deprecated` markers on `runAgentCycle` references that exist
+   only because of the dual-path situation.
+
+**Affected Paths:**
+- `src/autonomous/loop.ts` (delete ~500 lines of legacy code)
+- `scripts/run-single-cycle.ts` (update call site)
+- `scripts/test-autonomous-cycle.ts` (update call site)
+- `config/autonomous.yaml` (remove `useAgentLoop` flag)
+
+**Acceptance Criteria:**
+- [ ] `runCycle()` no longer exists.
+- [ ] Only one execution path remains: `runAgentCycle()`.
+- [ ] All scripts and entry points use the modern path.
+- [ ] No dead imports remain after cleanup.
+- [ ] `npm run check` passes.
 
 ---
 
@@ -521,8 +695,14 @@ The recommended sequence balances risk, dependencies, and effort:
 |-------|-------|-----------|
 | **Phase 1 — Security** | #6 (encryption), #2 (semantic detection) | P0 items. Core to the privacy promise. |
 | **Phase 2 — Correctness** | #8 (step verification), #7 (error recovery) | P1 items. Fix silent no-ops and fragile retry. |
-| **Phase 3 — Automation** | #3 (CI/CD), #1 (experimental boundary) | P1 items. Prevent regressions going forward. |
-| **Phase 4 — Hygiene** | #4 (semaphore), #5 (schema dedup), #9 (typed boundaries), #10 (auto-compact) | P2 items. Reduce maintenance burden. |
+| **Phase 3 — Integration** | #1A (wire vision stores), #1B (message_user), #1C (dream scheduling), #3 (CI/CD) | P1 items. Complete the autonomous stack and prevent regressions. |
+| **Phase 4 — Cleanup** | #1D (retire legacy path), #4 (semaphore), #5 (schema dedup) | P2 items. Remove dead code and duplication. |
+| **Phase 5 — Hygiene** | #9 (typed boundaries), #10 (auto-compact) | P2 items. Reduce maintenance burden. |
+
+Phase 3 has an internal dependency: wire vision stores (1A) before dream
+scheduling (1C), since dream cycles use challenge and prompt-evolution tools.
+Retire the legacy path (1D) last because it requires all other integration to
+be stable first.
 
 Each phase should end with a full `npm run check` pass and a tagged commit.
 
@@ -531,5 +711,5 @@ Each phase should end with a full `npm run check` pass and a tagged commit.
 ## Tracking
 
 Progress on this plan should be tracked in `config/backlog.yaml` by adding entries
-`bl-010` through `bl-019` with references back to this document. The autonomous loop
+`bl-010` through `bl-022` with references back to this document. The autonomous loop
 can then pick up items as part of its normal backlog processing.
