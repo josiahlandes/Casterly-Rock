@@ -201,10 +201,22 @@ to decide to use them — there is no automatic scheduling.
 - `config/autonomous.yaml` (dream interval config)
 
 **Acceptance Criteria:**
-- [ ] Dream cycles trigger automatically after the configured interval.
-- [ ] The dream trigger causes the agent to invoke dream phase tools.
-- [ ] Manual `runDreamCycleIfDue()` still works as an escape hatch.
-- [ ] `npm run check` passes.
+- [x] Dream cycles trigger automatically after the configured interval.
+- [x] The dream trigger causes the agent to invoke dream phase tools.
+- [x] Manual `runDreamCycleIfDue()` still works as an escape hatch.
+- [x] `npm run check` passes.
+
+**Status: IMPLEMENTED** — `runDreamCycleIfDue()` is now called automatically
+after every agent cycle in `start()`. Scheduling rules: at most once per
+calendar day, and at least `consolidationIntervalHours` since the last dream
+(default 24h, configurable via `dream_cycles` in `config/autonomous.yaml`).
+The method was changed from `private` to `public` so it can serve as an
+external escape hatch. All 8 Vision Tier 2/3 stores plus the journal are now
+passed to `DreamCycleRunner.run()`. Dream meta (last run date and timestamp)
+is persisted to `~/.casterly/dream-meta.json` and restored on `loadState()`.
+`DreamCyclesConfig` added to `types.ts`. `loadConfig()` parses the
+`dream_cycles` YAML section. 10 new tests added. Pre-existing failures
+unchanged.
 
 ### 1D. Retire the Legacy `runCycle()` Path
 

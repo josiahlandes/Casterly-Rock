@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'yaml';
 
@@ -75,6 +76,7 @@ import { createLoraTrainer, type LoraTrainer } from './dream/lora-trainer.js';
 
 const DEFAULT_CONFIG_PATH = 'config/autonomous.yaml';
 const CYCLE_ID_PREFIX = 'cycle';
+const DREAM_META_PATH = path.join(os.homedir(), '.casterly', 'dream-meta.json');
 
 // ============================================================================
 // PHASE 3: EVENTS CONFIGURATION
@@ -162,6 +164,7 @@ export class AutonomousLoop {
   // Phase 6: Dream cycles and self-model
   private dreamCycleRunner: DreamCycleRunner;
   private lastDreamCycleDate: string = '';
+  private lastDreamCycleTimestamp: string = '';
   private selfModelSummary: SelfModelSummary | null = null;
 
   // Journal system (Phase 1)
@@ -244,6 +247,13 @@ export class AutonomousLoop {
     // Phase 6: Initialize dream cycle runner
     this.dreamCycleRunner = new DreamCycleRunner({
       projectRoot,
+      ...(config.dreamCycles ? {
+        consolidationIntervalHours: config.dreamCycles.consolidationIntervalHours,
+        explorationBudgetTurns: config.dreamCycles.explorationBudgetTurns,
+        selfModelRebuildIntervalHours: config.dreamCycles.selfModelRebuildIntervalHours,
+        archaeologyLookbackDays: config.dreamCycles.archaeologyLookbackDays,
+        retrospectiveIntervalDays: config.dreamCycles.retrospectiveIntervalDays,
+      } : {}),
     });
 
     // Phase 1: Initialize journal
@@ -311,6 +321,9 @@ export class AutonomousLoop {
         // Run a cycle via the agent loop (the sole execution path)
         const trigger = this.determineTrigger();
         await this.runAgentCycle(trigger);
+
+        // After each agent cycle, check if a dream cycle is due
+        await this.runDreamCycleIfDue();
 
         // Sleep until next cycle
         await this.sleep(this.config.cycleIntervalMinutes * 60_000);
@@ -510,6 +523,7 @@ export class AutonomousLoop {
       this.goalStack.load(),
       this.issueLog.load(),
       this.journal.load(),
+      this.loadDreamMeta(),
       ...this.visionStoreLoadOps(),
     ]);
   }
@@ -539,6 +553,7 @@ export class AutonomousLoop {
       this.worldModel.save(),
       this.goalStack.save(),
       this.issueLog.save(),
+      this.saveDreamMeta(),
       ...this.visionStoreSaveOps(),
     ]);
   }
@@ -556,6 +571,39 @@ export class AutonomousLoop {
     if (this.promptEvolution) ops.push(this.promptEvolution.save());
     if (this.loraTrainer) ops.push(this.loraTrainer.save());
     return ops;
+  }
+
+  // ── Dream Meta Persistence ────────────────────────────────────────────────
+
+  /**
+   * Load dream cycle metadata (last run timestamp) from disk.
+   */
+  private async loadDreamMeta(): Promise<void> {
+    try {
+      const raw = await fs.readFile(DREAM_META_PATH, 'utf-8');
+      const meta = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof meta['lastDreamCycleDate'] === 'string') {
+        this.lastDreamCycleDate = meta['lastDreamCycleDate'];
+      }
+      if (typeof meta['lastDreamCycleTimestamp'] === 'string') {
+        this.lastDreamCycleTimestamp = meta['lastDreamCycleTimestamp'];
+      }
+    } catch {
+      // File doesn't exist yet — first run
+    }
+  }
+
+  /**
+   * Save dream cycle metadata to disk.
+   */
+  private async saveDreamMeta(): Promise<void> {
+    if (!this.lastDreamCycleDate && !this.lastDreamCycleTimestamp) return;
+    const meta = {
+      lastDreamCycleDate: this.lastDreamCycleDate,
+      lastDreamCycleTimestamp: this.lastDreamCycleTimestamp,
+    };
+    await fs.mkdir(path.dirname(DREAM_META_PATH), { recursive: true });
+    await fs.writeFile(DREAM_META_PATH, JSON.stringify(meta, null, 2) + '\n');
   }
 
   /**
@@ -1198,22 +1246,33 @@ export class AutonomousLoop {
   // ── Phase 6: Dream Cycle ──────────────────────────────────────────────
 
   /**
-   * Run a dream cycle during quiet hours, once per night.
-   * Dream cycles consolidate reflections, update the world model,
-   * explore code archaeology, rebuild the self-model, and write
-   * retrospectives.
+   * Check whether a dream cycle is due and run it if so.
+   *
+   * Scheduling rules:
+   * - At most once per calendar day.
+   * - At least `consolidationIntervalHours` since the last dream cycle
+   *   (default 24h, configurable via `dream_cycles` in autonomous.yaml).
+   *
+   * Called automatically after every agent cycle in `start()`.
+   * Can also be called externally as an escape hatch.
    */
-  private async runDreamCycleIfDue(): Promise<void> {
-    const today = new Date().toISOString().split('T')[0] ?? '';
+  async runDreamCycleIfDue(): Promise<void> {
+    const now = new Date();
+    const today = now.toISOString().split('T')[0] ?? '';
 
     // Only run once per calendar day
     if (this.lastDreamCycleDate === today) return;
 
-    // Only during quiet hours
-    if (this.shouldRunCycle()) return;
+    // Respect consolidation interval: skip if not enough time has passed
+    // since the last dream cycle timestamp (stored as ISO string).
+    if (this.lastDreamCycleTimestamp) {
+      const intervalHours = this.config.dreamCycles?.consolidationIntervalHours ?? 24;
+      const elapsedMs = now.getTime() - new Date(this.lastDreamCycleTimestamp).getTime();
+      if (elapsedMs < intervalHours * 3_600_000) return;
+    }
 
     const tracer = getTracer();
-    tracer.log('dream', 'info', 'Dream cycle starting (quiet hours)');
+    tracer.log('dream', 'info', 'Dream cycle starting (auto-triggered)');
 
     try {
       const outcome = await this.dreamCycleRunner.run(
@@ -1222,13 +1281,26 @@ export class AutonomousLoop {
         this.issueLog,
         this.reflector,
         this.contextManager,
+        this.promptStore ?? undefined,
+        this.shadowStore ?? undefined,
+        this.toolSynthesizer ?? undefined,
+        this.challengeGenerator ?? undefined,
+        this.challengeEvaluator ?? undefined,
+        this.promptEvolution ?? undefined,
+        this.trainingExtractor ?? undefined,
+        this.loraTrainer ?? undefined,
+        this.journal,
       );
 
       this.lastDreamCycleDate = today;
+      this.lastDreamCycleTimestamp = now.toISOString();
 
       // Cache the self-model summary for agent loop cycles
       const sm = this.dreamCycleRunner.getSelfModel();
       this.selfModelSummary = sm.getSummary();
+
+      // Persist the dream cycle timestamp
+      await this.saveState();
 
       tracer.log('dream', 'info', `Dream cycle complete`, {
         phasesCompleted: outcome.phasesCompleted,
@@ -1345,6 +1417,15 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
             : undefined,
           testFailureMinSeverity: raw.communication.test_failure_min_severity ?? 'unresolvable',
           dailySummaryEnabled: raw.communication.daily_summary_enabled ?? true,
+        }
+      : undefined,
+    dreamCycles: raw.dream_cycles
+      ? {
+          consolidationIntervalHours: raw.dream_cycles.consolidation_interval_hours ?? 24,
+          explorationBudgetTurns: raw.dream_cycles.exploration_budget_turns ?? 50,
+          selfModelRebuildIntervalHours: raw.dream_cycles.self_model_rebuild_interval_hours ?? 48,
+          archaeologyLookbackDays: raw.dream_cycles.archaeology_lookback_days ?? 90,
+          retrospectiveIntervalDays: raw.dream_cycles.retrospective_interval_days ?? 7,
         }
       : undefined,
   };
