@@ -1,0 +1,65 @@
+# Advanced Memory Features
+
+Ten research-backed memory features implemented in `src/autonomous/memory/`.
+
+| # | Feature | Source | Module |
+|---|---------|--------|--------|
+| 1 | Zettelkasten link network | A-MEM | `link-network.ts` |
+| 2 | AUDN consolidation cycle | Mem0 | `audn-consolidator.ts` |
+| 3 | Entropy-based tier migration | SAGE | `entropy-migrator.ts` |
+| 4 | Git-backed memory versioning | Letta | `memory-versioning.ts` |
+| 5 | Memory evolution | A-MEM | `memory-evolution.ts` |
+| 6 | Temporal invalidation | Mem0 | `temporal-invalidation.ts` |
+| 7 | Checker pattern | SAGE | `checker.ts` |
+| 8 | Skill files | Letta | `skill-files.ts` |
+| 9 | Concurrent dream processing | Letta | `concurrent-dreams.ts` |
+| 10 | Graph relational memory | Mem0 | `graph-memory.ts` |
+
+## Feature Details
+
+### 1. Zettelkasten Link Network (A-MEM)
+
+Bidirectional links between memory entries across all subsystems. Links are typed (`supports`, `contradicts`, `extends`, `derived_from`, `related`) and carry a strength score that decays over time. Supports multi-hop neighborhood traversal for context enrichment.
+
+### 2. AUDN Consolidation Cycle (Mem0)
+
+During dream cycles, each incoming memory candidate is evaluated against existing knowledge. The consolidator makes one of four decisions: **A**dd (novel), **U**pdate (partial overlap — merge), **D**elete (contradicted/superseded), or **N**othing (already known). Uses bigram Jaccard similarity for overlap detection.
+
+### 3. Entropy-Based Tier Migration (SAGE)
+
+Uses Shannon entropy over word frequency distributions to measure information density. Combined with access frequency and recency into a composite migration score that determines whether an entry should be promoted to a hotter tier or demoted to a colder one.
+
+### 4. Git-Backed Memory Versioning (Letta)
+
+Lightweight internal snapshot system for memory state. Each snapshot captures the contents of key memory files (crystals, constitution, goals, issues) at a point in time. Supports line-level diffing between snapshots and deduplicates unchanged state.
+
+### 5. Memory Evolution (A-MEM)
+
+Structured transformations that go beyond CRUD: **strengthen** (corroboration), **weaken** (contradiction), **merge** (combine two into one), **split** (decompose into focused parts), **generalize** (abstract to principle), and **specialize** (narrow to context). Full lineage tracking across generations.
+
+### 6. Temporal Invalidation (Mem0)
+
+TTL policies per memory category with configurable decay functions (linear or exponential). Facts get 90-day TTLs, opinions get 14 days, working notes get 7 days. Access can reset the expiry clock. Expired entries enter a grace period before hard deletion.
+
+### 7. Checker Pattern (SAGE)
+
+Pre-storage validation guard that runs five checks on every memory candidate: **consistency** (contradiction detection), **relevance** (entropy and length), **duplicate** (Jaccard similarity), **freshness** (stale date references), and **safety** (sensitive data patterns). Produces a composite verdict with per-check explanations.
+
+### 8. Skill Files (Letta)
+
+Persistent procedural memory capturing learned task patterns. Each skill has ordered steps, preconditions, success criteria, and a mastery level (`novice` → `competent` → `proficient` → `expert`) that advances based on tracked success rates.
+
+### 9. Concurrent Dream Processing (Letta)
+
+Runs independent dream cycle phases in parallel using `Promise.allSettled`. Phases are organized into dependency groups that execute sequentially, while phases within each group run concurrently. Supports configurable concurrency limits, per-phase timeouts, and critical-failure abort.
+
+### 10. Graph Relational Memory (Mem0)
+
+In-memory entity-relationship graph with typed nodes (`file`, `concept`, `person`, `tool`, `module`, `pattern`) and edges (`depends_on`, `related_to`, `uses`, `modifies`, `contains`, `authored_by`, `tested_by`). Supports BFS shortest path, connected component detection, and deterministic node deduplication.
+
+## Sources
+
+- **A-MEM**: Agentic memory architecture emphasizing interconnected, evolving knowledge structures.
+- **Mem0**: Memory layer for AI agents with consolidation cycles, temporal awareness, and graph-based relations.
+- **SAGE**: Information-theoretic approach to memory management using entropy and verification patterns.
+- **Letta**: Stateful agent framework with versioned memory, skill persistence, and concurrent processing.
