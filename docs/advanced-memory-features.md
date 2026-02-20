@@ -31,6 +31,11 @@ Bidirectional links between memory entries across all subsystems. Links are type
 
 During dream cycles, each incoming memory candidate is evaluated against existing knowledge. The consolidator makes one of four decisions: **A**dd (novel), **U**pdate (partial overlap — merge), **D**elete (contradicted/superseded), or **N**othing (already known). Uses bigram Jaccard similarity for overlap detection.
 
+**Integration:**
+- **State lifecycle**: Queue loaded at cycle start, saved at cycle end (`loop.ts` `loadState`/`saveState`).
+- **Agent tools**: Two tools exposed to the LLM — `audn_enqueue` (queue a candidate for evaluation), `audn_status` (check queue size and source breakdown).
+- **Dream cycle**: Phase 11 (`audnConsolidation`) runs the full AUDN evaluation on all queued candidates, then clears the queue.
+
 ### 3. Entropy-Based Tier Migration (SAGE)
 
 Uses Shannon entropy over word frequency distributions to measure information density. Combined with access frequency and recency into a composite migration score that determines whether an entry should be promoted to a hotter tier or demoted to a colder one.

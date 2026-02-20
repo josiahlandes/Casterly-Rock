@@ -68,6 +68,8 @@ import { createLoraTrainer, type LoraTrainer } from './dream/lora-trainer.js';
 import { createLinkNetwork, type LinkNetwork } from './memory/link-network.js';
 // Advanced Memory: Memory Evolution (A-MEM)
 import { createMemoryEvolution, type MemoryEvolution } from './memory/memory-evolution.js';
+// Advanced Memory: AUDN Consolidation Cycle (Mem0)
+import { createAudnConsolidator, type AudnConsolidator } from './memory/audn-consolidator.js';
 
 // ============================================================================
 // CONSTANTS
@@ -196,6 +198,8 @@ export class AutonomousLoop {
   private linkNetwork: LinkNetwork;
   // Advanced Memory: Memory Evolution (A-MEM)
   private memoryEvolution: MemoryEvolution;
+  // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+  private audnConsolidator: AudnConsolidator;
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
@@ -293,6 +297,9 @@ export class AutonomousLoop {
     this.memoryEvolution = createMemoryEvolution();
     // Couple: evolution operations auto-create links
     this.memoryEvolution.setLinkNetwork(this.linkNetwork);
+
+    // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+    this.audnConsolidator = createAudnConsolidator();
   }
 
   /**
@@ -390,6 +397,7 @@ export class AutonomousLoop {
       this.loadDreamMeta(),
       this.linkNetwork.load(),
       this.memoryEvolution.load(),
+      this.audnConsolidator.load(),
       ...this.visionStoreLoadOps(),
     ]);
   }
@@ -422,6 +430,7 @@ export class AutonomousLoop {
       this.saveDreamMeta(),
       this.linkNetwork.save(),
       this.memoryEvolution.save(),
+      this.audnConsolidator.save(),
       ...this.visionStoreSaveOps(),
     ]);
   }
@@ -733,6 +742,8 @@ export class AutonomousLoop {
         // Advanced Memory: Zettelkasten + Evolution (A-MEM)
         linkNetwork: this.linkNetwork,
         memoryEvolution: this.memoryEvolution,
+        // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+        audnConsolidator: this.audnConsolidator,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -882,6 +893,7 @@ export class AutonomousLoop {
         this.loraTrainer ?? undefined,
         this.journal,
         this.linkNetwork,
+        this.audnConsolidator,
       );
 
       this.lastDreamCycleDate = today;

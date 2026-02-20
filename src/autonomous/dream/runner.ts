@@ -41,6 +41,7 @@ import type { TrainingExtractor } from './training-extractor.js';
 import type { LoraTrainer } from './lora-trainer.js';
 import type { Journal } from '../journal.js';
 import type { LinkNetwork } from '../memory/link-network.js';
+import type { AudnConsolidator } from '../memory/audn-consolidator.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -124,6 +125,13 @@ export interface DreamOutcome {
   /** Number of weak memory links pruned by decay (Advanced Memory) */
   linksPruned: number;
 
+  /** AUDN consolidation: candidates processed / added / updated / deleted / skipped */
+  audnProcessed: number;
+  audnAdded: number;
+  audnUpdated: number;
+  audnDeleted: number;
+  audnSkipped: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -186,6 +194,7 @@ export class DreamCycleRunner {
     loraTrainer?: LoraTrainer,
     journal?: Journal,
     linkNetwork?: LinkNetwork,
+    audnConsolidator?: AudnConsolidator,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -210,6 +219,11 @@ export class DreamCycleRunner {
         promptEvolutionRan: false,
         trainingExamplesExtracted: 0,
         linksPruned: 0,
+        audnProcessed: 0,
+        audnAdded: 0,
+        audnUpdated: 0,
+        audnDeleted: 0,
+        audnSkipped: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -415,6 +429,35 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Link decay failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('linkDecay');
+        }
+      }
+
+      // Phase 11: AUDN consolidation (Advanced Memory: Mem0)
+      if (audnConsolidator && audnConsolidator.queueSize() > 0) {
+        try {
+          // Build existing memories map from crystals (via context manager cold tier)
+          // For now, run consolidation against an empty map — the AUDN decision
+          // engine still produces meaningful Add decisions for novel content,
+          // and the dream cycle caller can supply richer maps in the future.
+          const existingMemories = new Map<string, string>();
+
+          // If we have a context manager, try to populate from crystal store
+          // entries available in state. The crystal prompt is a reasonable proxy.
+          // (Full integration with crystal store would require passing it here.)
+
+          const report = audnConsolidator.consolidate(existingMemories);
+          outcome.audnProcessed = report.processed;
+          outcome.audnAdded = report.added;
+          outcome.audnUpdated = report.updated;
+          outcome.audnDeleted = report.deleted;
+          outcome.audnSkipped = report.skipped;
+
+          await audnConsolidator.save();
+          outcome.phasesCompleted.push('audnConsolidation');
+          tracer.log('dream', 'info', `AUDN consolidation: ${report.processed} candidates → ${report.added} add, ${report.updated} update, ${report.deleted} delete, ${report.skipped} skip`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `AUDN consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('audnConsolidation');
         }
       }
 

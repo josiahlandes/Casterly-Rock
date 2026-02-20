@@ -1,8 +1,8 @@
 # Memory & State
 
-> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/context-store.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/autonomous/prompt-store.ts`, `src/autonomous/shadow-store.ts`, `src/tools/synthesizer.ts`, `src/autonomous/dream/challenge-evaluator.ts`, `src/autonomous/dream/prompt-evolution.ts`, `src/autonomous/dream/training-extractor.ts`, `src/autonomous/dream/lora-trainer.ts`, `src/providers/embedding.ts`, `src/tasks/execution-log.ts`, `src/autonomous/memory/link-network.ts`, `src/autonomous/memory/memory-evolution.ts`
+> **Source**: `src/autonomous/journal.ts`, `src/autonomous/world-model.ts`, `src/autonomous/goal-stack.ts`, `src/autonomous/issue-log.ts`, `src/autonomous/context-manager.ts`, `src/autonomous/context-store.ts`, `src/autonomous/crystal-store.ts`, `src/autonomous/constitution-store.ts`, `src/autonomous/trace-replay.ts`, `src/autonomous/prompt-store.ts`, `src/autonomous/shadow-store.ts`, `src/tools/synthesizer.ts`, `src/autonomous/dream/challenge-evaluator.ts`, `src/autonomous/dream/prompt-evolution.ts`, `src/autonomous/dream/training-extractor.ts`, `src/autonomous/dream/lora-trainer.ts`, `src/providers/embedding.ts`, `src/tasks/execution-log.ts`, `src/autonomous/memory/link-network.ts`, `src/autonomous/memory/memory-evolution.ts`, `src/autonomous/memory/audn-consolidator.ts`
 
-Casterly maintains persistent state across sessions through eighteen subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
+Casterly maintains persistent state across sessions through nineteen subsystems, each stored separately on disk. They are loaded in parallel at cycle start and saved at cycle end.
 
 ```
 ~/.casterly/
@@ -30,9 +30,10 @@ Casterly maintains persistent state across sessions through eighteen subsystems,
 │   └── registry.json          ← Adapter metadata and lifecycle state
 ├── benchmarks/                ← Benchmark tasks per skill (Vision Tier 3)
 │   └── <skill>.json           ← Benchmark task definitions
-├── memory/                    ← Advanced memory (A-MEM)
+├── memory/                    ← Advanced memory (A-MEM, Mem0)
 │   ├── links.json             ← Zettelkasten bidirectional link network
-│   └── evolution-log.json     ← Memory evolution event log
+│   ├── evolution-log.json     ← Memory evolution event log
+│   └── audn-queue.json       ← AUDN consolidation queue (Mem0)
 ├── execution-log/
 │   └── log.jsonl              ← Task execution outcomes (operational memory)
 ```
@@ -688,7 +689,8 @@ Cycle start
     ├── constitutionStore.load() ← Read JSON (Vision Tier 1)
     ├── traceReplay.initialize() ← Load trace index (Vision Tier 1)
     ├── linkNetwork.load()       ← Read JSON (Advanced Memory: A-MEM)
-    └── memoryEvolution.load()   ← Read JSON (Advanced Memory: A-MEM)
+    ├── memoryEvolution.load()   ← Read JSON (Advanced Memory: A-MEM)
+    └── audnConsolidator.load()  ← Read JSON (Advanced Memory: Mem0)
          (all in parallel)
     │
     ▼
@@ -710,6 +712,7 @@ During cycle
     ├── LoRA trainer: createAdapter(), recordEvaluation(), recordLoad() (Vision Tier 3)
     ├── Link network: createLink(), getLinksForEntry(), applyDecay() (Advanced Memory)
     ├── Memory evolution: strengthen(), weaken(), merge(), split(), generalize(), specialize() (Advanced Memory)
+    ├── AUDN consolidator: enqueue(), consolidate() (Advanced Memory: Mem0)
     └── Context manager: addToWarmTier() (auto from tool results)
     │
     ▼
@@ -728,7 +731,8 @@ Cycle end
     ├── promptEvolution.save()   ← Only if dirty (Vision Tier 3)
     ├── loraTrainer.save()       ← Only if dirty (Vision Tier 3)
     ├── linkNetwork.save()       ← Always (Advanced Memory: A-MEM)
-    └── memoryEvolution.save()   ← Always (Advanced Memory: A-MEM)
+    ├── memoryEvolution.save()   ← Always (Advanced Memory: A-MEM)
+    └── audnConsolidator.save()  ← Always (Advanced Memory: Mem0)
 ```
 
 ## Privacy Guarantees
@@ -752,6 +756,7 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 - LoRA trainer: Only adapter metadata and benchmark scores, no user data
 - Link network: Only structural relationships between memory entry IDs, never user content
 - Memory evolution: Only evolution operations and entry IDs with reasons, never user content
+- AUDN consolidator: Only consolidation decisions (add/update/delete/nothing) and similarity scores, never user content
 
 ## Key Files
 
@@ -775,4 +780,5 @@ All state subsystems follow the same rule: **store only Tyrion's reasoning and c
 | `src/autonomous/dream/lora-trainer.ts` | LoRA adapter lifecycle management (Vision Tier 3) |
 | `src/autonomous/memory/link-network.ts` | Zettelkasten bidirectional link network (Advanced Memory: A-MEM) |
 | `src/autonomous/memory/memory-evolution.ts` | Memory evolution with lineage tracking (Advanced Memory: A-MEM) |
+| `src/autonomous/memory/audn-consolidator.ts` | AUDN consolidation cycle with bigram Jaccard similarity (Advanced Memory: Mem0) |
 | `src/tasks/execution-log.ts` | Bounded task outcome log (248 lines) |

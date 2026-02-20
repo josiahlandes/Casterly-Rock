@@ -518,7 +518,7 @@ These mechanisms are ordered by risk and dependency. Earlier mechanisms create t
 >
 > Integration points:
 > - Crystal and constitution stores provide `buildPromptSection()` for hot tier injection
-> - Agent toolkit (`agent-tools.ts`) exposes 9 new tools (74 total, up from 62; includes 3 A-MEM link network tools)
+> - Agent toolkit (`agent-tools.ts`) exposes 9 new tools (76 total, up from 62; includes 3 A-MEM link network tools + 2 AUDN consolidation tools)
 > - Configuration in `config/autonomous.yaml` under `self_knowledge` section
 > - All stores follow the same load/save lifecycle pattern as prompt-store and shadow-store
 
@@ -714,7 +714,7 @@ That's the unique advantage of local-first: you can afford to let the model be w
 
 > **Reconciliation Implementation Status**
 >
-> All vision reconciliation items are implemented. 5 dream cycle phase tools + 3 A-MEM link network tools bring the total to 74.
+> All vision reconciliation items are implemented. 5 dream cycle phase tools + 3 A-MEM link network tools + 2 AUDN consolidation tools bring the total to 76.
 >
 > | Reconciliation Item | Status |
 > |---------------------|--------|
@@ -727,4 +727,4 @@ That's the unique advantage of local-first: you can afford to let the model be w
 > | Deprecated legacy `AutonomousProvider` interface | IMPLEMENTED |
 > | Controller uses `runAgentCycle` instead of `runCycle` | IMPLEMENTED |
 >
-> **Total tools: 74**
+> **Total tools: 76**

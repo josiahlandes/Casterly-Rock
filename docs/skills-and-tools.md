@@ -157,9 +157,9 @@ Bash execution is registered separately.
 
 ---
 
-## Agent Tools (74)
+## Agent Tools (76)
 
-In addition to the 13 native tools above, the autonomous agent loop has 61 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
+In addition to the 13 native tools above, the autonomous agent loop has 63 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
 
 See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categories:
 
@@ -192,6 +192,7 @@ See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categor
 | Parallel reasoning | `parallel_reason` |
 | Dream cycle phases | `consolidate_reflections`, `reorganize_goals`, `explore_codebase`, `rebuild_self_model`, `write_retrospective` |
 | Advanced memory (A-MEM) | `link_memories`, `get_links`, `traverse_links` |
+| AUDN consolidation (Mem0) | `audn_enqueue`, `audn_status` |
 | Delegation | `delegate` |
 | Communication | `message_user` |
 

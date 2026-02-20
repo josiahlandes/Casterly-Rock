@@ -66,6 +66,7 @@ import type { TraceReplayStore } from './trace-replay.js';
 import type { EmbeddingProvider } from '../providers/embedding.js';
 import type { LinkNetwork, LinkType } from './memory/link-network.js';
 import type { MemoryEvolution } from './memory/memory-evolution.js';
+import type { AudnConsolidator } from './memory/audn-consolidator.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -194,6 +195,8 @@ export interface AgentState {
   linkNetwork?: LinkNetwork;
   /** Memory evolution engine (strengthen, weaken, merge, split, etc.) */
   memoryEvolution?: MemoryEvolution;
+  /** AUDN consolidation cycle (Add/Update/Delete/Nothing) */
+  audnConsolidator?: AudnConsolidator;
 }
 
 /**
@@ -2016,6 +2019,47 @@ memory surface — crystals, journal entries, constitution rules, and more.`,
       },
     },
     required: ['entry_id'],
+  },
+};
+
+// ── ADVANCED MEMORY: AUDN CONSOLIDATION CYCLE (Mem0) ────────────────────────
+
+const AUDN_ENQUEUE_SCHEMA: ToolSchema = {
+  name: 'audn_enqueue',
+  description: `Queue a memory candidate for AUDN (Add/Update/Delete/Nothing) evaluation during the
+next dream cycle consolidation. Candidates are compared against existing crystals, constitution rules,
+and journal entries — then either added as new knowledge, merged into existing memories, used to
+delete contradicted memories, or discarded if already known. Use this when you encounter information
+worth remembering but want the dream cycle to decide how it fits.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        description: 'The memory content to queue for evaluation.',
+      },
+      source: {
+        type: 'string',
+        description: 'Which subsystem this comes from (e.g. "crystal", "journal", "reflection", "observation").',
+      },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional categorization tags.',
+      },
+    },
+    required: ['content', 'source'],
+  },
+};
+
+const AUDN_STATUS_SCHEMA: ToolSchema = {
+  name: 'audn_status',
+  description: `Check the AUDN consolidation queue — how many memory candidates are pending evaluation
+and what their sources are. Useful for deciding whether to trigger consolidation now.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
   },
 };
 
@@ -4631,6 +4675,75 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── audn_enqueue (Advanced Memory: AUDN Consolidation Cycle Mem0) ──────
+
+  executors.set('audn_enqueue', async (call) => {
+    if (!state.audnConsolidator) {
+      return failureResult(call.id, 'AUDN consolidator not available.');
+    }
+
+    const content = requireString(call, 'content');
+    if ('error' in content) return content.error;
+    const source = requireString(call, 'source');
+    if ('error' in source) return source.error;
+    const tags = Array.isArray(call.input['tags'])
+      ? (call.input['tags'] as string[])
+      : [];
+
+    const candidateId = state.audnConsolidator.enqueue({
+      content: content.value,
+      source: source.value,
+      tags,
+    });
+
+    await state.audnConsolidator.save();
+    return successResult(
+      call.id,
+      `Queued for AUDN evaluation: ${candidateId} (${state.audnConsolidator.queueSize()} total pending). Will be processed during next dream cycle consolidation.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── audn_status (Advanced Memory: AUDN Consolidation Cycle Mem0) ───────
+
+  executors.set('audn_status', async (call) => {
+    if (!state.audnConsolidator) {
+      return failureResult(call.id, 'AUDN consolidator not available.');
+    }
+
+    const queue = state.audnConsolidator.getQueue();
+    if (queue.length === 0) {
+      return successResult(
+        call.id,
+        'AUDN queue is empty. No candidates pending evaluation.',
+        config.maxOutputChars,
+      );
+    }
+
+    // Group by source
+    const bySource = new Map<string, number>();
+    for (const c of queue) {
+      bySource.set(c.source, (bySource.get(c.source) ?? 0) + 1);
+    }
+
+    const lines: string[] = [
+      `## AUDN Queue (${queue.length} candidates pending)`,
+      '',
+      '| Source | Count |',
+      '|--------|-------|',
+    ];
+    for (const [src, count] of bySource) {
+      lines.push(`| ${src} | ${count} |`);
+    }
+
+    const oldest = queue[0];
+    if (oldest) {
+      lines.push('', `Oldest candidate queued: ${oldest.queuedAt.split('T')[0]}`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   return executors;
 }
 
@@ -4754,6 +4867,9 @@ export function buildAgentToolkit(
     LINK_MEMORIES_SCHEMA,
     GET_LINKS_SCHEMA,
     TRAVERSE_LINKS_SCHEMA,
+    // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+    AUDN_ENQUEUE_SCHEMA,
+    AUDN_STATUS_SCHEMA,
   ];
 
   // Build all executors
@@ -4882,4 +4998,7 @@ export {
   LINK_MEMORIES_SCHEMA,
   GET_LINKS_SCHEMA,
   TRAVERSE_LINKS_SCHEMA,
+  // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+  AUDN_ENQUEUE_SCHEMA,
+  AUDN_STATUS_SCHEMA,
 };
