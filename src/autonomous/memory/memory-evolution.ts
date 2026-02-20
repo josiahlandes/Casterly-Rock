@@ -23,7 +23,6 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getTracer } from '../debug.js';
 import type { LinkNetwork } from './link-network.js';
-import type { LinkNetwork } from './link-network.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

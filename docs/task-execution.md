@@ -298,4 +298,4 @@ The system prompt should describe the default workflow ("for complex multi-step 
 
 **What to do:** Wrap them as agent tools. The planner is especially valuable for multi-file refactoring and complex coding tasks. The verifier is valuable when the LLM is uncertain about an outcome.
 
-> **Status:** Planner and verifier available as agent tools (`plan`, `verify`). Total tools: 71.
+> **Status:** Planner and verifier available as agent tools (`plan`, `verify`). Total tools: 74.

@@ -21,6 +21,12 @@ Ten research-backed memory features implemented in `src/autonomous/memory/`.
 
 Bidirectional links between memory entries across all subsystems. Links are typed (`supports`, `contradicts`, `extends`, `derived_from`, `related`) and carry a strength score that decays over time. Supports multi-hop neighborhood traversal for context enrichment.
 
+**Integration:**
+- **State lifecycle**: Loaded at cycle start, saved at cycle end (`loop.ts` `loadState`/`saveState`).
+- **Agent tools**: Three tools exposed to the LLM — `link_memories` (create/strengthen links), `get_links` (retrieve links for an entry), `traverse_links` (BFS neighborhood traversal).
+- **Dream cycle**: Phase 10 (`linkDecay`) applies time-based decay and prunes weak links during consolidation.
+- **MemoryEvolution coupling**: Evolution operations auto-create typed links between source and result memories (see Feature 5).
+
 ### 2. AUDN Consolidation Cycle (Mem0)
 
 During dream cycles, each incoming memory candidate is evaluated against existing knowledge. The consolidator makes one of four decisions: **A**dd (novel), **U**pdate (partial overlap — merge), **D**elete (contradicted/superseded), or **N**othing (already known). Uses bigram Jaccard similarity for overlap detection.
@@ -36,6 +42,10 @@ Lightweight internal snapshot system for memory state. Each snapshot captures th
 ### 5. Memory Evolution (A-MEM)
 
 Structured transformations that go beyond CRUD: **strengthen** (corroboration), **weaken** (contradiction), **merge** (combine two into one), **split** (decompose into focused parts), **generalize** (abstract to principle), and **specialize** (narrow to context). Full lineage tracking across generations.
+
+**Integration:**
+- **State lifecycle**: Loaded at cycle start, saved at cycle end (`loop.ts` `loadState`/`saveState`).
+- **LinkNetwork coupling**: When a `LinkNetwork` is wired in via `setLinkNetwork()`, every evolution operation auto-creates a typed link between source and result memories. The mapping is: strengthen→`supports`, weaken→`contradicts`, merge/split/generalize/specialize→`derived_from`.
 
 ### 6. Temporal Invalidation (Mem0)
 

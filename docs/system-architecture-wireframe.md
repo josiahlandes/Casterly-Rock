@@ -125,7 +125,7 @@ For prose descriptions of each subsystem, see [architecture.md](architecture.md)
 │  │  ├─ READ_DOCUMENT                           ├─ REMINDER_CREATE  │   │
 │  │  └─ BASH                                    └─ HTTP_GET         │   │
 │  │                                                                  │   │
-│  │  AUTONOMOUS (71 tools)                                          │   │
+│  │  AUTONOMOUS (74 tools)                                          │   │
 │  │  ├─ All core + coding + messaging + productivity                │   │
 │  │  ├─ Memory: recall, remember, forget, search_memory             │   │
 │  │  ├─ Goals: add_goal, complete_goal, reprioritize                │   │
@@ -344,7 +344,7 @@ For prose descriptions of each subsystem, see [architecture.md](architecture.md)
 │       │                                                │                │
 │       │   ┌────────┐   ┌──────────┐   ┌────────────┐  │                │
 │       │   │  LLM   │──▶│  Tools   │──▶│  Results   │  │                │
-│       │   │  Call   │   │  (71)    │   │  Observed  │──┤                │
+│       │   │  Call   │   │  (74)    │   │  Observed  │──┤                │
 │       │   └────────┘   └──────────┘   └────────────┘  │                │
 │       │       ▲                                        │                │
 │       │       └──────────── loop ◀─────────────────────┘                │
@@ -622,7 +622,7 @@ src/
 │
 ├── autonomous/                   # Autonomous Agent
 │   ├── agent-loop.ts             #   Main ReAct loop
-│   ├── agent-tools.ts            #   71-tool toolkit
+│   ├── agent-tools.ts            #   74-tool toolkit
 │   ├── provider.ts               #   Autonomous provider
 │   ├── identity.ts               #   Persistent identity
 │   ├── journal.ts                #   Append-only log
