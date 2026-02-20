@@ -258,6 +258,34 @@ export type {
   DreamOutcome,
 } from './dream/runner.js';
 
+// ── Vision Tier 1: Self-Knowledge ─────────────────────────────────────────────
+
+// Crystal store (memory crystallization)
+export { CrystalStore, createCrystalStore } from './crystal-store.js';
+export type {
+  Crystal,
+  CrystalStoreConfig,
+  CrystalResult,
+} from './crystal-store.js';
+
+// Constitution store (self-governance)
+export { ConstitutionStore, createConstitutionStore } from './constitution-store.js';
+export type {
+  ConstitutionalRule,
+  ConstitutionStoreConfig,
+  RuleResult,
+} from './constitution-store.js';
+
+// Trace replay (self-debugging)
+export { TraceReplayStore, createTraceReplayStore } from './trace-replay.js';
+export type {
+  TraceStep,
+  ExecutionTrace,
+  TraceIndexEntry,
+  TraceReplayConfig,
+  TraceComparison,
+} from './trace-replay.js';
+
 // ── Vision Tier 2: Self-Improvement ──────────────────────────────────────────
 
 // Prompt store (self-modifying prompts)

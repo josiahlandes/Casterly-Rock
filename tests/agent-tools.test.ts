@@ -92,9 +92,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 62 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(62);
-    expect(toolkit.toolNames).toHaveLength(62);
+  it('exposes all 71 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(71);
+    expect(toolkit.toolNames).toHaveLength(71);
   });
 
   it('includes all expected tool names', () => {
@@ -109,6 +109,10 @@ describe('AgentToolkit — Schema Validation', () => {
       'recall', 'archive',
       'adversarial_test', 'update_world_model',
       'recall_journal', 'consolidate',
+      // Vision Tier 1
+      'crystallize', 'dissolve', 'list_crystals',
+      'create_rule', 'update_rule', 'list_rules',
+      'replay', 'compare_traces', 'search_traces',
       // Vision Tier 2
       'edit_prompt', 'revert_prompt', 'get_prompt',
       'shadow', 'list_shadows',
