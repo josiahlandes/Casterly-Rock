@@ -60,27 +60,54 @@ Structured transformations that go beyond CRUD: **strengthen** (corroboration), 
 
 **Integration:**
 - **State lifecycle**: Loaded at cycle start, saved at cycle end (`loop.ts` `loadState`/`saveState`).
+- **Agent tools**: Three tools exposed to the LLM — `evolve_memory` (apply an evolution operation to a memory entry), `evolution_lineage` (trace the ancestry/descendant chain of a memory), `evolution_log` (view recent evolution events).
+- **Dream cycle**: Phase 14 (`memoryEvolution`) logs the total evolution events recorded since the last dream cycle.
 - **LinkNetwork coupling**: When a `LinkNetwork` is wired in via `setLinkNetwork()`, every evolution operation auto-creates a typed link between source and result memories. The mapping is: strengthen→`supports`, weaken→`contradicts`, merge/split/generalize/specialize→`derived_from`.
 
 ### 6. Temporal Invalidation (Mem0)
 
 TTL policies per memory category with configurable decay functions (linear or exponential). Facts get 90-day TTLs, opinions get 14 days, working notes get 7 days. Access can reset the expiry clock. Expired entries enter a grace period before hard deletion.
 
+**Integration:**
+- **Agent tools**: Three tools exposed to the LLM — `register_temporal` (register a memory entry with a TTL category), `check_freshness` (check if an entry is still fresh, expired, or in grace period), `sweep_expired` (sweep all entries and report newly expired and deletion candidates).
+- **Dream cycle**: Phase 15 (`temporalInvalidation`) runs a sweep of all registered entries, reporting how many were evaluated, newly expired, and ready for deletion.
+- **Stateless**: No persistent storage — tracking is in-memory. Instantiated in the constructor, no load/save lifecycle needed.
+
 ### 7. Checker Pattern (SAGE)
 
 Pre-storage validation guard that runs five checks on every memory candidate: **consistency** (contradiction detection), **relevance** (entropy and length), **duplicate** (Jaccard similarity), **freshness** (stale date references), and **safety** (sensitive data patterns). Produces a composite verdict with per-check explanations.
+
+**Integration:**
+- **Agent tools**: One tool exposed to the LLM — `check_memory` (validate a memory candidate against five checks, with optional existing knowledge for consistency/duplicate detection). Returns a composite verdict (approved/rejected) with per-check scores and explanations.
+- **Dream cycle**: No dedicated phase — the checker is an on-demand validation guard invoked before storage, not a periodic operation.
+- **Stateless**: No persistent storage — pure computation engine. Instantiated in the constructor, no load/save lifecycle needed.
 
 ### 8. Skill Files (Letta)
 
 Persistent procedural memory capturing learned task patterns. Each skill has ordered steps, preconditions, success criteria, and a mastery level (`novice` → `competent` → `proficient` → `expert`) that advances based on tracked success rates.
 
+**Integration:**
+- **State lifecycle**: Loaded at cycle start, saved at cycle end (`loop.ts` `loadState`/`saveState`).
+- **Agent tools**: Four tools exposed to the LLM — `learn_skill` (learn a new skill with steps, preconditions, success criteria, and tags), `refine_skill` (update an existing skill's steps/criteria/description, incrementing its version), `search_skills` (search by query or filter by mastery level), `record_skill_use` (track a skill use and whether it succeeded, updating mastery).
+- **Dream cycle**: Phase 16 (`skillFiles`) reports the total number of skills and how many have reached expert-level mastery.
+
 ### 9. Concurrent Dream Processing (Letta)
 
 Runs independent dream cycle phases in parallel using `Promise.allSettled`. Phases are organized into dependency groups that execute sequentially, while phases within each group run concurrently. Supports configurable concurrency limits, per-phase timeouts, and critical-failure abort.
 
+**Integration:**
+- **Agent tools**: One tool exposed to the LLM — `dream_concurrency_config` (view concurrent dream execution settings: max concurrency, phase timeout, dependency groups, critical phases).
+- **Dream cycle**: No dedicated phase — the concurrent executor is infrastructure that can optionally be used to parallelize dream phase execution within dependency groups.
+- **Stateless**: No persistent storage — execution strategy engine. Instantiated in the constructor, no load/save lifecycle needed.
+
 ### 10. Graph Relational Memory (Mem0)
 
 In-memory entity-relationship graph with typed nodes (`file`, `concept`, `person`, `tool`, `module`, `pattern`) and edges (`depends_on`, `related_to`, `uses`, `modifies`, `contains`, `authored_by`, `tested_by`). Supports BFS shortest path, connected component detection, and deterministic node deduplication.
+
+**Integration:**
+- **State lifecycle**: Loaded at cycle start, saved at cycle end (`loop.ts` `loadState`/`saveState`).
+- **Agent tools**: Three tools exposed to the LLM — `graph_add_node` (add or update an entity node, auto-incrementing mention count for existing nodes), `graph_add_edge` (add or strengthen a typed relationship between two nodes), `graph_search` (search nodes by label, inspect a specific node's edges and neighbors, or get a graph summary).
+- **Dream cycle**: Phase 17 (`graphMemory`) reports graph statistics — total nodes, edges, and connected components — and persists the graph.
 
 ## Sources
 
