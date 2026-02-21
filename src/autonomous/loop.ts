@@ -916,6 +916,7 @@ export class AutonomousLoop {
         this.audnConsolidator,
         this.entropyMigrator,
         this.memoryVersioning,
+        this.memoryEvolution,
       );
 
       this.lastDreamCycleDate = today;

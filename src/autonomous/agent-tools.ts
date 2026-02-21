@@ -65,7 +65,7 @@ import type { ConstitutionStore } from './constitution-store.js';
 import type { TraceReplayStore } from './trace-replay.js';
 import type { EmbeddingProvider } from '../providers/embedding.js';
 import type { LinkNetwork, LinkType } from './memory/link-network.js';
-import type { MemoryEvolution } from './memory/memory-evolution.js';
+import type { MemoryEvolution, EvolvableMemory, EvolutionOp } from './memory/memory-evolution.js';
 import type { AudnConsolidator } from './memory/audn-consolidator.js';
 import type { EntropyMigrator, EntryForScoring, MemoryTier } from './memory/entropy-migrator.js';
 import type { MemoryVersioning } from './memory/memory-versioning.js';
@@ -2050,7 +2050,7 @@ worth remembering but want the dream cycle to decide how it fits.`,
       },
       tags: {
         type: 'array',
-        items: { type: 'string' },
+        items: { type: 'string', description: 'Tag value' },
         description: 'Optional categorization tags.',
       },
     },
@@ -2103,6 +2103,7 @@ ones. Useful during memory maintenance to optimize tier placement.`,
         description: 'Memory entries to evaluate for tier placement.',
         items: {
           type: 'object',
+          description: 'A memory entry to evaluate for tier placement.',
           properties: {
             id: { type: 'string', description: 'Entry ID' },
             content: { type: 'string', description: 'Entry text content' },
@@ -2176,6 +2177,111 @@ the snapshot immediately before it.`,
       },
     },
     required: ['toId'],
+  },
+};
+
+// ── Advanced Memory: Memory Evolution (A-MEM) ────────────────────────────────
+
+const EVOLVE_MEMORY_SCHEMA: ToolSchema = {
+  name: 'evolve_memory',
+  description: `Transform a memory through one of six structured evolution operations:
+
+- strengthen: Increase confidence when corroborated by new evidence
+- weaken: Decrease confidence when contradicted
+- merge: Combine two related memories into one richer memory (requires second_memory and new_content)
+- split: Decompose a complex memory into focused sub-memories (requires split_contents)
+- generalize: Abstract a specific memory into a broader principle (requires new_content)
+- specialize: Narrow a general memory to a specific context (requires new_content)
+
+Each operation is tracked with full lineage. When the link network is active,
+links are automatically created between source and result memories.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['strengthen', 'weaken', 'merge', 'split', 'generalize', 'specialize'],
+        description: 'The evolution operation to perform.',
+      },
+      memory: {
+        type: 'object',
+        description: 'The primary memory to evolve.',
+        properties: {
+          id: { type: 'string', description: 'Memory entry ID' },
+          content: { type: 'string', description: 'Current content of the memory' },
+          confidence: { type: 'number', description: 'Current confidence score (0-1)' },
+          generation: { type: 'number', description: 'Current generation number (default: 0)' },
+          parentIds: { type: 'array', items: { type: 'string', description: 'Parent memory ID' }, description: 'IDs of parent memories' },
+          tags: { type: 'array', items: { type: 'string', description: 'Tag value' }, description: 'Memory tags' },
+        },
+        required: ['id', 'content', 'confidence'],
+      },
+      second_memory: {
+        type: 'object',
+        description: 'Second memory (required for merge).',
+        properties: {
+          id: { type: 'string', description: 'Memory entry ID' },
+          content: { type: 'string', description: 'Content of the memory' },
+          confidence: { type: 'number', description: 'Confidence score (0-1)' },
+          generation: { type: 'number', description: 'Generation number' },
+          parentIds: { type: 'array', items: { type: 'string', description: 'Parent memory ID' }, description: 'IDs of parent memories' },
+          tags: { type: 'array', items: { type: 'string', description: 'Tag value' }, description: 'Memory tags' },
+        },
+        required: ['id', 'content', 'confidence'],
+      },
+      reason: {
+        type: 'string',
+        description: 'Why this evolution is happening.',
+      },
+      new_content: {
+        type: 'string',
+        description: 'New content (required for merge, generalize, specialize).',
+      },
+      split_contents: {
+        type: 'array',
+        items: { type: 'string', description: 'Content for one of the split sub-memories' },
+        description: 'Array of 2+ content strings (required for split).',
+      },
+    },
+    required: ['operation', 'memory', 'reason'],
+  },
+};
+
+const EVOLUTION_LINEAGE_SCHEMA: ToolSchema = {
+  name: 'evolution_lineage',
+  description: `Get the evolution history of a specific memory entry — all evolution events
+where this memory was either a source or a result. Useful for understanding how
+knowledge crystallized over time.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      memory_id: {
+        type: 'string',
+        description: 'The memory entry ID to get lineage for.',
+      },
+    },
+    required: ['memory_id'],
+  },
+};
+
+const EVOLUTION_LOG_SCHEMA: ToolSchema = {
+  name: 'evolution_log',
+  description: `View recent memory evolution events. Shows operation type, source/result IDs,
+reason, and timestamp. Optionally filter by operation type.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['strengthen', 'weaken', 'merge', 'split', 'generalize', 'specialize'],
+        description: 'Optional: filter events by operation type.',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum events to return (default: 20).',
+      },
+    },
+    required: [],
   },
 };
 
@@ -4706,7 +4812,7 @@ function buildExecutors(
       sourceId: sourceId.value,
       targetId: targetId.value,
       type: linkType.value as LinkType,
-      annotation,
+      ...(annotation ? { annotation } : {}),
     });
 
     if (!result.success) {
@@ -5054,6 +5160,190 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── evolve_memory (Advanced Memory: Memory Evolution A-MEM) ──────────────
+
+  executors.set('evolve_memory', async (call) => {
+    if (!state.memoryEvolution) {
+      return failureResult(call.id, 'Memory evolution not available.');
+    }
+
+    const operation = requireString(call, 'operation');
+    if ('error' in operation) return operation.error;
+    const reason = requireString(call, 'reason');
+    if ('error' in reason) return reason.error;
+
+    const validOps = ['strengthen', 'weaken', 'merge', 'split', 'generalize', 'specialize'];
+    if (!validOps.includes(operation.value)) {
+      return failureResult(call.id, `Invalid operation: ${operation.value}. Must be one of: ${validOps.join(', ')}`);
+    }
+
+    const rawMemory = call.input?.memory as Record<string, unknown> | undefined;
+    if (!rawMemory || typeof rawMemory.id !== 'string' || typeof rawMemory.content !== 'string') {
+      return failureResult(call.id, 'memory must include at least id and content.');
+    }
+
+    const now = new Date().toISOString();
+    const memory: EvolvableMemory = {
+      id: rawMemory.id as string,
+      content: rawMemory.content as string,
+      confidence: typeof rawMemory.confidence === 'number' ? rawMemory.confidence : 0.5,
+      generation: typeof rawMemory.generation === 'number' ? rawMemory.generation : 0,
+      parentIds: Array.isArray(rawMemory.parentIds) ? (rawMemory.parentIds as string[]) : [],
+      tags: Array.isArray(rawMemory.tags) ? (rawMemory.tags as string[]) : [],
+      createdAt: typeof rawMemory.createdAt === 'string' ? rawMemory.createdAt : now,
+      lastEvolvedAt: typeof rawMemory.lastEvolvedAt === 'string' ? rawMemory.lastEvolvedAt : now,
+    };
+
+    const op = operation.value as EvolutionOp;
+
+    try {
+      let resultText: string;
+
+      switch (op) {
+        case 'strengthen': {
+          const result = state.memoryEvolution.strengthen(memory, reason.value);
+          resultText = `Strengthened "${memory.id}" → confidence: ${result.confidence.toFixed(2)}`;
+          break;
+        }
+        case 'weaken': {
+          const result = state.memoryEvolution.weaken(memory, reason.value);
+          resultText = `Weakened "${memory.id}" → confidence: ${result.confidence.toFixed(2)}`;
+          break;
+        }
+        case 'merge': {
+          const rawSecond = call.input?.second_memory as Record<string, unknown> | undefined;
+          if (!rawSecond || typeof rawSecond.id !== 'string' || typeof rawSecond.content !== 'string') {
+            return failureResult(call.id, 'merge requires second_memory with id and content.');
+          }
+          const mergeContent = optionalString(call, 'new_content');
+          if (!mergeContent) {
+            return failureResult(call.id, 'merge requires new_content — the merged text.');
+          }
+          const secondMemory: EvolvableMemory = {
+            id: rawSecond.id as string,
+            content: rawSecond.content as string,
+            confidence: typeof rawSecond.confidence === 'number' ? rawSecond.confidence : 0.5,
+            generation: typeof rawSecond.generation === 'number' ? rawSecond.generation : 0,
+            parentIds: Array.isArray(rawSecond.parentIds) ? (rawSecond.parentIds as string[]) : [],
+            tags: Array.isArray(rawSecond.tags) ? (rawSecond.tags as string[]) : [],
+            createdAt: typeof rawSecond.createdAt === 'string' ? rawSecond.createdAt : now,
+            lastEvolvedAt: typeof rawSecond.lastEvolvedAt === 'string' ? rawSecond.lastEvolvedAt : now,
+          };
+          const merged = state.memoryEvolution.merge(memory, secondMemory, mergeContent, reason.value);
+          resultText = `Merged "${memory.id}" + "${secondMemory.id}" → "${merged.id}" (gen ${merged.generation})`;
+          break;
+        }
+        case 'split': {
+          const rawSplitContents = call.input?.split_contents;
+          if (!Array.isArray(rawSplitContents) || rawSplitContents.length < 2) {
+            return failureResult(call.id, 'split requires split_contents — array of 2+ content strings.');
+          }
+          const splitContents = rawSplitContents.map(String);
+          const splits = state.memoryEvolution.split(memory, splitContents, reason.value);
+          resultText = `Split "${memory.id}" → ${splits.map((r) => `"${r.id}"`).join(', ')} (gen ${splits[0]?.generation ?? 0})`;
+          break;
+        }
+        case 'generalize': {
+          const genContent = optionalString(call, 'new_content');
+          if (!genContent) {
+            return failureResult(call.id, 'generalize requires new_content — the generalized text.');
+          }
+          const generalized = state.memoryEvolution.generalize(memory, genContent, reason.value);
+          resultText = `Generalized "${memory.id}" → "${generalized.id}" (gen ${generalized.generation})`;
+          break;
+        }
+        case 'specialize': {
+          const specContent = optionalString(call, 'new_content');
+          if (!specContent) {
+            return failureResult(call.id, 'specialize requires new_content — the specialized text.');
+          }
+          const specialized = state.memoryEvolution.specialize(memory, specContent, reason.value);
+          resultText = `Specialized "${memory.id}" → "${specialized.id}" (gen ${specialized.generation})`;
+          break;
+        }
+        default:
+          return failureResult(call.id, `Unknown operation: ${op}`);
+      }
+
+      await state.memoryEvolution.save();
+      return successResult(call.id, resultText, config.maxOutputChars);
+    } catch (err) {
+      return failureResult(call.id, `Evolution failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── evolution_lineage (Advanced Memory: Memory Evolution A-MEM) ──────────
+
+  executors.set('evolution_lineage', async (call) => {
+    if (!state.memoryEvolution) {
+      return failureResult(call.id, 'Memory evolution not available.');
+    }
+
+    const memoryId = requireString(call, 'memory_id');
+    if ('error' in memoryId) return memoryId.error;
+
+    const events = state.memoryEvolution.getLineage(memoryId.value);
+
+    if (events.length === 0) {
+      return successResult(call.id, `No evolution history found for "${memoryId.value}".`, config.maxOutputChars);
+    }
+
+    const lines = [
+      `## Evolution Lineage: ${memoryId.value} (${events.length} events)`,
+      '',
+      '| Op | Sources → Results | Reason | Date |',
+      '|----|-------------------|--------|------|',
+    ];
+
+    for (const e of events) {
+      lines.push(`| ${e.operation} | ${e.sourceIds.join(',')} → ${e.resultIds.join(',')} | ${e.reason.slice(0, 50)} | ${e.timestamp.split('T')[0]} |`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── evolution_log (Advanced Memory: Memory Evolution A-MEM) ──────────────
+
+  executors.set('evolution_log', async (call) => {
+    if (!state.memoryEvolution) {
+      return failureResult(call.id, 'Memory evolution not available.');
+    }
+
+    const filterOp = optionalString(call, 'operation') as EvolutionOp | undefined;
+    const limit = typeof call.input?.limit === 'number' ? call.input.limit : 20;
+
+    let events = filterOp
+      ? state.memoryEvolution.getEventsByType(filterOp)
+      : [...state.memoryEvolution.getEvents()];
+
+    // Most recent first
+    events = events.slice(-limit).reverse();
+
+    if (events.length === 0) {
+      return successResult(
+        call.id,
+        filterOp
+          ? `No ${filterOp} events found. Total events: ${state.memoryEvolution.eventCount()}.`
+          : `No evolution events yet. Use evolve_memory to start tracking memory transformations.`,
+        config.maxOutputChars,
+      );
+    }
+
+    const lines = [
+      `## Evolution Log (${events.length} events${filterOp ? `, filter: ${filterOp}` : ''})`,
+      '',
+      '| ID | Op | Sources → Results | Reason | Date |',
+      '|----|----|--------------------|--------|------|',
+    ];
+
+    for (const e of events) {
+      const delta = e.confidenceDelta !== undefined ? ` (Δ${e.confidenceDelta > 0 ? '+' : ''}${e.confidenceDelta.toFixed(2)})` : '';
+      lines.push(`| ${e.id} | ${e.operation}${delta} | ${e.sourceIds.join(',')} → ${e.resultIds.join(',')} | ${e.reason.slice(0, 40)} | ${e.timestamp.split('T')[0]} |`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   return executors;
 }
 
@@ -5187,6 +5477,10 @@ export function buildAgentToolkit(
     SNAPSHOT_MEMORY_SCHEMA,
     LIST_SNAPSHOTS_SCHEMA,
     DIFF_SNAPSHOTS_SCHEMA,
+    // Advanced Memory: Memory Evolution (A-MEM)
+    EVOLVE_MEMORY_SCHEMA,
+    EVOLUTION_LINEAGE_SCHEMA,
+    EVOLUTION_LOG_SCHEMA,
   ];
 
   // Build all executors
@@ -5325,4 +5619,8 @@ export {
   SNAPSHOT_MEMORY_SCHEMA,
   LIST_SNAPSHOTS_SCHEMA,
   DIFF_SNAPSHOTS_SCHEMA,
+  // Advanced Memory: Memory Evolution (A-MEM)
+  EVOLVE_MEMORY_SCHEMA,
+  EVOLUTION_LINEAGE_SCHEMA,
+  EVOLUTION_LOG_SCHEMA,
 };

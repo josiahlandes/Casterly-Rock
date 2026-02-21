@@ -44,6 +44,7 @@ import type { LinkNetwork } from '../memory/link-network.js';
 import type { AudnConsolidator } from '../memory/audn-consolidator.js';
 import type { EntropyMigrator } from '../memory/entropy-migrator.js';
 import type { MemoryVersioning } from '../memory/memory-versioning.js';
+import type { MemoryEvolution } from '../memory/memory-evolution.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -142,6 +143,9 @@ export interface DreamOutcome {
   /** Whether a memory snapshot was taken */
   snapshotTaken: boolean;
 
+  /** Memory evolution: total events recorded since last dream cycle */
+  evolutionEventsLogged: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -207,6 +211,7 @@ export class DreamCycleRunner {
     audnConsolidator?: AudnConsolidator,
     entropyMigrator?: EntropyMigrator,
     memoryVersioning?: MemoryVersioning,
+    memoryEvolution?: MemoryEvolution,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -240,6 +245,7 @@ export class DreamCycleRunner {
         entropyPromotions: 0,
         entropyDemotions: 0,
         snapshotTaken: false,
+        evolutionEventsLogged: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -522,6 +528,18 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Memory snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('memorySnapshot');
+        }
+      }
+
+      // Phase 14: Memory evolution summary (Advanced Memory: A-MEM)
+      if (memoryEvolution) {
+        try {
+          outcome.evolutionEventsLogged = memoryEvolution.eventCount();
+          outcome.phasesCompleted.push('memoryEvolution');
+          tracer.log('dream', 'info', `Memory evolution: ${outcome.evolutionEventsLogged} events in log`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Memory evolution summary failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('memoryEvolution');
         }
       }
 

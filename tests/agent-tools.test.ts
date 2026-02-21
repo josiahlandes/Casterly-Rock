@@ -92,9 +92,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 71 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(71);
-    expect(toolkit.toolNames).toHaveLength(71);
+  it('exposes all 84 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(84);
+    expect(toolkit.toolNames).toHaveLength(84);
   });
 
   it('includes all expected tool names', () => {
@@ -131,6 +131,8 @@ describe('AgentToolkit — Schema Validation', () => {
       // Reconciliation: Dream Cycle Phases
       'consolidate_reflections', 'reorganize_goals', 'explore_codebase',
       'rebuild_self_model', 'write_retrospective',
+      // Advanced Memory: Memory Evolution (A-MEM)
+      'evolve_memory', 'evolution_lineage', 'evolution_log',
     ];
     for (const name of expected) {
       expect(names).toContain(name);
