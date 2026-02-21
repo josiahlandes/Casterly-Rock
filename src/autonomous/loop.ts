@@ -80,6 +80,8 @@ import { createTemporalInvalidation, type TemporalInvalidation } from './memory/
 import { createMemoryChecker, type MemoryChecker } from './memory/checker.js';
 // Advanced Memory: Skill Files (Letta)
 import { createSkillFilesManager, type SkillFilesManager } from './memory/skill-files.js';
+// Advanced Memory: Concurrent Dream Processing (Letta)
+import { createConcurrentDreamExecutor, type ConcurrentDreamExecutor } from './memory/concurrent-dreams.js';
 
 // ============================================================================
 // CONSTANTS
@@ -220,6 +222,8 @@ export class AutonomousLoop {
   private memoryChecker: MemoryChecker;
   // Advanced Memory: Skill Files (Letta)
   private skillFilesManager: SkillFilesManager;
+  // Advanced Memory: Concurrent Dream Processing (Letta)
+  private concurrentDreamExecutor: ConcurrentDreamExecutor;
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
@@ -335,6 +339,9 @@ export class AutonomousLoop {
 
     // Advanced Memory: Skill Files (Letta) — stateful, needs load/save
     this.skillFilesManager = createSkillFilesManager();
+
+    // Advanced Memory: Concurrent Dream Processing (Letta) — stateless, no load/save
+    this.concurrentDreamExecutor = createConcurrentDreamExecutor();
   }
 
   /**
@@ -793,6 +800,8 @@ export class AutonomousLoop {
         memoryChecker: this.memoryChecker,
         // Advanced Memory: Skill Files (Letta)
         skillFilesManager: this.skillFilesManager,
+        // Advanced Memory: Concurrent Dream Processing (Letta)
+        concurrentDreamExecutor: this.concurrentDreamExecutor,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -949,6 +958,7 @@ export class AutonomousLoop {
         this.temporalInvalidation,
         this.memoryChecker,
         this.skillFilesManager,
+        this.concurrentDreamExecutor,
       );
 
       this.lastDreamCycleDate = today;

@@ -129,10 +129,10 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Roadmap Tools — Schema Validation', () => {
-  it('exposes all 92 tool schemas after roadmap + reconciliation (was 49)', async () => {
+  it('exposes all 93 tool schemas after roadmap + reconciliation (was 49)', async () => {
     await setupToolkit();
-    expect(toolkit.schemas).toHaveLength(92);
-    expect(toolkit.toolNames).toHaveLength(92);
+    expect(toolkit.schemas).toHaveLength(93);
+    expect(toolkit.toolNames).toHaveLength(93);
   });
 
   it('includes all 17 new roadmap tool names', async () => {

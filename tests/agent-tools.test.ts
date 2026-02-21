@@ -92,9 +92,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 92 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(92);
-    expect(toolkit.toolNames).toHaveLength(92);
+  it('exposes all 93 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(93);
+    expect(toolkit.toolNames).toHaveLength(93);
   });
 
   it('includes all expected tool names', () => {
@@ -135,6 +135,8 @@ describe('AgentToolkit — Schema Validation', () => {
       'evolve_memory', 'evolution_lineage', 'evolution_log',
       // Advanced Memory: Skill Files (Letta)
       'learn_skill', 'refine_skill', 'search_skills', 'record_skill_use',
+      // Advanced Memory: Concurrent Dream Processing (Letta)
+      'dream_concurrency_config',
     ];
     for (const name of expected) {
       expect(names).toContain(name);

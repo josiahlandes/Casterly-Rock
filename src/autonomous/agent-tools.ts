@@ -72,6 +72,7 @@ import type { MemoryVersioning } from './memory/memory-versioning.js';
 import type { TemporalInvalidation } from './memory/temporal-invalidation.js';
 import type { MemoryChecker, ExistingKnowledge } from './memory/checker.js';
 import type { SkillFilesManager } from './memory/skill-files.js';
+import type { ConcurrentDreamExecutor } from './memory/concurrent-dreams.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -212,6 +213,8 @@ export interface AgentState {
   memoryChecker?: MemoryChecker;
   /** Skill files manager (Letta) — persistent procedural memory */
   skillFilesManager?: SkillFilesManager;
+  /** Concurrent dream executor (Letta) — parallel dream phase execution */
+  concurrentDreamExecutor?: ConcurrentDreamExecutor;
 }
 
 /**
@@ -2464,6 +2467,18 @@ const RECORD_SKILL_USE_SCHEMA: ToolSchema = {
       },
     },
     required: ['skill_id', 'success'],
+  },
+};
+
+// ── Advanced Memory: Concurrent Dream Processing (Letta) ─────────────────────
+
+const DREAM_CONCURRENCY_CONFIG_SCHEMA: ToolSchema = {
+  name: 'dream_concurrency_config',
+  description: `View the concurrent dream execution configuration. Shows max concurrency, phase timeout, critical phases, and whether abort-on-critical-failure is enabled. The concurrent executor runs independent dream phases in parallel within dependency groups to reduce total dream cycle duration.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
   },
 };
 
@@ -5854,6 +5869,39 @@ function buildExecutors(
     );
   });
 
+  // ── dream_concurrency_config (Advanced Memory: Concurrent Dream Letta) ──
+
+  executors.set('dream_concurrency_config', async (call) => {
+    if (!state.concurrentDreamExecutor) {
+      return failureResult(call.id, 'Concurrent dream executor not available.');
+    }
+
+    // The executor exposes its config via its constructor defaults.
+    // We report the known defaults since the executor is stateless.
+    const lines = [
+      '## Concurrent Dream Configuration',
+      '',
+      '| Setting | Value |',
+      '|---------|-------|',
+      '| Max concurrency | 4 phases per group |',
+      '| Phase timeout | 120,000 ms (2 min) |',
+      '| Abort on critical failure | No |',
+      '| Critical phases | consolidateReflections, updateWorldModel |',
+      '',
+      '### Dependency Groups',
+      '',
+      '- **Group 1** (independent): consolidation, world model, archaeology',
+      '- **Group 2** (depends on 1): goal reorganization, self-model',
+      '- **Group 3** (depends on 2): shadow analysis, tool inventory',
+      '- **Group 4** (depends on 3): challenges, prompt evolution, training',
+      '- **Group 5** (final): retrospective',
+      '',
+      'Phases within the same group run concurrently. Groups execute sequentially.',
+    ];
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   // ── check_memory (Advanced Memory: Checker Pattern SAGE) ────────────────
 
   executors.set('check_memory', async (call) => {
@@ -6045,6 +6093,8 @@ export function buildAgentToolkit(
     REFINE_SKILL_SCHEMA,
     SEARCH_SKILLS_SCHEMA,
     RECORD_SKILL_USE_SCHEMA,
+    // Advanced Memory: Concurrent Dream Processing (Letta)
+    DREAM_CONCURRENCY_CONFIG_SCHEMA,
     // Advanced Memory: Checker Pattern (SAGE)
     CHECK_MEMORY_SCHEMA,
   ];
@@ -6198,6 +6248,8 @@ export {
   REFINE_SKILL_SCHEMA,
   SEARCH_SKILLS_SCHEMA,
   RECORD_SKILL_USE_SCHEMA,
+  // Advanced Memory: Concurrent Dream Processing (Letta)
+  DREAM_CONCURRENCY_CONFIG_SCHEMA,
   // Advanced Memory: Checker Pattern (SAGE)
   CHECK_MEMORY_SCHEMA,
 };

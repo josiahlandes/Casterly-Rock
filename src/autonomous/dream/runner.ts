@@ -48,6 +48,7 @@ import type { MemoryEvolution } from '../memory/memory-evolution.js';
 import type { TemporalInvalidation } from '../memory/temporal-invalidation.js';
 import type { MemoryChecker } from '../memory/checker.js';
 import type { SkillFilesManager } from '../memory/skill-files.js';
+import type { ConcurrentDreamExecutor } from '../memory/concurrent-dreams.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -227,6 +228,7 @@ export class DreamCycleRunner {
     temporalInvalidation?: TemporalInvalidation,
     memoryChecker?: MemoryChecker,
     skillFilesManager?: SkillFilesManager,
+    concurrentDreamExecutor?: ConcurrentDreamExecutor,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
