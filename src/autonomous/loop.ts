@@ -78,6 +78,8 @@ import { createMemoryVersioning, type MemoryVersioning } from './memory/memory-v
 import { createTemporalInvalidation, type TemporalInvalidation } from './memory/temporal-invalidation.js';
 // Advanced Memory: Checker Pattern (SAGE)
 import { createMemoryChecker, type MemoryChecker } from './memory/checker.js';
+// Advanced Memory: Skill Files (Letta)
+import { createSkillFilesManager, type SkillFilesManager } from './memory/skill-files.js';
 
 // ============================================================================
 // CONSTANTS
@@ -216,6 +218,8 @@ export class AutonomousLoop {
   private temporalInvalidation: TemporalInvalidation;
   // Advanced Memory: Checker Pattern (SAGE)
   private memoryChecker: MemoryChecker;
+  // Advanced Memory: Skill Files (Letta)
+  private skillFilesManager: SkillFilesManager;
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
@@ -328,6 +332,9 @@ export class AutonomousLoop {
 
     // Advanced Memory: Checker Pattern (SAGE) — stateless, no load/save needed
     this.memoryChecker = createMemoryChecker();
+
+    // Advanced Memory: Skill Files (Letta) — stateful, needs load/save
+    this.skillFilesManager = createSkillFilesManager();
   }
 
   /**
@@ -427,6 +434,7 @@ export class AutonomousLoop {
       this.memoryEvolution.load(),
       this.audnConsolidator.load(),
       this.memoryVersioning.load(),
+      this.skillFilesManager.load(),
       ...this.visionStoreLoadOps(),
     ]);
   }
@@ -461,6 +469,7 @@ export class AutonomousLoop {
       this.memoryEvolution.save(),
       this.audnConsolidator.save(),
       this.memoryVersioning.save(),
+      this.skillFilesManager.save(),
       ...this.visionStoreSaveOps(),
     ]);
   }
@@ -782,6 +791,8 @@ export class AutonomousLoop {
         temporalInvalidation: this.temporalInvalidation,
         // Advanced Memory: Checker Pattern (SAGE)
         memoryChecker: this.memoryChecker,
+        // Advanced Memory: Skill Files (Letta)
+        skillFilesManager: this.skillFilesManager,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -937,6 +948,7 @@ export class AutonomousLoop {
         this.memoryEvolution,
         this.temporalInvalidation,
         this.memoryChecker,
+        this.skillFilesManager,
       );
 
       this.lastDreamCycleDate = today;

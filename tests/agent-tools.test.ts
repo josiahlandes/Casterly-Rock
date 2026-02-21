@@ -92,9 +92,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 88 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(88);
-    expect(toolkit.toolNames).toHaveLength(88);
+  it('exposes all 92 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(92);
+    expect(toolkit.toolNames).toHaveLength(92);
   });
 
   it('includes all expected tool names', () => {
@@ -133,6 +133,8 @@ describe('AgentToolkit — Schema Validation', () => {
       'rebuild_self_model', 'write_retrospective',
       // Advanced Memory: Memory Evolution (A-MEM)
       'evolve_memory', 'evolution_lineage', 'evolution_log',
+      // Advanced Memory: Skill Files (Letta)
+      'learn_skill', 'refine_skill', 'search_skills', 'record_skill_use',
     ];
     for (const name of expected) {
       expect(names).toContain(name);

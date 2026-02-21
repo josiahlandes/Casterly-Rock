@@ -71,6 +71,7 @@ import type { EntropyMigrator, EntryForScoring, MemoryTier } from './memory/entr
 import type { MemoryVersioning } from './memory/memory-versioning.js';
 import type { TemporalInvalidation } from './memory/temporal-invalidation.js';
 import type { MemoryChecker, ExistingKnowledge } from './memory/checker.js';
+import type { SkillFilesManager } from './memory/skill-files.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -209,6 +210,8 @@ export interface AgentState {
   temporalInvalidation?: TemporalInvalidation;
   /** Memory checker (SAGE) — pre-storage validation guard */
   memoryChecker?: MemoryChecker;
+  /** Skill files manager (Letta) — persistent procedural memory */
+  skillFilesManager?: SkillFilesManager;
 }
 
 /**
@@ -2348,6 +2351,119 @@ before dream cycles to clean up stale memories.`,
     type: 'object',
     properties: {},
     required: [],
+  },
+};
+
+// ── Advanced Memory: Skill Files (Letta) ─────────────────────────────────────
+
+const LEARN_SKILL_SCHEMA: ToolSchema = {
+  name: 'learn_skill',
+  description: `Learn a new skill from a successful task execution. A skill captures a reusable procedural pattern with ordered steps, preconditions, and success criteria. The skill is stored persistently and can be searched, refined, and tracked over time.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: {
+        type: 'string',
+        description: 'Short skill name (e.g. "fix-typescript-errors").',
+      },
+      description: {
+        type: 'string',
+        description: 'What this skill does.',
+      },
+      steps: {
+        type: 'array',
+        description: 'Ordered steps to perform this skill.',
+        items: { type: 'string', description: 'A single step.' },
+      },
+      preconditions: {
+        type: 'array',
+        description: 'What must be true before applying this skill.',
+        items: { type: 'string', description: 'A precondition.' },
+      },
+      success_criteria: {
+        type: 'array',
+        description: 'How to verify the skill was applied correctly.',
+        items: { type: 'string', description: 'A success criterion.' },
+      },
+      tags: {
+        type: 'array',
+        description: 'Tags for discovery (e.g. "typescript", "testing").',
+        items: { type: 'string', description: 'A tag.' },
+      },
+    },
+    required: ['name', 'description', 'steps'],
+  },
+};
+
+const REFINE_SKILL_SCHEMA: ToolSchema = {
+  name: 'refine_skill',
+  description: `Refine an existing skill with updated steps, preconditions, success criteria, or description. Increments the skill version.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      skill_id: {
+        type: 'string',
+        description: 'The ID of the skill to refine.',
+      },
+      steps: {
+        type: 'array',
+        description: 'Updated ordered steps (replaces existing).',
+        items: { type: 'string', description: 'A single step.' },
+      },
+      preconditions: {
+        type: 'array',
+        description: 'Updated preconditions (replaces existing).',
+        items: { type: 'string', description: 'A precondition.' },
+      },
+      success_criteria: {
+        type: 'array',
+        description: 'Updated success criteria (replaces existing).',
+        items: { type: 'string', description: 'A success criterion.' },
+      },
+      description: {
+        type: 'string',
+        description: 'Updated description.',
+      },
+    },
+    required: ['skill_id'],
+  },
+};
+
+const SEARCH_SKILLS_SCHEMA: ToolSchema = {
+  name: 'search_skills',
+  description: `Search for skills by query (matches name, description, tags) or list all skills. Returns skill details including mastery level and usage stats.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Search query to match against skill name, description, and tags. Omit to list all skills.',
+      },
+      mastery: {
+        type: 'string',
+        description: 'Filter by mastery level: novice, competent, proficient, or expert.',
+      },
+    },
+    required: [],
+  },
+};
+
+const RECORD_SKILL_USE_SCHEMA: ToolSchema = {
+  name: 'record_skill_use',
+  description: `Record that a skill was used and whether the use was successful. Updates the skill's use count, success count, and mastery level.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      skill_id: {
+        type: 'string',
+        description: 'The ID of the skill that was used.',
+      },
+      success: {
+        type: 'boolean',
+        description: 'Whether the skill use was successful.',
+      },
+    },
+    required: ['skill_id', 'success'],
   },
 };
 
@@ -5581,6 +5697,163 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── learn_skill (Advanced Memory: Skill Files Letta) ─────────────────────
+
+  executors.set('learn_skill', async (call) => {
+    if (!state.skillFilesManager) {
+      return failureResult(call.id, 'Skill files manager not available.');
+    }
+
+    const name = requireString(call, 'name');
+    if ('error' in name) return name.error;
+    const description = requireString(call, 'description');
+    if ('error' in description) return description.error;
+
+    const rawSteps = call.input?.steps;
+    if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
+      return failureResult(call.id, 'steps must be a non-empty array of strings.');
+    }
+    const steps = rawSteps.filter((s): s is string => typeof s === 'string');
+
+    const rawPreconditions = call.input?.preconditions;
+    const preconditions = Array.isArray(rawPreconditions)
+      ? rawPreconditions.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const rawCriteria = call.input?.success_criteria;
+    const successCriteria = Array.isArray(rawCriteria)
+      ? rawCriteria.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const rawTags = call.input?.tags;
+    const tags = Array.isArray(rawTags)
+      ? rawTags.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const result = state.skillFilesManager.learn({
+      name: name.value,
+      description: description.value,
+      steps,
+      ...(preconditions ? { preconditions } : {}),
+      ...(successCriteria ? { successCriteria } : {}),
+      ...(tags ? { tags } : {}),
+    });
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Failed to learn skill.');
+    }
+
+    return successResult(call.id, `Skill learned: **${name.value}** (${result.skillId})`, config.maxOutputChars);
+  });
+
+  // ── refine_skill (Advanced Memory: Skill Files Letta) ──────────────────
+
+  executors.set('refine_skill', async (call) => {
+    if (!state.skillFilesManager) {
+      return failureResult(call.id, 'Skill files manager not available.');
+    }
+
+    const skillId = requireString(call, 'skill_id');
+    if ('error' in skillId) return skillId.error;
+
+    const rawSteps = call.input?.steps;
+    const steps = Array.isArray(rawSteps)
+      ? rawSteps.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const rawPreconditions = call.input?.preconditions;
+    const preconditions = Array.isArray(rawPreconditions)
+      ? rawPreconditions.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const rawCriteria = call.input?.success_criteria;
+    const successCriteria = Array.isArray(rawCriteria)
+      ? rawCriteria.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const descUpdate = optionalString(call, 'description');
+
+    const result = state.skillFilesManager.refine(skillId.value, {
+      ...(steps ? { steps } : {}),
+      ...(preconditions ? { preconditions } : {}),
+      ...(successCriteria ? { successCriteria } : {}),
+      ...(descUpdate ? { description: descUpdate } : {}),
+    });
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Failed to refine skill.');
+    }
+
+    const skill = state.skillFilesManager.getById(skillId.value);
+    return successResult(call.id, `Skill refined: **${skill?.name ?? skillId.value}** v${skill?.version ?? '?'}`, config.maxOutputChars);
+  });
+
+  // ── search_skills (Advanced Memory: Skill Files Letta) ─────────────────
+
+  executors.set('search_skills', async (call) => {
+    if (!state.skillFilesManager) {
+      return failureResult(call.id, 'Skill files manager not available.');
+    }
+
+    const query = optionalString(call, 'query');
+    const mastery = optionalString(call, 'mastery');
+
+    let skills = query
+      ? state.skillFilesManager.search(query)
+      : [...state.skillFilesManager.getAll()];
+
+    if (mastery) {
+      skills = skills.filter((s) => s.mastery === mastery);
+    }
+
+    if (skills.length === 0) {
+      return successResult(call.id, 'No skills found.', config.maxOutputChars);
+    }
+
+    const lines = [`## Skills (${skills.length} found)`, ''];
+    for (const s of skills.slice(0, 20)) {
+      const rate = s.useCount > 0 ? `${((s.successCount / s.useCount) * 100).toFixed(0)}%` : 'N/A';
+      lines.push(`### ${s.name} (${s.id})`);
+      lines.push(`- **Mastery:** ${s.mastery} | **Uses:** ${s.useCount} | **Success rate:** ${rate} | **Version:** v${s.version}`);
+      lines.push(`- **Description:** ${s.description}`);
+      lines.push(`- **Steps:** ${s.steps.length} | **Tags:** ${s.tags.join(', ') || 'none'}`);
+      lines.push('');
+    }
+    if (skills.length > 20) {
+      lines.push(`... and ${skills.length - 20} more skills.`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── record_skill_use (Advanced Memory: Skill Files Letta) ──────────────
+
+  executors.set('record_skill_use', async (call) => {
+    if (!state.skillFilesManager) {
+      return failureResult(call.id, 'Skill files manager not available.');
+    }
+
+    const skillId = requireString(call, 'skill_id');
+    if ('error' in skillId) return skillId.error;
+
+    const rawSuccess = call.input?.success;
+    if (typeof rawSuccess !== 'boolean') {
+      return failureResult(call.id, 'success must be a boolean.');
+    }
+
+    const ok = state.skillFilesManager.recordUse(skillId.value, rawSuccess);
+    if (!ok) {
+      return failureResult(call.id, `Skill not found: ${skillId.value}`);
+    }
+
+    const skill = state.skillFilesManager.getById(skillId.value);
+    return successResult(
+      call.id,
+      `Recorded ${rawSuccess ? 'successful' : 'failed'} use of **${skill?.name ?? skillId.value}** (mastery: ${skill?.mastery ?? 'unknown'}, uses: ${skill?.useCount ?? 0})`,
+      config.maxOutputChars,
+    );
+  });
+
   // ── check_memory (Advanced Memory: Checker Pattern SAGE) ────────────────
 
   executors.set('check_memory', async (call) => {
@@ -5767,6 +6040,11 @@ export function buildAgentToolkit(
     REGISTER_TEMPORAL_SCHEMA,
     CHECK_FRESHNESS_SCHEMA,
     SWEEP_EXPIRED_SCHEMA,
+    // Advanced Memory: Skill Files (Letta)
+    LEARN_SKILL_SCHEMA,
+    REFINE_SKILL_SCHEMA,
+    SEARCH_SKILLS_SCHEMA,
+    RECORD_SKILL_USE_SCHEMA,
     // Advanced Memory: Checker Pattern (SAGE)
     CHECK_MEMORY_SCHEMA,
   ];
@@ -5915,6 +6193,11 @@ export {
   REGISTER_TEMPORAL_SCHEMA,
   CHECK_FRESHNESS_SCHEMA,
   SWEEP_EXPIRED_SCHEMA,
+  // Advanced Memory: Skill Files (Letta)
+  LEARN_SKILL_SCHEMA,
+  REFINE_SKILL_SCHEMA,
+  SEARCH_SKILLS_SCHEMA,
+  RECORD_SKILL_USE_SCHEMA,
   // Advanced Memory: Checker Pattern (SAGE)
   CHECK_MEMORY_SCHEMA,
 };

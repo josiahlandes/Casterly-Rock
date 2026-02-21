@@ -47,6 +47,7 @@ import type { MemoryVersioning } from '../memory/memory-versioning.js';
 import type { MemoryEvolution } from '../memory/memory-evolution.js';
 import type { TemporalInvalidation } from '../memory/temporal-invalidation.js';
 import type { MemoryChecker } from '../memory/checker.js';
+import type { SkillFilesManager } from '../memory/skill-files.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -153,6 +154,10 @@ export interface DreamOutcome {
   temporalNewlyExpired: number;
   temporalDeletionCandidates: number;
 
+  /** Skill files: total skills / expert-level skills */
+  skillsTotal: number;
+  skillsExpert: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -221,6 +226,7 @@ export class DreamCycleRunner {
     memoryEvolution?: MemoryEvolution,
     temporalInvalidation?: TemporalInvalidation,
     memoryChecker?: MemoryChecker,
+    skillFilesManager?: SkillFilesManager,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -258,6 +264,8 @@ export class DreamCycleRunner {
         temporalSwept: 0,
         temporalNewlyExpired: 0,
         temporalDeletionCandidates: 0,
+        skillsTotal: 0,
+        skillsExpert: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -567,6 +575,20 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Temporal invalidation failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('temporalInvalidation');
+        }
+      }
+
+      // Phase 16: Skill files summary (Advanced Memory: Letta)
+      if (skillFilesManager && skillFilesManager.count() > 0) {
+        try {
+          const allSkills = skillFilesManager.getAll();
+          outcome.skillsTotal = allSkills.length;
+          outcome.skillsExpert = allSkills.filter((s) => s.mastery === 'expert').length;
+          outcome.phasesCompleted.push('skillFiles');
+          tracer.log('dream', 'info', `Skill files: ${outcome.skillsTotal} total, ${outcome.skillsExpert} expert-level`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Skill files summary failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('skillFiles');
         }
       }
 
