@@ -70,6 +70,7 @@ import type { AudnConsolidator } from './memory/audn-consolidator.js';
 import type { EntropyMigrator, EntryForScoring, MemoryTier } from './memory/entropy-migrator.js';
 import type { MemoryVersioning } from './memory/memory-versioning.js';
 import type { TemporalInvalidation } from './memory/temporal-invalidation.js';
+import type { MemoryChecker, ExistingKnowledge } from './memory/checker.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -206,6 +207,8 @@ export interface AgentState {
   memoryVersioning?: MemoryVersioning;
   /** Temporal invalidation (Mem0) — TTL-based memory expiry */
   temporalInvalidation?: TemporalInvalidation;
+  /** Memory checker (SAGE) — pre-storage validation guard */
+  memoryChecker?: MemoryChecker;
 }
 
 /**
@@ -2345,6 +2348,49 @@ before dream cycles to clean up stale memories.`,
     type: 'object',
     properties: {},
     required: [],
+  },
+};
+
+// ── Advanced Memory: Checker Pattern (SAGE) ──────────────────────────────────
+
+const CHECK_MEMORY_SCHEMA: ToolSchema = {
+  name: 'check_memory',
+  description: `Validate a memory candidate before storage. Runs five checks:
+
+1. **Consistency** — Does this contradict existing knowledge?
+2. **Relevance** — Is this worth storing? (entropy/uniqueness)
+3. **Duplicate** — Is this already known? (Jaccard similarity)
+4. **Freshness** — Are date references still timely?
+5. **Safety** — Does this contain sensitive data (passwords, keys, PII)?
+
+Returns a composite verdict (approved/rejected) with per-check results and scores.
+Provide existing knowledge entries for consistency and duplicate checks.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        description: 'The memory content to validate.',
+      },
+      category: {
+        type: 'string',
+        description: 'Optional category for the memory (e.g. "fact", "observation", "opinion").',
+      },
+      existing: {
+        type: 'array',
+        description: 'Existing knowledge entries to check against for consistency and duplicates.',
+        items: {
+          type: 'object',
+          description: 'An existing knowledge entry.',
+          properties: {
+            id: { type: 'string', description: 'Entry ID' },
+            content: { type: 'string', description: 'Entry content' },
+          },
+          required: ['id', 'content'],
+        },
+      },
+    },
+    required: ['content'],
   },
 };
 
@@ -5535,6 +5581,51 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── check_memory (Advanced Memory: Checker Pattern SAGE) ────────────────
+
+  executors.set('check_memory', async (call) => {
+    if (!state.memoryChecker) {
+      return failureResult(call.id, 'Memory checker not available.');
+    }
+
+    const content = requireString(call, 'content');
+    if ('error' in content) return content.error;
+    const category = optionalString(call, 'category');
+
+    // Parse existing knowledge entries
+    const rawExisting = call.input?.existing;
+    const existing: ExistingKnowledge[] = [];
+    if (Array.isArray(rawExisting)) {
+      for (const item of rawExisting) {
+        if (typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).id === 'string' && typeof (item as Record<string, unknown>).content === 'string') {
+          existing.push({ id: (item as Record<string, unknown>).id as string, content: (item as Record<string, unknown>).content as string });
+        }
+      }
+    }
+
+    const verdict = state.memoryChecker.check(
+      { content: content.value, ...(category ? { category } : {}) },
+      existing,
+    );
+
+    const lines = [
+      `## Memory Check: ${verdict.approved ? 'APPROVED' : 'REJECTED'}`,
+      '',
+      `**Composite score:** ${(verdict.compositeScore * 100).toFixed(0)}%`,
+      `**Summary:** ${verdict.summary}`,
+      '',
+      '| Check | Verdict | Score | Explanation |',
+      '|-------|---------|-------|-------------|',
+    ];
+
+    for (const c of verdict.checks) {
+      const icon = c.verdict === 'pass' ? 'pass' : c.verdict === 'warn' ? 'WARN' : 'FAIL';
+      lines.push(`| ${c.check} | ${icon} | ${(c.score * 100).toFixed(0)}% | ${c.explanation} |`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   return executors;
 }
 
@@ -5676,6 +5767,8 @@ export function buildAgentToolkit(
     REGISTER_TEMPORAL_SCHEMA,
     CHECK_FRESHNESS_SCHEMA,
     SWEEP_EXPIRED_SCHEMA,
+    // Advanced Memory: Checker Pattern (SAGE)
+    CHECK_MEMORY_SCHEMA,
   ];
 
   // Build all executors
@@ -5822,4 +5915,6 @@ export {
   REGISTER_TEMPORAL_SCHEMA,
   CHECK_FRESHNESS_SCHEMA,
   SWEEP_EXPIRED_SCHEMA,
+  // Advanced Memory: Checker Pattern (SAGE)
+  CHECK_MEMORY_SCHEMA,
 };

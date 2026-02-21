@@ -46,6 +46,7 @@ import type { EntropyMigrator } from '../memory/entropy-migrator.js';
 import type { MemoryVersioning } from '../memory/memory-versioning.js';
 import type { MemoryEvolution } from '../memory/memory-evolution.js';
 import type { TemporalInvalidation } from '../memory/temporal-invalidation.js';
+import type { MemoryChecker } from '../memory/checker.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -219,6 +220,7 @@ export class DreamCycleRunner {
     memoryVersioning?: MemoryVersioning,
     memoryEvolution?: MemoryEvolution,
     temporalInvalidation?: TemporalInvalidation,
+    memoryChecker?: MemoryChecker,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();

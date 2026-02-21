@@ -92,9 +92,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 87 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(87);
-    expect(toolkit.toolNames).toHaveLength(87);
+  it('exposes all 88 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(88);
+    expect(toolkit.toolNames).toHaveLength(88);
   });
 
   it('includes all expected tool names', () => {

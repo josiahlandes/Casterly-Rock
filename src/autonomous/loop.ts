@@ -76,6 +76,8 @@ import { createEntropyMigrator, type EntropyMigrator } from './memory/entropy-mi
 import { createMemoryVersioning, type MemoryVersioning } from './memory/memory-versioning.js';
 // Advanced Memory: Temporal Invalidation (Mem0)
 import { createTemporalInvalidation, type TemporalInvalidation } from './memory/temporal-invalidation.js';
+// Advanced Memory: Checker Pattern (SAGE)
+import { createMemoryChecker, type MemoryChecker } from './memory/checker.js';
 
 // ============================================================================
 // CONSTANTS
@@ -212,6 +214,8 @@ export class AutonomousLoop {
   private memoryVersioning: MemoryVersioning;
   // Advanced Memory: Temporal Invalidation (Mem0)
   private temporalInvalidation: TemporalInvalidation;
+  // Advanced Memory: Checker Pattern (SAGE)
+  private memoryChecker: MemoryChecker;
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
@@ -321,6 +325,9 @@ export class AutonomousLoop {
 
     // Advanced Memory: Temporal Invalidation (Mem0) — stateless, no load/save needed
     this.temporalInvalidation = createTemporalInvalidation();
+
+    // Advanced Memory: Checker Pattern (SAGE) — stateless, no load/save needed
+    this.memoryChecker = createMemoryChecker();
   }
 
   /**
@@ -773,6 +780,8 @@ export class AutonomousLoop {
         memoryVersioning: this.memoryVersioning,
         // Advanced Memory: Temporal Invalidation (Mem0)
         temporalInvalidation: this.temporalInvalidation,
+        // Advanced Memory: Checker Pattern (SAGE)
+        memoryChecker: this.memoryChecker,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -927,6 +936,7 @@ export class AutonomousLoop {
         this.memoryVersioning,
         this.memoryEvolution,
         this.temporalInvalidation,
+        this.memoryChecker,
       );
 
       this.lastDreamCycleDate = today;
