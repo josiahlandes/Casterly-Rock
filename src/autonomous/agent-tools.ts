@@ -6496,3 +6496,23 @@ export {
   // Advanced Memory: Checker Pattern (SAGE)
   CHECK_MEMORY_SCHEMA,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool Registry Re-exports
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The tool registry system splits tools into 14 categories with progressive
+// hydration support for small models. Import from here for backwards compat,
+// or from './tools/index.js' for the full registry API.
+
+export {
+  buildFilteredToolkit,
+  buildPresetToolkit,
+  hydrateCategories,
+  buildCompactManifest,
+  TOOL_MAP,
+  getCategoryTools,
+  TASK_CATEGORY_PRESETS,
+} from './tools/registry.js';
+
+export type { CategoryName, ToolCategory, ExecutorContext, ToolMapEntry } from './tools/index.js';
