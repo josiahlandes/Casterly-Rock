@@ -86,7 +86,8 @@ autonomous:
   enabled: false
 `);
     const config = await loadConfig(fp);
-    expect(config.enabled).toBe(false);
+    // Always active — no master switch (see docs/vision.md)
+    expect(config.enabled).toBe(true);
     expect(config.provider).toBe('ollama');
     expect(config.model).toBe('qwen3-coder-next:latest');
     expect(config.cycleIntervalMinutes).toBe(60);
