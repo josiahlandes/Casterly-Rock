@@ -82,6 +82,8 @@ import { createMemoryChecker, type MemoryChecker } from './memory/checker.js';
 import { createSkillFilesManager, type SkillFilesManager } from './memory/skill-files.js';
 // Advanced Memory: Concurrent Dream Processing (Letta)
 import { createConcurrentDreamExecutor, type ConcurrentDreamExecutor } from './memory/concurrent-dreams.js';
+// Advanced Memory: Graph Relational Memory (Mem0)
+import { createGraphMemory, type GraphMemory } from './memory/graph-memory.js';
 
 // ============================================================================
 // CONSTANTS
@@ -224,6 +226,8 @@ export class AutonomousLoop {
   private skillFilesManager: SkillFilesManager;
   // Advanced Memory: Concurrent Dream Processing (Letta)
   private concurrentDreamExecutor: ConcurrentDreamExecutor;
+  // Advanced Memory: Graph Relational Memory (Mem0)
+  private graphMemory: GraphMemory;
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
@@ -342,6 +346,9 @@ export class AutonomousLoop {
 
     // Advanced Memory: Concurrent Dream Processing (Letta) — stateless, no load/save
     this.concurrentDreamExecutor = createConcurrentDreamExecutor();
+
+    // Advanced Memory: Graph Relational Memory (Mem0) — stateful, needs load/save
+    this.graphMemory = createGraphMemory();
   }
 
   /**
@@ -442,6 +449,7 @@ export class AutonomousLoop {
       this.audnConsolidator.load(),
       this.memoryVersioning.load(),
       this.skillFilesManager.load(),
+      this.graphMemory.load(),
       ...this.visionStoreLoadOps(),
     ]);
   }
@@ -477,6 +485,7 @@ export class AutonomousLoop {
       this.audnConsolidator.save(),
       this.memoryVersioning.save(),
       this.skillFilesManager.save(),
+      this.graphMemory.save(),
       ...this.visionStoreSaveOps(),
     ]);
   }
@@ -802,6 +811,8 @@ export class AutonomousLoop {
         skillFilesManager: this.skillFilesManager,
         // Advanced Memory: Concurrent Dream Processing (Letta)
         concurrentDreamExecutor: this.concurrentDreamExecutor,
+        // Advanced Memory: Graph Relational Memory (Mem0)
+        graphMemory: this.graphMemory,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -959,6 +970,7 @@ export class AutonomousLoop {
         this.memoryChecker,
         this.skillFilesManager,
         this.concurrentDreamExecutor,
+        this.graphMemory,
       );
 
       this.lastDreamCycleDate = today;

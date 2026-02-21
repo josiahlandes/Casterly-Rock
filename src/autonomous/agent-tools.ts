@@ -73,6 +73,7 @@ import type { TemporalInvalidation } from './memory/temporal-invalidation.js';
 import type { MemoryChecker, ExistingKnowledge } from './memory/checker.js';
 import type { SkillFilesManager } from './memory/skill-files.js';
 import type { ConcurrentDreamExecutor } from './memory/concurrent-dreams.js';
+import type { GraphMemory, NodeType, EdgeType } from './memory/graph-memory.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -215,6 +216,8 @@ export interface AgentState {
   skillFilesManager?: SkillFilesManager;
   /** Concurrent dream executor (Letta) — parallel dream phase execution */
   concurrentDreamExecutor?: ConcurrentDreamExecutor;
+  /** Graph relational memory (Mem0) — entity-relationship knowledge graph */
+  graphMemory?: GraphMemory;
 }
 
 /**
@@ -2478,6 +2481,81 @@ const DREAM_CONCURRENCY_CONFIG_SCHEMA: ToolSchema = {
   inputSchema: {
     type: 'object',
     properties: {},
+    required: [],
+  },
+};
+
+// ── Advanced Memory: Graph Relational Memory (Mem0) ──────────────────────────
+
+const GRAPH_ADD_NODE_SCHEMA: ToolSchema = {
+  name: 'graph_add_node',
+  description: `Add or update an entity node in the knowledge graph. If a node with the same label+type already exists, its mention count is incremented. Node types: file, concept, person, tool, module, pattern.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      label: {
+        type: 'string',
+        description: 'Display label for the node (e.g. "loop.ts", "TypeScript", "Alice").',
+      },
+      node_type: {
+        type: 'string',
+        description: 'Node type: file, concept, person, tool, module, or pattern.',
+      },
+      memory_id: {
+        type: 'string',
+        description: 'Optional memory entry ID to associate with this node.',
+      },
+    },
+    required: ['label', 'node_type'],
+  },
+};
+
+const GRAPH_ADD_EDGE_SCHEMA: ToolSchema = {
+  name: 'graph_add_edge',
+  description: `Add or strengthen a relationship edge between two nodes in the knowledge graph. Both nodes must exist. If the edge already exists, its weight is strengthened. Edge types: depends_on, related_to, uses, modifies, contains, authored_by, tested_by.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      source_id: {
+        type: 'string',
+        description: 'Source node ID (format: "type:label-slug").',
+      },
+      target_id: {
+        type: 'string',
+        description: 'Target node ID (format: "type:label-slug").',
+      },
+      edge_type: {
+        type: 'string',
+        description: 'Relationship type: depends_on, related_to, uses, modifies, contains, authored_by, or tested_by.',
+      },
+      weight: {
+        type: 'number',
+        description: 'Initial edge weight (0.0-1.0, default 0.5).',
+      },
+    },
+    required: ['source_id', 'target_id', 'edge_type'],
+  },
+};
+
+const GRAPH_SEARCH_SCHEMA: ToolSchema = {
+  name: 'graph_search',
+  description: `Search the knowledge graph for nodes matching a query, or inspect a specific node's relationships and neighbors. Returns node details, connected edges, and neighbor list.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Search query to match against node labels. Omit to get graph summary.',
+      },
+      node_id: {
+        type: 'string',
+        description: 'Specific node ID to inspect (shows edges and neighbors).',
+      },
+      node_type: {
+        type: 'string',
+        description: 'Filter results by node type: file, concept, person, tool, module, or pattern.',
+      },
+    },
     required: [],
   },
 };
@@ -5902,6 +5980,163 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── graph_add_node (Advanced Memory: Graph Relational Memory Mem0) ──────
+
+  executors.set('graph_add_node', async (call) => {
+    if (!state.graphMemory) {
+      return failureResult(call.id, 'Graph memory not available.');
+    }
+
+    const label = requireString(call, 'label');
+    if ('error' in label) return label.error;
+    const nodeType = requireString(call, 'node_type');
+    if ('error' in nodeType) return nodeType.error;
+
+    const validTypes: NodeType[] = ['file', 'concept', 'person', 'tool', 'module', 'pattern'];
+    if (!validTypes.includes(nodeType.value as NodeType)) {
+      return failureResult(call.id, `Invalid node_type: "${nodeType.value}". Must be one of: ${validTypes.join(', ')}`);
+    }
+
+    const memoryId = optionalString(call, 'memory_id');
+
+    const node = state.graphMemory.addNode({
+      label: label.value,
+      type: nodeType.value as NodeType,
+      ...(memoryId ? { memoryId } : {}),
+    });
+
+    return successResult(
+      call.id,
+      `Node **${node.label}** (${node.id}) — type: ${node.type}, mentions: ${node.mentionCount}`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── graph_add_edge (Advanced Memory: Graph Relational Memory Mem0) ──────
+
+  executors.set('graph_add_edge', async (call) => {
+    if (!state.graphMemory) {
+      return failureResult(call.id, 'Graph memory not available.');
+    }
+
+    const sourceId = requireString(call, 'source_id');
+    if ('error' in sourceId) return sourceId.error;
+    const targetId = requireString(call, 'target_id');
+    if ('error' in targetId) return targetId.error;
+    const edgeType = requireString(call, 'edge_type');
+    if ('error' in edgeType) return edgeType.error;
+
+    const validEdgeTypes: EdgeType[] = ['depends_on', 'related_to', 'uses', 'modifies', 'contains', 'authored_by', 'tested_by'];
+    if (!validEdgeTypes.includes(edgeType.value as EdgeType)) {
+      return failureResult(call.id, `Invalid edge_type: "${edgeType.value}". Must be one of: ${validEdgeTypes.join(', ')}`);
+    }
+
+    const rawWeight = call.input?.weight;
+    const weight = typeof rawWeight === 'number' ? rawWeight : undefined;
+
+    const ok = state.graphMemory.addEdge({
+      sourceId: sourceId.value,
+      targetId: targetId.value,
+      type: edgeType.value as EdgeType,
+      ...(weight !== undefined ? { weight } : {}),
+    });
+
+    if (!ok) {
+      return failureResult(call.id, `Failed to add edge. Ensure both nodes exist and are different.`);
+    }
+
+    const sourceNode = state.graphMemory.getNode(sourceId.value);
+    const targetNode = state.graphMemory.getNode(targetId.value);
+    return successResult(
+      call.id,
+      `Edge added: **${sourceNode?.label ?? sourceId.value}** —[${edgeType.value}]→ **${targetNode?.label ?? targetId.value}**`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── graph_search (Advanced Memory: Graph Relational Memory Mem0) ────────
+
+  executors.set('graph_search', async (call) => {
+    if (!state.graphMemory) {
+      return failureResult(call.id, 'Graph memory not available.');
+    }
+
+    const query = optionalString(call, 'query');
+    const nodeId = optionalString(call, 'node_id');
+    const nodeType = optionalString(call, 'node_type');
+
+    // Inspect a specific node
+    if (nodeId) {
+      const node = state.graphMemory.getNode(nodeId);
+      if (!node) {
+        return failureResult(call.id, `Node not found: ${nodeId}`);
+      }
+
+      const edges = state.graphMemory.getEdgesForNode(nodeId);
+      const neighbors = state.graphMemory.getNeighbors(nodeId);
+
+      const lines = [
+        `## Node: ${node.label} (${node.id})`,
+        '',
+        `- **Type:** ${node.type}`,
+        `- **Mentions:** ${node.mentionCount}`,
+        `- **First seen:** ${node.firstSeen}`,
+        `- **Last seen:** ${node.lastSeen}`,
+        `- **Memory IDs:** ${node.memoryIds.length > 0 ? node.memoryIds.join(', ') : 'none'}`,
+        '',
+        `### Edges (${edges.length})`,
+        '',
+      ];
+
+      for (const e of edges.slice(0, 20)) {
+        const other = e.sourceId === nodeId ? e.targetId : e.sourceId;
+        const otherNode = state.graphMemory.getNode(other);
+        const dir = e.sourceId === nodeId ? '→' : '←';
+        lines.push(`- ${dir} [${e.type}] **${otherNode?.label ?? other}** (weight: ${e.weight.toFixed(2)})`);
+      }
+      if (edges.length > 20) lines.push(`- ... and ${edges.length - 20} more`);
+
+      lines.push('', `### Neighbors (${neighbors.length})`, '');
+      for (const n of neighbors.slice(0, 20)) {
+        lines.push(`- **${n.label}** (${n.type}, mentions: ${n.mentionCount})`);
+      }
+      if (neighbors.length > 20) lines.push(`- ... and ${neighbors.length - 20} more`);
+
+      return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+    }
+
+    // Search or list
+    let nodes = query
+      ? state.graphMemory.searchNodes(query)
+      : [...state.graphMemory.getAllNodes()];
+
+    if (nodeType) {
+      nodes = nodes.filter((n) => n.type === nodeType);
+    }
+
+    if (nodes.length === 0 && !query) {
+      return successResult(
+        call.id,
+        `## Graph Summary\n\n- **Nodes:** ${state.graphMemory.nodeCount()}\n- **Edges:** ${state.graphMemory.edgeCount()}\n\nGraph is empty.`,
+        config.maxOutputChars,
+      );
+    }
+
+    const lines = [
+      `## Graph Search${query ? `: "${query}"` : ''} (${nodes.length} nodes)`,
+      '',
+      `**Total graph:** ${state.graphMemory.nodeCount()} nodes, ${state.graphMemory.edgeCount()} edges`,
+      '',
+    ];
+
+    for (const n of nodes.slice(0, 20)) {
+      lines.push(`- **${n.label}** (${n.id}) — ${n.type}, mentions: ${n.mentionCount}`);
+    }
+    if (nodes.length > 20) lines.push(`- ... and ${nodes.length - 20} more`);
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   // ── check_memory (Advanced Memory: Checker Pattern SAGE) ────────────────
 
   executors.set('check_memory', async (call) => {
@@ -6095,6 +6330,10 @@ export function buildAgentToolkit(
     RECORD_SKILL_USE_SCHEMA,
     // Advanced Memory: Concurrent Dream Processing (Letta)
     DREAM_CONCURRENCY_CONFIG_SCHEMA,
+    // Advanced Memory: Graph Relational Memory (Mem0)
+    GRAPH_ADD_NODE_SCHEMA,
+    GRAPH_ADD_EDGE_SCHEMA,
+    GRAPH_SEARCH_SCHEMA,
     // Advanced Memory: Checker Pattern (SAGE)
     CHECK_MEMORY_SCHEMA,
   ];
@@ -6250,6 +6489,10 @@ export {
   RECORD_SKILL_USE_SCHEMA,
   // Advanced Memory: Concurrent Dream Processing (Letta)
   DREAM_CONCURRENCY_CONFIG_SCHEMA,
+  // Advanced Memory: Graph Relational Memory (Mem0)
+  GRAPH_ADD_NODE_SCHEMA,
+  GRAPH_ADD_EDGE_SCHEMA,
+  GRAPH_SEARCH_SCHEMA,
   // Advanced Memory: Checker Pattern (SAGE)
   CHECK_MEMORY_SCHEMA,
 };

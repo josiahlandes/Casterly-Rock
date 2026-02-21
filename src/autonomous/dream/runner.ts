@@ -49,6 +49,7 @@ import type { TemporalInvalidation } from '../memory/temporal-invalidation.js';
 import type { MemoryChecker } from '../memory/checker.js';
 import type { SkillFilesManager } from '../memory/skill-files.js';
 import type { ConcurrentDreamExecutor } from '../memory/concurrent-dreams.js';
+import type { GraphMemory } from '../memory/graph-memory.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -159,6 +160,11 @@ export interface DreamOutcome {
   skillsTotal: number;
   skillsExpert: number;
 
+  /** Graph memory: node and edge counts */
+  graphNodes: number;
+  graphEdges: number;
+  graphComponents: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -229,6 +235,7 @@ export class DreamCycleRunner {
     memoryChecker?: MemoryChecker,
     skillFilesManager?: SkillFilesManager,
     concurrentDreamExecutor?: ConcurrentDreamExecutor,
+    graphMemory?: GraphMemory,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -268,6 +275,9 @@ export class DreamCycleRunner {
         temporalDeletionCandidates: 0,
         skillsTotal: 0,
         skillsExpert: 0,
+        graphNodes: 0,
+        graphEdges: 0,
+        graphComponents: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -591,6 +601,21 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Skill files summary failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('skillFiles');
+        }
+      }
+
+      // Phase 17: Graph memory summary (Advanced Memory: Mem0)
+      if (graphMemory && graphMemory.nodeCount() > 0) {
+        try {
+          outcome.graphNodes = graphMemory.nodeCount();
+          outcome.graphEdges = graphMemory.edgeCount();
+          outcome.graphComponents = graphMemory.getConnectedComponents().length;
+          await graphMemory.save();
+          outcome.phasesCompleted.push('graphMemory');
+          tracer.log('dream', 'info', `Graph memory: ${outcome.graphNodes} nodes, ${outcome.graphEdges} edges, ${outcome.graphComponents} components`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Graph memory summary failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('graphMemory');
         }
       }
 
