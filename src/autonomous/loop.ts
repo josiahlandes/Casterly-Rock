@@ -64,6 +64,27 @@ import { createPromptEvolution, type PromptEvolution } from './dream/prompt-evol
 import { createTrainingExtractor, type TrainingExtractor } from './dream/training-extractor.js';
 import { createLoraTrainer, type LoraTrainer } from './dream/lora-trainer.js';
 
+// Advanced Memory: Zettelkasten Link Network (A-MEM)
+import { createLinkNetwork, type LinkNetwork } from './memory/link-network.js';
+// Advanced Memory: Memory Evolution (A-MEM)
+import { createMemoryEvolution, type MemoryEvolution } from './memory/memory-evolution.js';
+// Advanced Memory: AUDN Consolidation Cycle (Mem0)
+import { createAudnConsolidator, type AudnConsolidator } from './memory/audn-consolidator.js';
+// Advanced Memory: Entropy-Based Tier Migration (SAGE)
+import { createEntropyMigrator, type EntropyMigrator } from './memory/entropy-migrator.js';
+// Advanced Memory: Git-Backed Memory Versioning (Letta)
+import { createMemoryVersioning, type MemoryVersioning } from './memory/memory-versioning.js';
+// Advanced Memory: Temporal Invalidation (Mem0)
+import { createTemporalInvalidation, type TemporalInvalidation } from './memory/temporal-invalidation.js';
+// Advanced Memory: Checker Pattern (SAGE)
+import { createMemoryChecker, type MemoryChecker } from './memory/checker.js';
+// Advanced Memory: Skill Files (Letta)
+import { createSkillFilesManager, type SkillFilesManager } from './memory/skill-files.js';
+// Advanced Memory: Concurrent Dream Processing (Letta)
+import { createConcurrentDreamExecutor, type ConcurrentDreamExecutor } from './memory/concurrent-dreams.js';
+// Advanced Memory: Graph Relational Memory (Mem0)
+import { createGraphMemory, type GraphMemory } from './memory/graph-memory.js';
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -187,6 +208,27 @@ export class AutonomousLoop {
   private trainingExtractor: TrainingExtractor | null = null;
   private loraTrainer: LoraTrainer | null = null;
 
+  // Advanced Memory: Zettelkasten Link Network (A-MEM)
+  private linkNetwork: LinkNetwork;
+  // Advanced Memory: Memory Evolution (A-MEM)
+  private memoryEvolution: MemoryEvolution;
+  // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+  private audnConsolidator: AudnConsolidator;
+  // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+  private entropyMigrator: EntropyMigrator;
+  // Advanced Memory: Git-Backed Memory Versioning (Letta)
+  private memoryVersioning: MemoryVersioning;
+  // Advanced Memory: Temporal Invalidation (Mem0)
+  private temporalInvalidation: TemporalInvalidation;
+  // Advanced Memory: Checker Pattern (SAGE)
+  private memoryChecker: MemoryChecker;
+  // Advanced Memory: Skill Files (Letta)
+  private skillFilesManager: SkillFilesManager;
+  // Advanced Memory: Concurrent Dream Processing (Letta)
+  private concurrentDreamExecutor: ConcurrentDreamExecutor;
+  // Advanced Memory: Graph Relational Memory (Mem0)
+  private graphMemory: GraphMemory;
+
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
   private concurrentProvider: import('../providers/concurrent.js').ConcurrentProvider | null = null;
@@ -277,6 +319,36 @@ export class AutonomousLoop {
       this.trainingExtractor = createTrainingExtractor();
       this.loraTrainer = createLoraTrainer();
     }
+
+    // Advanced Memory: Zettelkasten Link Network + Memory Evolution (A-MEM)
+    this.linkNetwork = createLinkNetwork();
+    this.memoryEvolution = createMemoryEvolution();
+    // Couple: evolution operations auto-create links
+    this.memoryEvolution.setLinkNetwork(this.linkNetwork);
+
+    // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+    this.audnConsolidator = createAudnConsolidator();
+
+    // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+    this.entropyMigrator = createEntropyMigrator();
+
+    // Advanced Memory: Git-Backed Memory Versioning (Letta)
+    this.memoryVersioning = createMemoryVersioning();
+
+    // Advanced Memory: Temporal Invalidation (Mem0) — stateless, no load/save needed
+    this.temporalInvalidation = createTemporalInvalidation();
+
+    // Advanced Memory: Checker Pattern (SAGE) — stateless, no load/save needed
+    this.memoryChecker = createMemoryChecker();
+
+    // Advanced Memory: Skill Files (Letta) — stateful, needs load/save
+    this.skillFilesManager = createSkillFilesManager();
+
+    // Advanced Memory: Concurrent Dream Processing (Letta) — stateless, no load/save
+    this.concurrentDreamExecutor = createConcurrentDreamExecutor();
+
+    // Advanced Memory: Graph Relational Memory (Mem0) — stateful, needs load/save
+    this.graphMemory = createGraphMemory();
   }
 
   /**
@@ -372,6 +444,12 @@ export class AutonomousLoop {
       this.issueLog.load(),
       this.journal.load(),
       this.loadDreamMeta(),
+      this.linkNetwork.load(),
+      this.memoryEvolution.load(),
+      this.audnConsolidator.load(),
+      this.memoryVersioning.load(),
+      this.skillFilesManager.load(),
+      this.graphMemory.load(),
       ...this.visionStoreLoadOps(),
     ]);
   }
@@ -402,6 +480,12 @@ export class AutonomousLoop {
       this.goalStack.save(),
       this.issueLog.save(),
       this.saveDreamMeta(),
+      this.linkNetwork.save(),
+      this.memoryEvolution.save(),
+      this.audnConsolidator.save(),
+      this.memoryVersioning.save(),
+      this.skillFilesManager.save(),
+      this.graphMemory.save(),
       ...this.visionStoreSaveOps(),
     ]);
   }
@@ -710,6 +794,25 @@ export class AutonomousLoop {
         // Communication
         ...(this.messagePolicy ? { messagePolicy: this.messagePolicy } : {}),
         ...(this.messageDelivery ? { messageDelivery: this.messageDelivery } : {}),
+        // Advanced Memory: Zettelkasten + Evolution (A-MEM)
+        linkNetwork: this.linkNetwork,
+        memoryEvolution: this.memoryEvolution,
+        // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+        audnConsolidator: this.audnConsolidator,
+        // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+        entropyMigrator: this.entropyMigrator,
+        // Advanced Memory: Git-Backed Memory Versioning (Letta)
+        memoryVersioning: this.memoryVersioning,
+        // Advanced Memory: Temporal Invalidation (Mem0)
+        temporalInvalidation: this.temporalInvalidation,
+        // Advanced Memory: Checker Pattern (SAGE)
+        memoryChecker: this.memoryChecker,
+        // Advanced Memory: Skill Files (Letta)
+        skillFilesManager: this.skillFilesManager,
+        // Advanced Memory: Concurrent Dream Processing (Letta)
+        concurrentDreamExecutor: this.concurrentDreamExecutor,
+        // Advanced Memory: Graph Relational Memory (Mem0)
+        graphMemory: this.graphMemory,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -858,6 +961,16 @@ export class AutonomousLoop {
         this.trainingExtractor ?? undefined,
         this.loraTrainer ?? undefined,
         this.journal,
+        this.linkNetwork,
+        this.audnConsolidator,
+        this.entropyMigrator,
+        this.memoryVersioning,
+        this.memoryEvolution,
+        this.temporalInvalidation,
+        this.memoryChecker,
+        this.skillFilesManager,
+        this.concurrentDreamExecutor,
+        this.graphMemory,
       );
 
       this.lastDreamCycleDate = today;

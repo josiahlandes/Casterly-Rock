@@ -40,6 +40,16 @@ import type { PromptEvolution } from './prompt-evolution.js';
 import type { TrainingExtractor } from './training-extractor.js';
 import type { LoraTrainer } from './lora-trainer.js';
 import type { Journal } from '../journal.js';
+import type { LinkNetwork } from '../memory/link-network.js';
+import type { AudnConsolidator } from '../memory/audn-consolidator.js';
+import type { EntropyMigrator } from '../memory/entropy-migrator.js';
+import type { MemoryVersioning } from '../memory/memory-versioning.js';
+import type { MemoryEvolution } from '../memory/memory-evolution.js';
+import type { TemporalInvalidation } from '../memory/temporal-invalidation.js';
+import type { MemoryChecker } from '../memory/checker.js';
+import type { SkillFilesManager } from '../memory/skill-files.js';
+import type { ConcurrentDreamExecutor } from '../memory/concurrent-dreams.js';
+import type { GraphMemory } from '../memory/graph-memory.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -120,6 +130,41 @@ export interface DreamOutcome {
   /** Number of training examples extracted (Vision Tier 3) */
   trainingExamplesExtracted: number;
 
+  /** Number of weak memory links pruned by decay (Advanced Memory) */
+  linksPruned: number;
+
+  /** AUDN consolidation: candidates processed / added / updated / deleted / skipped */
+  audnProcessed: number;
+  audnAdded: number;
+  audnUpdated: number;
+  audnDeleted: number;
+  audnSkipped: number;
+
+  /** Entropy tier migration: entries evaluated / promotions / demotions */
+  entropyEvaluated: number;
+  entropyPromotions: number;
+  entropyDemotions: number;
+
+  /** Whether a memory snapshot was taken */
+  snapshotTaken: boolean;
+
+  /** Memory evolution: total events recorded since last dream cycle */
+  evolutionEventsLogged: number;
+
+  /** Temporal invalidation: entries swept / newly expired / deletion candidates */
+  temporalSwept: number;
+  temporalNewlyExpired: number;
+  temporalDeletionCandidates: number;
+
+  /** Skill files: total skills / expert-level skills */
+  skillsTotal: number;
+  skillsExpert: number;
+
+  /** Graph memory: node and edge counts */
+  graphNodes: number;
+  graphEdges: number;
+  graphComponents: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -181,6 +226,16 @@ export class DreamCycleRunner {
     trainingExtractor?: TrainingExtractor,
     loraTrainer?: LoraTrainer,
     journal?: Journal,
+    linkNetwork?: LinkNetwork,
+    audnConsolidator?: AudnConsolidator,
+    entropyMigrator?: EntropyMigrator,
+    memoryVersioning?: MemoryVersioning,
+    memoryEvolution?: MemoryEvolution,
+    temporalInvalidation?: TemporalInvalidation,
+    memoryChecker?: MemoryChecker,
+    skillFilesManager?: SkillFilesManager,
+    concurrentDreamExecutor?: ConcurrentDreamExecutor,
+    graphMemory?: GraphMemory,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -204,6 +259,25 @@ export class DreamCycleRunner {
         challengesPassed: 0,
         promptEvolutionRan: false,
         trainingExamplesExtracted: 0,
+        linksPruned: 0,
+        audnProcessed: 0,
+        audnAdded: 0,
+        audnUpdated: 0,
+        audnDeleted: 0,
+        audnSkipped: 0,
+        entropyEvaluated: 0,
+        entropyPromotions: 0,
+        entropyDemotions: 0,
+        snapshotTaken: false,
+        evolutionEventsLogged: 0,
+        temporalSwept: 0,
+        temporalNewlyExpired: 0,
+        temporalDeletionCandidates: 0,
+        skillsTotal: 0,
+        skillsExpert: 0,
+        graphNodes: 0,
+        graphEdges: 0,
+        graphComponents: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -395,6 +469,154 @@ export class DreamCycleRunner {
       } catch (err) {
         tracer.log('dream', 'warn', `Retrospective failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('writeRetrospective');
+      }
+
+      // Phase 10: Link network decay (Advanced Memory: Zettelkasten A-MEM)
+      if (linkNetwork) {
+        try {
+          outcome.linksPruned = linkNetwork.applyDecay();
+          if (outcome.linksPruned > 0 || linkNetwork.count() > 0) {
+            await linkNetwork.save();
+          }
+          outcome.phasesCompleted.push('linkDecay');
+          tracer.log('dream', 'info', `Link decay: ${outcome.linksPruned} weak links pruned, ${linkNetwork.count()} remaining`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Link decay failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('linkDecay');
+        }
+      }
+
+      // Phase 11: AUDN consolidation (Advanced Memory: Mem0)
+      if (audnConsolidator && audnConsolidator.queueSize() > 0) {
+        try {
+          // Build existing memories map from crystals (via context manager cold tier)
+          // For now, run consolidation against an empty map — the AUDN decision
+          // engine still produces meaningful Add decisions for novel content,
+          // and the dream cycle caller can supply richer maps in the future.
+          const existingMemories = new Map<string, string>();
+
+          // If we have a context manager, try to populate from crystal store
+          // entries available in state. The crystal prompt is a reasonable proxy.
+          // (Full integration with crystal store would require passing it here.)
+
+          const report = audnConsolidator.consolidate(existingMemories);
+          outcome.audnProcessed = report.processed;
+          outcome.audnAdded = report.added;
+          outcome.audnUpdated = report.updated;
+          outcome.audnDeleted = report.deleted;
+          outcome.audnSkipped = report.skipped;
+
+          await audnConsolidator.save();
+          outcome.phasesCompleted.push('audnConsolidation');
+          tracer.log('dream', 'info', `AUDN consolidation: ${report.processed} candidates → ${report.added} add, ${report.updated} update, ${report.deleted} delete, ${report.skipped} skip`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `AUDN consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('audnConsolidation');
+        }
+      }
+
+      // Phase 12: Entropy-based tier migration evaluation (Advanced Memory: SAGE)
+      if (entropyMigrator && contextManager) {
+        try {
+          // Build entries for scoring from warm tier (the most actionable tier for migration)
+          const warmEntries = contextManager.getWarmTierContents();
+          if (warmEntries.length > 0) {
+            const entries = warmEntries.map((e) => ({
+              id: e.key,
+              content: e.content,
+              currentTier: 'warm' as const,
+              accessCount: e.accessCount,
+              lastAccessedAt: e.addedAt,
+              createdAt: e.addedAt,
+            }));
+
+            const report = entropyMigrator.evaluate(entries);
+            outcome.entropyEvaluated = report.evaluated;
+            outcome.entropyPromotions = report.promotions;
+            outcome.entropyDemotions = report.demotions;
+
+            outcome.phasesCompleted.push('entropyTierMigration');
+            tracer.log('dream', 'info', `Entropy tier migration: ${report.evaluated} evaluated → ${report.promotions} promote, ${report.demotions} demote, ${report.stable} stable`);
+          } else {
+            outcome.phasesSkipped.push('entropyTierMigration');
+          }
+        } catch (err) {
+          tracer.log('dream', 'warn', `Entropy tier migration failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('entropyTierMigration');
+        }
+      }
+
+      // Phase 13: Memory snapshot (Advanced Memory: Git-Backed Versioning Letta)
+      if (memoryVersioning) {
+        try {
+          const snapshot = await memoryVersioning.createSnapshot({
+            trigger: 'dream_cycle',
+            message: `Dream cycle snapshot — ${outcome.phasesCompleted.length} phases completed`,
+          });
+          outcome.snapshotTaken = true;
+          await memoryVersioning.save();
+          outcome.phasesCompleted.push('memorySnapshot');
+          tracer.log('dream', 'info', `Memory snapshot created: ${snapshot.id}`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Memory snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('memorySnapshot');
+        }
+      }
+
+      // Phase 14: Memory evolution summary (Advanced Memory: A-MEM)
+      if (memoryEvolution) {
+        try {
+          outcome.evolutionEventsLogged = memoryEvolution.eventCount();
+          outcome.phasesCompleted.push('memoryEvolution');
+          tracer.log('dream', 'info', `Memory evolution: ${outcome.evolutionEventsLogged} events in log`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Memory evolution summary failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('memoryEvolution');
+        }
+      }
+
+      // Phase 15: Temporal invalidation sweep (Advanced Memory: Mem0)
+      if (temporalInvalidation && temporalInvalidation.count() > 0) {
+        try {
+          const report = temporalInvalidation.sweep();
+          outcome.temporalSwept = report.evaluated;
+          outcome.temporalNewlyExpired = report.newlyExpired;
+          outcome.temporalDeletionCandidates = report.readyForDeletion;
+          outcome.phasesCompleted.push('temporalInvalidation');
+          tracer.log('dream', 'info', `Temporal sweep: ${report.evaluated} entries, ${report.newlyExpired} newly expired, ${report.readyForDeletion} for deletion`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Temporal invalidation failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('temporalInvalidation');
+        }
+      }
+
+      // Phase 16: Skill files summary (Advanced Memory: Letta)
+      if (skillFilesManager && skillFilesManager.count() > 0) {
+        try {
+          const allSkills = skillFilesManager.getAll();
+          outcome.skillsTotal = allSkills.length;
+          outcome.skillsExpert = allSkills.filter((s) => s.mastery === 'expert').length;
+          outcome.phasesCompleted.push('skillFiles');
+          tracer.log('dream', 'info', `Skill files: ${outcome.skillsTotal} total, ${outcome.skillsExpert} expert-level`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Skill files summary failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('skillFiles');
+        }
+      }
+
+      // Phase 17: Graph memory summary (Advanced Memory: Mem0)
+      if (graphMemory && graphMemory.nodeCount() > 0) {
+        try {
+          outcome.graphNodes = graphMemory.nodeCount();
+          outcome.graphEdges = graphMemory.edgeCount();
+          outcome.graphComponents = graphMemory.getConnectedComponents().length;
+          await graphMemory.save();
+          outcome.phasesCompleted.push('graphMemory');
+          tracer.log('dream', 'info', `Graph memory: ${outcome.graphNodes} nodes, ${outcome.graphEdges} edges, ${outcome.graphComponents} components`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Graph memory summary failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('graphMemory');
+        }
       }
 
       // Promote stale context entries

@@ -64,6 +64,16 @@ import type { CrystalStore } from './crystal-store.js';
 import type { ConstitutionStore } from './constitution-store.js';
 import type { TraceReplayStore } from './trace-replay.js';
 import type { EmbeddingProvider } from '../providers/embedding.js';
+import type { LinkNetwork, LinkType } from './memory/link-network.js';
+import type { MemoryEvolution, EvolvableMemory, EvolutionOp } from './memory/memory-evolution.js';
+import type { AudnConsolidator } from './memory/audn-consolidator.js';
+import type { EntropyMigrator, EntryForScoring, MemoryTier } from './memory/entropy-migrator.js';
+import type { MemoryVersioning } from './memory/memory-versioning.js';
+import type { TemporalInvalidation } from './memory/temporal-invalidation.js';
+import type { MemoryChecker, ExistingKnowledge } from './memory/checker.js';
+import type { SkillFilesManager } from './memory/skill-files.js';
+import type { ConcurrentDreamExecutor } from './memory/concurrent-dreams.js';
+import type { GraphMemory, NodeType, EdgeType } from './memory/graph-memory.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -185,6 +195,29 @@ export interface AgentState {
   messagePolicy?: MessagePolicy;
   /** Message delivery backend (iMessage, console outbox) */
   messageDelivery?: MessageDelivery;
+
+  // ── Advanced Memory (A-MEM) ──
+
+  /** Zettelkasten bidirectional link network */
+  linkNetwork?: LinkNetwork;
+  /** Memory evolution engine (strengthen, weaken, merge, split, etc.) */
+  memoryEvolution?: MemoryEvolution;
+  /** AUDN consolidation cycle (Add/Update/Delete/Nothing) */
+  audnConsolidator?: AudnConsolidator;
+  /** Entropy-based tier migration (SAGE) */
+  entropyMigrator?: EntropyMigrator;
+  /** Git-backed memory versioning (Letta) */
+  memoryVersioning?: MemoryVersioning;
+  /** Temporal invalidation (Mem0) — TTL-based memory expiry */
+  temporalInvalidation?: TemporalInvalidation;
+  /** Memory checker (SAGE) — pre-storage validation guard */
+  memoryChecker?: MemoryChecker;
+  /** Skill files manager (Letta) — persistent procedural memory */
+  skillFilesManager?: SkillFilesManager;
+  /** Concurrent dream executor (Letta) — parallel dream phase execution */
+  concurrentDreamExecutor?: ConcurrentDreamExecutor;
+  /** Graph relational memory (Mem0) — entity-relationship knowledge graph */
+  graphMemory?: GraphMemory;
 }
 
 /**
@@ -1927,6 +1960,646 @@ between retrospectives. This is a dream cycle phase that can now be invoked at y
     type: 'object',
     properties: {},
     required: [],
+  },
+};
+
+// ── ADVANCED MEMORY: ZETTELKASTEN LINK NETWORK (A-MEM) ──────────────────────
+
+const LINK_MEMORIES_SCHEMA: ToolSchema = {
+  name: 'link_memories',
+  description: `Create a typed bidirectional link between two memory entries (crystals, journal entries,
+constitution rules, etc.). If a link already exists between the pair, it is strengthened instead of duplicated.
+
+Link types:
+- supports: Evidence or reasoning that supports another entry
+- contradicts: Evidence that contradicts another entry
+- extends: Builds upon or elaborates on another entry
+- derived_from: Created as a consequence of another entry
+- related: General topical relationship`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      source_id: {
+        type: 'string',
+        description: 'ID of the source memory entry (e.g. crystal ID, journal entry ID).',
+      },
+      target_id: {
+        type: 'string',
+        description: 'ID of the target memory entry.',
+      },
+      link_type: {
+        type: 'string',
+        enum: ['supports', 'contradicts', 'extends', 'derived_from', 'related'],
+        description: 'The relationship type of the link.',
+      },
+      annotation: {
+        type: 'string',
+        description: 'Optional annotation explaining why this link exists.',
+      },
+    },
+    required: ['source_id', 'target_id', 'link_type'],
+  },
+};
+
+const GET_LINKS_SCHEMA: ToolSchema = {
+  name: 'get_links',
+  description: `Retrieve all links connected to a memory entry, sorted by strength (strongest first).
+Use this to understand how a memory entry relates to the rest of the knowledge network.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entry_id: {
+        type: 'string',
+        description: 'The memory entry ID to get links for.',
+      },
+      link_type: {
+        type: 'string',
+        enum: ['supports', 'contradicts', 'extends', 'derived_from', 'related'],
+        description: 'Optional: filter links by relationship type.',
+      },
+    },
+    required: ['entry_id'],
+  },
+};
+
+const TRAVERSE_LINKS_SCHEMA: ToolSchema = {
+  name: 'traverse_links',
+  description: `Traverse the memory link network from a starting entry, returning all reachable entries
+within the given number of hops (breadth-first). Useful for finding related context across the entire
+memory surface — crystals, journal entries, constitution rules, and more.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entry_id: {
+        type: 'string',
+        description: 'The starting memory entry ID.',
+      },
+      hops: {
+        type: 'number',
+        description: 'How many hops to traverse (1 = direct neighbors, 2 = neighbors of neighbors). Default: 2.',
+      },
+    },
+    required: ['entry_id'],
+  },
+};
+
+// ── ADVANCED MEMORY: AUDN CONSOLIDATION CYCLE (Mem0) ────────────────────────
+
+const AUDN_ENQUEUE_SCHEMA: ToolSchema = {
+  name: 'audn_enqueue',
+  description: `Queue a memory candidate for AUDN (Add/Update/Delete/Nothing) evaluation during the
+next dream cycle consolidation. Candidates are compared against existing crystals, constitution rules,
+and journal entries — then either added as new knowledge, merged into existing memories, used to
+delete contradicted memories, or discarded if already known. Use this when you encounter information
+worth remembering but want the dream cycle to decide how it fits.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        description: 'The memory content to queue for evaluation.',
+      },
+      source: {
+        type: 'string',
+        description: 'Which subsystem this comes from (e.g. "crystal", "journal", "reflection", "observation").',
+      },
+      tags: {
+        type: 'array',
+        items: { type: 'string', description: 'Tag value' },
+        description: 'Optional categorization tags.',
+      },
+    },
+    required: ['content', 'source'],
+  },
+};
+
+const AUDN_STATUS_SCHEMA: ToolSchema = {
+  name: 'audn_status',
+  description: `Check the AUDN consolidation queue — how many memory candidates are pending evaluation
+and what their sources are. Useful for deciding whether to trigger consolidation now.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+// ── Advanced Memory: Entropy-Based Tier Migration (SAGE) ─────────────────────
+
+const ENTROPY_SCORE_SCHEMA: ToolSchema = {
+  name: 'entropy_score',
+  description: `Calculate the Shannon entropy (information density) of a piece of text.
+Returns raw entropy in bits and a normalized 0-1 score. High entropy indicates
+diverse, information-rich content; low entropy indicates repetitive or sparse content.
+Useful for gauging whether a memory entry is worth promoting to a hotter tier.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        description: 'The text content to score for information density.',
+      },
+    },
+    required: ['content'],
+  },
+};
+
+const EVALUATE_TIERS_SCHEMA: ToolSchema = {
+  name: 'evaluate_tiers',
+  description: `Evaluate a batch of memory entries and produce tier migration recommendations.
+Each entry is scored using Shannon entropy, access frequency, and recency. Returns
+a report showing which entries should be promoted to hotter tiers or demoted to colder
+ones. Useful during memory maintenance to optimize tier placement.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entries: {
+        type: 'array',
+        description: 'Memory entries to evaluate for tier placement.',
+        items: {
+          type: 'object',
+          description: 'A memory entry to evaluate for tier placement.',
+          properties: {
+            id: { type: 'string', description: 'Entry ID' },
+            content: { type: 'string', description: 'Entry text content' },
+            currentTier: {
+              type: 'string',
+              enum: ['hot', 'warm', 'cool', 'cold'],
+              description: 'Current tier of the entry',
+            },
+            accessCount: { type: 'number', description: 'Number of times this entry has been accessed' },
+            lastAccessedAt: { type: 'string', description: 'ISO timestamp of last access' },
+            createdAt: { type: 'string', description: 'ISO timestamp of entry creation' },
+          },
+          required: ['id', 'content', 'currentTier', 'accessCount', 'lastAccessedAt', 'createdAt'],
+        },
+      },
+    },
+    required: ['entries'],
+  },
+};
+
+// ── Advanced Memory: Git-Backed Memory Versioning (Letta) ────────────────────
+
+const SNAPSHOT_MEMORY_SCHEMA: ToolSchema = {
+  name: 'snapshot_memory',
+  description: `Create a point-in-time snapshot of all monitored memory files (crystals, constitution,
+goals, issues). Snapshots enable rollback analysis and drift detection. Duplicate snapshots
+(unchanged state) are automatically deduplicated.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      message: {
+        type: 'string',
+        description: 'A short description of why this snapshot is being taken.',
+      },
+    },
+    required: ['message'],
+  },
+};
+
+const LIST_SNAPSHOTS_SCHEMA: ToolSchema = {
+  name: 'list_snapshots',
+  description: `List all memory snapshots, newest first. Shows snapshot ID, timestamp, trigger source,
+and message. Use snapshot IDs with diff_snapshots to compare changes over time.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      limit: {
+        type: 'number',
+        description: 'Maximum number of snapshots to return (default: 10).',
+      },
+    },
+    required: [],
+  },
+};
+
+const DIFF_SNAPSHOTS_SCHEMA: ToolSchema = {
+  name: 'diff_snapshots',
+  description: `Compare two memory snapshots to see what changed. Shows added/removed lines per
+subsystem (crystals, constitution, goals, issues). If only toId is given, diffs against
+the snapshot immediately before it.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      toId: {
+        type: 'string',
+        description: 'The snapshot ID to diff to (the "after" snapshot).',
+      },
+      fromId: {
+        type: 'string',
+        description: 'The snapshot ID to diff from (the "before" snapshot). If omitted, uses the previous snapshot.',
+      },
+    },
+    required: ['toId'],
+  },
+};
+
+// ── Advanced Memory: Memory Evolution (A-MEM) ────────────────────────────────
+
+const EVOLVE_MEMORY_SCHEMA: ToolSchema = {
+  name: 'evolve_memory',
+  description: `Transform a memory through one of six structured evolution operations:
+
+- strengthen: Increase confidence when corroborated by new evidence
+- weaken: Decrease confidence when contradicted
+- merge: Combine two related memories into one richer memory (requires second_memory and new_content)
+- split: Decompose a complex memory into focused sub-memories (requires split_contents)
+- generalize: Abstract a specific memory into a broader principle (requires new_content)
+- specialize: Narrow a general memory to a specific context (requires new_content)
+
+Each operation is tracked with full lineage. When the link network is active,
+links are automatically created between source and result memories.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['strengthen', 'weaken', 'merge', 'split', 'generalize', 'specialize'],
+        description: 'The evolution operation to perform.',
+      },
+      memory: {
+        type: 'object',
+        description: 'The primary memory to evolve.',
+        properties: {
+          id: { type: 'string', description: 'Memory entry ID' },
+          content: { type: 'string', description: 'Current content of the memory' },
+          confidence: { type: 'number', description: 'Current confidence score (0-1)' },
+          generation: { type: 'number', description: 'Current generation number (default: 0)' },
+          parentIds: { type: 'array', items: { type: 'string', description: 'Parent memory ID' }, description: 'IDs of parent memories' },
+          tags: { type: 'array', items: { type: 'string', description: 'Tag value' }, description: 'Memory tags' },
+        },
+        required: ['id', 'content', 'confidence'],
+      },
+      second_memory: {
+        type: 'object',
+        description: 'Second memory (required for merge).',
+        properties: {
+          id: { type: 'string', description: 'Memory entry ID' },
+          content: { type: 'string', description: 'Content of the memory' },
+          confidence: { type: 'number', description: 'Confidence score (0-1)' },
+          generation: { type: 'number', description: 'Generation number' },
+          parentIds: { type: 'array', items: { type: 'string', description: 'Parent memory ID' }, description: 'IDs of parent memories' },
+          tags: { type: 'array', items: { type: 'string', description: 'Tag value' }, description: 'Memory tags' },
+        },
+        required: ['id', 'content', 'confidence'],
+      },
+      reason: {
+        type: 'string',
+        description: 'Why this evolution is happening.',
+      },
+      new_content: {
+        type: 'string',
+        description: 'New content (required for merge, generalize, specialize).',
+      },
+      split_contents: {
+        type: 'array',
+        items: { type: 'string', description: 'Content for one of the split sub-memories' },
+        description: 'Array of 2+ content strings (required for split).',
+      },
+    },
+    required: ['operation', 'memory', 'reason'],
+  },
+};
+
+const EVOLUTION_LINEAGE_SCHEMA: ToolSchema = {
+  name: 'evolution_lineage',
+  description: `Get the evolution history of a specific memory entry — all evolution events
+where this memory was either a source or a result. Useful for understanding how
+knowledge crystallized over time.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      memory_id: {
+        type: 'string',
+        description: 'The memory entry ID to get lineage for.',
+      },
+    },
+    required: ['memory_id'],
+  },
+};
+
+const EVOLUTION_LOG_SCHEMA: ToolSchema = {
+  name: 'evolution_log',
+  description: `View recent memory evolution events. Shows operation type, source/result IDs,
+reason, and timestamp. Optionally filter by operation type.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['strengthen', 'weaken', 'merge', 'split', 'generalize', 'specialize'],
+        description: 'Optional: filter events by operation type.',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum events to return (default: 20).',
+      },
+    },
+    required: [],
+  },
+};
+
+// ── Advanced Memory: Temporal Invalidation (Mem0) ────────────────────────────
+
+const REGISTER_TEMPORAL_SCHEMA: ToolSchema = {
+  name: 'register_temporal',
+  description: `Register a memory entry for TTL-based temporal tracking. Each category has a
+different TTL: facts (90 days), observations (30 days), opinions (14 days),
+working notes (7 days), crystals (180 days), rules (120 days). Entries decay
+over time and are eventually flagged for deletion.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entry_id: {
+        type: 'string',
+        description: 'The memory entry ID to track.',
+      },
+      category: {
+        type: 'string',
+        enum: ['fact', 'observation', 'opinion', 'working_note', 'crystal', 'rule'],
+        description: 'TTL category determining how long the entry lives.',
+      },
+    },
+    required: ['entry_id', 'category'],
+  },
+};
+
+const CHECK_FRESHNESS_SCHEMA: ToolSchema = {
+  name: 'check_freshness',
+  description: `Check the freshness and expiry status of a tracked memory entry, or list all
+entries in a given category with their freshness scores. Returns freshness (0-1,
+where 1 = fresh and 0 = expired) and whether the entry is in its grace period.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entry_id: {
+        type: 'string',
+        description: 'Specific entry ID to check (optional if category is given).',
+      },
+      category: {
+        type: 'string',
+        enum: ['fact', 'observation', 'opinion', 'working_note', 'crystal', 'rule'],
+        description: 'List all entries in this category with their freshness.',
+      },
+    },
+    required: [],
+  },
+};
+
+const SWEEP_EXPIRED_SCHEMA: ToolSchema = {
+  name: 'sweep_expired',
+  description: `Run a temporal invalidation sweep across all tracked memory entries. Updates
+freshness scores, identifies newly expired entries, and lists entries past their
+grace period that are candidates for deletion. Use this during maintenance or
+before dream cycles to clean up stale memories.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+// ── Advanced Memory: Skill Files (Letta) ─────────────────────────────────────
+
+const LEARN_SKILL_SCHEMA: ToolSchema = {
+  name: 'learn_skill',
+  description: `Learn a new skill from a successful task execution. A skill captures a reusable procedural pattern with ordered steps, preconditions, and success criteria. The skill is stored persistently and can be searched, refined, and tracked over time.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: {
+        type: 'string',
+        description: 'Short skill name (e.g. "fix-typescript-errors").',
+      },
+      description: {
+        type: 'string',
+        description: 'What this skill does.',
+      },
+      steps: {
+        type: 'array',
+        description: 'Ordered steps to perform this skill.',
+        items: { type: 'string', description: 'A single step.' },
+      },
+      preconditions: {
+        type: 'array',
+        description: 'What must be true before applying this skill.',
+        items: { type: 'string', description: 'A precondition.' },
+      },
+      success_criteria: {
+        type: 'array',
+        description: 'How to verify the skill was applied correctly.',
+        items: { type: 'string', description: 'A success criterion.' },
+      },
+      tags: {
+        type: 'array',
+        description: 'Tags for discovery (e.g. "typescript", "testing").',
+        items: { type: 'string', description: 'A tag.' },
+      },
+    },
+    required: ['name', 'description', 'steps'],
+  },
+};
+
+const REFINE_SKILL_SCHEMA: ToolSchema = {
+  name: 'refine_skill',
+  description: `Refine an existing skill with updated steps, preconditions, success criteria, or description. Increments the skill version.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      skill_id: {
+        type: 'string',
+        description: 'The ID of the skill to refine.',
+      },
+      steps: {
+        type: 'array',
+        description: 'Updated ordered steps (replaces existing).',
+        items: { type: 'string', description: 'A single step.' },
+      },
+      preconditions: {
+        type: 'array',
+        description: 'Updated preconditions (replaces existing).',
+        items: { type: 'string', description: 'A precondition.' },
+      },
+      success_criteria: {
+        type: 'array',
+        description: 'Updated success criteria (replaces existing).',
+        items: { type: 'string', description: 'A success criterion.' },
+      },
+      description: {
+        type: 'string',
+        description: 'Updated description.',
+      },
+    },
+    required: ['skill_id'],
+  },
+};
+
+const SEARCH_SKILLS_SCHEMA: ToolSchema = {
+  name: 'search_skills',
+  description: `Search for skills by query (matches name, description, tags) or list all skills. Returns skill details including mastery level and usage stats.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Search query to match against skill name, description, and tags. Omit to list all skills.',
+      },
+      mastery: {
+        type: 'string',
+        description: 'Filter by mastery level: novice, competent, proficient, or expert.',
+      },
+    },
+    required: [],
+  },
+};
+
+const RECORD_SKILL_USE_SCHEMA: ToolSchema = {
+  name: 'record_skill_use',
+  description: `Record that a skill was used and whether the use was successful. Updates the skill's use count, success count, and mastery level.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      skill_id: {
+        type: 'string',
+        description: 'The ID of the skill that was used.',
+      },
+      success: {
+        type: 'boolean',
+        description: 'Whether the skill use was successful.',
+      },
+    },
+    required: ['skill_id', 'success'],
+  },
+};
+
+// ── Advanced Memory: Concurrent Dream Processing (Letta) ─────────────────────
+
+const DREAM_CONCURRENCY_CONFIG_SCHEMA: ToolSchema = {
+  name: 'dream_concurrency_config',
+  description: `View the concurrent dream execution configuration. Shows max concurrency, phase timeout, critical phases, and whether abort-on-critical-failure is enabled. The concurrent executor runs independent dream phases in parallel within dependency groups to reduce total dream cycle duration.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+};
+
+// ── Advanced Memory: Graph Relational Memory (Mem0) ──────────────────────────
+
+const GRAPH_ADD_NODE_SCHEMA: ToolSchema = {
+  name: 'graph_add_node',
+  description: `Add or update an entity node in the knowledge graph. If a node with the same label+type already exists, its mention count is incremented. Node types: file, concept, person, tool, module, pattern.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      label: {
+        type: 'string',
+        description: 'Display label for the node (e.g. "loop.ts", "TypeScript", "Alice").',
+      },
+      node_type: {
+        type: 'string',
+        description: 'Node type: file, concept, person, tool, module, or pattern.',
+      },
+      memory_id: {
+        type: 'string',
+        description: 'Optional memory entry ID to associate with this node.',
+      },
+    },
+    required: ['label', 'node_type'],
+  },
+};
+
+const GRAPH_ADD_EDGE_SCHEMA: ToolSchema = {
+  name: 'graph_add_edge',
+  description: `Add or strengthen a relationship edge between two nodes in the knowledge graph. Both nodes must exist. If the edge already exists, its weight is strengthened. Edge types: depends_on, related_to, uses, modifies, contains, authored_by, tested_by.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      source_id: {
+        type: 'string',
+        description: 'Source node ID (format: "type:label-slug").',
+      },
+      target_id: {
+        type: 'string',
+        description: 'Target node ID (format: "type:label-slug").',
+      },
+      edge_type: {
+        type: 'string',
+        description: 'Relationship type: depends_on, related_to, uses, modifies, contains, authored_by, or tested_by.',
+      },
+      weight: {
+        type: 'number',
+        description: 'Initial edge weight (0.0-1.0, default 0.5).',
+      },
+    },
+    required: ['source_id', 'target_id', 'edge_type'],
+  },
+};
+
+const GRAPH_SEARCH_SCHEMA: ToolSchema = {
+  name: 'graph_search',
+  description: `Search the knowledge graph for nodes matching a query, or inspect a specific node's relationships and neighbors. Returns node details, connected edges, and neighbor list.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Search query to match against node labels. Omit to get graph summary.',
+      },
+      node_id: {
+        type: 'string',
+        description: 'Specific node ID to inspect (shows edges and neighbors).',
+      },
+      node_type: {
+        type: 'string',
+        description: 'Filter results by node type: file, concept, person, tool, module, or pattern.',
+      },
+    },
+    required: [],
+  },
+};
+
+// ── Advanced Memory: Checker Pattern (SAGE) ──────────────────────────────────
+
+const CHECK_MEMORY_SCHEMA: ToolSchema = {
+  name: 'check_memory',
+  description: `Validate a memory candidate before storage. Runs five checks:
+
+1. **Consistency** — Does this contradict existing knowledge?
+2. **Relevance** — Is this worth storing? (entropy/uniqueness)
+3. **Duplicate** — Is this already known? (Jaccard similarity)
+4. **Freshness** — Are date references still timely?
+5. **Safety** — Does this contain sensitive data (passwords, keys, PII)?
+
+Returns a composite verdict (approved/rejected) with per-check results and scores.
+Provide existing knowledge entries for consistency and duplicate checks.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        description: 'The memory content to validate.',
+      },
+      category: {
+        type: 'string',
+        description: 'Optional category for the memory (e.g. "fact", "observation", "opinion").',
+      },
+      existing: {
+        type: 'array',
+        description: 'Existing knowledge entries to check against for consistency and duplicates.',
+        items: {
+          type: 'object',
+          description: 'An existing knowledge entry.',
+          properties: {
+            id: { type: 'string', description: 'Entry ID' },
+            content: { type: 'string', description: 'Entry content' },
+          },
+          required: ['id', 'content'],
+        },
+      },
+    },
+    required: ['content'],
   },
 };
 
@@ -4432,6 +5105,1083 @@ function buildExecutors(
     });
   });
 
+  // ── link_memories (Advanced Memory: Zettelkasten A-MEM) ──────────────────
+
+  executors.set('link_memories', async (call) => {
+    if (!state.linkNetwork) {
+      return failureResult(call.id, 'Link network not available.');
+    }
+
+    const sourceId = requireString(call, 'source_id');
+    if ('error' in sourceId) return sourceId.error;
+    const targetId = requireString(call, 'target_id');
+    if ('error' in targetId) return targetId.error;
+    const linkType = requireString(call, 'link_type');
+    if ('error' in linkType) return linkType.error;
+
+    const validTypes = ['supports', 'contradicts', 'extends', 'derived_from', 'related'];
+    if (!validTypes.includes(linkType.value)) {
+      return failureResult(call.id, `Invalid link_type: ${linkType.value}. Must be one of: ${validTypes.join(', ')}`);
+    }
+
+    const annotation = optionalString(call, 'annotation');
+
+    const result = state.linkNetwork.createLink({
+      sourceId: sourceId.value,
+      targetId: targetId.value,
+      type: linkType.value as LinkType,
+      ...(annotation ? { annotation } : {}),
+    });
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Failed to create link.');
+    }
+
+    await state.linkNetwork.save();
+    return successResult(
+      call.id,
+      `Link created: ${result.linkId} (${sourceId.value} -[${linkType.value}]-> ${targetId.value})`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── get_links (Advanced Memory: Zettelkasten A-MEM) ────────────────────
+
+  executors.set('get_links', async (call) => {
+    if (!state.linkNetwork) {
+      return failureResult(call.id, 'Link network not available.');
+    }
+
+    const entryId = requireString(call, 'entry_id');
+    if ('error' in entryId) return entryId.error;
+    const filterType = optionalString(call, 'link_type');
+
+    let links = state.linkNetwork.getLinksForEntry(entryId.value);
+
+    if (filterType) {
+      links = links.filter((l) => l.type === filterType);
+    }
+
+    if (links.length === 0) {
+      return successResult(
+        call.id,
+        `No links found for entry "${entryId.value}"${filterType ? ` with type "${filterType}"` : ''}.`,
+        config.maxOutputChars,
+      );
+    }
+
+    const lines: string[] = [
+      `## Links for ${entryId.value} (${links.length} total)`,
+      '',
+    ];
+    for (const link of links) {
+      const other = link.sourceId === entryId.value ? link.targetId : link.sourceId;
+      const direction = link.sourceId === entryId.value ? '→' : '←';
+      const pct = Math.round(link.strength * 100);
+      lines.push(`- ${direction} **${other}** [${link.type}] (${pct}% strength)`);
+      if (link.annotation) lines.push(`  _${link.annotation}_`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── traverse_links (Advanced Memory: Zettelkasten A-MEM) ───────────────
+
+  executors.set('traverse_links', async (call) => {
+    if (!state.linkNetwork) {
+      return failureResult(call.id, 'Link network not available.');
+    }
+
+    const entryId = requireString(call, 'entry_id');
+    if ('error' in entryId) return entryId.error;
+    const hops = optionalNumber(call, 'hops') ?? 2;
+
+    const neighborhood = state.linkNetwork.getNeighborhood(entryId.value, hops);
+
+    if (neighborhood.length === 0) {
+      return successResult(
+        call.id,
+        `No entries reachable from "${entryId.value}" within ${hops} hop(s).`,
+        config.maxOutputChars,
+      );
+    }
+
+    const lines: string[] = [
+      `## Neighborhood of ${entryId.value} (${hops} hops, ${neighborhood.length} entries)`,
+      '',
+      ...neighborhood.map((id) => `- ${id}`),
+    ];
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── audn_enqueue (Advanced Memory: AUDN Consolidation Cycle Mem0) ──────
+
+  executors.set('audn_enqueue', async (call) => {
+    if (!state.audnConsolidator) {
+      return failureResult(call.id, 'AUDN consolidator not available.');
+    }
+
+    const content = requireString(call, 'content');
+    if ('error' in content) return content.error;
+    const source = requireString(call, 'source');
+    if ('error' in source) return source.error;
+    const tags = Array.isArray(call.input['tags'])
+      ? (call.input['tags'] as string[])
+      : [];
+
+    const candidateId = state.audnConsolidator.enqueue({
+      content: content.value,
+      source: source.value,
+      tags,
+    });
+
+    await state.audnConsolidator.save();
+    return successResult(
+      call.id,
+      `Queued for AUDN evaluation: ${candidateId} (${state.audnConsolidator.queueSize()} total pending). Will be processed during next dream cycle consolidation.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── audn_status (Advanced Memory: AUDN Consolidation Cycle Mem0) ───────
+
+  executors.set('audn_status', async (call) => {
+    if (!state.audnConsolidator) {
+      return failureResult(call.id, 'AUDN consolidator not available.');
+    }
+
+    const queue = state.audnConsolidator.getQueue();
+    if (queue.length === 0) {
+      return successResult(
+        call.id,
+        'AUDN queue is empty. No candidates pending evaluation.',
+        config.maxOutputChars,
+      );
+    }
+
+    // Group by source
+    const bySource = new Map<string, number>();
+    for (const c of queue) {
+      bySource.set(c.source, (bySource.get(c.source) ?? 0) + 1);
+    }
+
+    const lines: string[] = [
+      `## AUDN Queue (${queue.length} candidates pending)`,
+      '',
+      '| Source | Count |',
+      '|--------|-------|',
+    ];
+    for (const [src, count] of bySource) {
+      lines.push(`| ${src} | ${count} |`);
+    }
+
+    const oldest = queue[0];
+    if (oldest) {
+      lines.push('', `Oldest candidate queued: ${oldest.queuedAt.split('T')[0]}`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── entropy_score (Advanced Memory: SAGE) ────────────────────────────────
+
+  executors.set('entropy_score', async (call) => {
+    if (!state.entropyMigrator) {
+      return failureResult(call.id, 'Entropy migrator not available.');
+    }
+
+    const content = requireString(call, 'content');
+    if ('error' in content) return content.error;
+
+    const result = state.entropyMigrator.quickScore(content.value);
+    const lines = [
+      `## Entropy Score`,
+      '',
+      `| Metric | Value |`,
+      `|--------|-------|`,
+      `| Raw entropy | ${result.entropy.toFixed(3)} bits |`,
+      `| Normalized | ${result.normalizedEntropy.toFixed(3)} (0-1) |`,
+      '',
+      result.normalizedEntropy >= 0.7
+        ? 'High information density — good candidate for hot/warm tier.'
+        : result.normalizedEntropy >= 0.4
+          ? 'Moderate information density — warm/cool tier appropriate.'
+          : 'Low information density — cool/cold tier appropriate.',
+    ];
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── evaluate_tiers (Advanced Memory: SAGE) ───────────────────────────────
+
+  executors.set('evaluate_tiers', async (call) => {
+    if (!state.entropyMigrator) {
+      return failureResult(call.id, 'Entropy migrator not available.');
+    }
+
+    const entriesRaw = call.input?.entries;
+    if (!Array.isArray(entriesRaw) || entriesRaw.length === 0) {
+      return failureResult(call.id, 'entries must be a non-empty array of memory entries.');
+    }
+
+    // Validate and cast entries
+    const entries: EntryForScoring[] = entriesRaw.map((e: Record<string, unknown>) => ({
+      id: String(e.id ?? ''),
+      content: String(e.content ?? ''),
+      currentTier: String(e.currentTier ?? 'cold') as MemoryTier,
+      accessCount: Number(e.accessCount ?? 0),
+      lastAccessedAt: String(e.lastAccessedAt ?? new Date().toISOString()),
+      createdAt: String(e.createdAt ?? new Date().toISOString()),
+    }));
+
+    const report = state.entropyMigrator.evaluate(entries);
+
+    const lines = [
+      `## Tier Migration Report`,
+      '',
+      `Evaluated: ${report.evaluated} | Promotions: ${report.promotions} | Demotions: ${report.demotions} | Stable: ${report.stable}`,
+      '',
+    ];
+
+    const migrations = report.candidates.filter((c) => c.shouldMigrate);
+    if (migrations.length > 0) {
+      lines.push('### Recommended Migrations', '', '| ID | Current | Recommended | Score | Direction |', '|-----|---------|-------------|-------|-----------|');
+      for (const c of migrations.slice(0, 20)) {
+        lines.push(`| ${c.id} | ${c.currentTier} | ${c.recommendedTier} | ${c.migrationScore.toFixed(3)} | ${c.direction} |`);
+      }
+      if (migrations.length > 20) {
+        lines.push(``, `... and ${migrations.length - 20} more.`);
+      }
+    } else {
+      lines.push('All entries are in their optimal tiers. No migrations recommended.');
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── snapshot_memory (Advanced Memory: Git-Backed Versioning Letta) ──────
+
+  executors.set('snapshot_memory', async (call) => {
+    if (!state.memoryVersioning) {
+      return failureResult(call.id, 'Memory versioning not available.');
+    }
+
+    const message = requireString(call, 'message');
+    if ('error' in message) return message.error;
+
+    try {
+      const snapshot = await state.memoryVersioning.createSnapshot({
+        trigger: 'agent',
+        message: message.value,
+      });
+      await state.memoryVersioning.save();
+
+      const lines = [
+        `## Snapshot Created`,
+        '',
+        `| Field | Value |`,
+        `|-------|-------|`,
+        `| ID | \`${snapshot.id}\` |`,
+        `| Timestamp | ${snapshot.timestamp} |`,
+        `| Subsystems | ${Object.keys(snapshot.data).join(', ')} |`,
+        `| Hash | ${snapshot.contentHash} |`,
+        '',
+        `Message: ${snapshot.message}`,
+      ];
+
+      return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+    } catch (err) {
+      return failureResult(call.id, `Snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── list_snapshots (Advanced Memory: Git-Backed Versioning Letta) ──────
+
+  executors.set('list_snapshots', async (call) => {
+    if (!state.memoryVersioning) {
+      return failureResult(call.id, 'Memory versioning not available.');
+    }
+
+    const limit = typeof call.input?.limit === 'number' ? call.input.limit : 10;
+    const snapshots = state.memoryVersioning.listSnapshots().slice(0, limit);
+
+    if (snapshots.length === 0) {
+      return successResult(call.id, 'No snapshots found. Use `snapshot_memory` to create one.', config.maxOutputChars);
+    }
+
+    const lines = [
+      `## Memory Snapshots (${snapshots.length} of ${state.memoryVersioning.count()})`,
+      '',
+      '| ID | Date | Trigger | Message |',
+      '|----|------|---------|---------|',
+    ];
+
+    for (const s of snapshots) {
+      lines.push(`| \`${s.id}\` | ${s.timestamp.split('T')[0]} | ${s.trigger} | ${s.message.slice(0, 60)} |`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── diff_snapshots (Advanced Memory: Git-Backed Versioning Letta) ──────
+
+  executors.set('diff_snapshots', async (call) => {
+    if (!state.memoryVersioning) {
+      return failureResult(call.id, 'Memory versioning not available.');
+    }
+
+    const toId = requireString(call, 'toId');
+    if ('error' in toId) return toId.error;
+
+    const fromId = typeof call.input?.fromId === 'string' ? call.input.fromId : undefined;
+
+    const result = state.memoryVersioning.diff(toId.value, fromId);
+    if (!result) {
+      return failureResult(call.id, `Snapshot not found: ${toId.value}`);
+    }
+
+    const lines = [
+      `## Snapshot Diff`,
+      '',
+      `From: \`${result.fromId || '(initial)'}\` → To: \`${result.toId}\``,
+      '',
+    ];
+
+    if (result.subsystemsAdded.length > 0) {
+      lines.push(`**Added subsystems:** ${result.subsystemsAdded.join(', ')}`);
+    }
+    if (result.subsystemsRemoved.length > 0) {
+      lines.push(`**Removed subsystems:** ${result.subsystemsRemoved.join(', ')}`);
+    }
+
+    if (result.diffs.length > 0) {
+      for (const d of result.diffs) {
+        lines.push('', `### ${d.subsystem} (+${d.linesAdded} / -${d.linesRemoved})`);
+        if (d.additions.length > 0) {
+          lines.push('', '**Added:**');
+          for (const a of d.additions.slice(0, 10)) {
+            lines.push(`+ ${a}`);
+          }
+        }
+        if (d.removals.length > 0) {
+          lines.push('', '**Removed:**');
+          for (const r of d.removals.slice(0, 10)) {
+            lines.push(`- ${r}`);
+          }
+        }
+      }
+    } else if (result.subsystemsChanged.length === 0 && result.subsystemsAdded.length === 0 && result.subsystemsRemoved.length === 0) {
+      lines.push('No changes between these snapshots.');
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── evolve_memory (Advanced Memory: Memory Evolution A-MEM) ──────────────
+
+  executors.set('evolve_memory', async (call) => {
+    if (!state.memoryEvolution) {
+      return failureResult(call.id, 'Memory evolution not available.');
+    }
+
+    const operation = requireString(call, 'operation');
+    if ('error' in operation) return operation.error;
+    const reason = requireString(call, 'reason');
+    if ('error' in reason) return reason.error;
+
+    const validOps = ['strengthen', 'weaken', 'merge', 'split', 'generalize', 'specialize'];
+    if (!validOps.includes(operation.value)) {
+      return failureResult(call.id, `Invalid operation: ${operation.value}. Must be one of: ${validOps.join(', ')}`);
+    }
+
+    const rawMemory = call.input?.memory as Record<string, unknown> | undefined;
+    if (!rawMemory || typeof rawMemory.id !== 'string' || typeof rawMemory.content !== 'string') {
+      return failureResult(call.id, 'memory must include at least id and content.');
+    }
+
+    const now = new Date().toISOString();
+    const memory: EvolvableMemory = {
+      id: rawMemory.id as string,
+      content: rawMemory.content as string,
+      confidence: typeof rawMemory.confidence === 'number' ? rawMemory.confidence : 0.5,
+      generation: typeof rawMemory.generation === 'number' ? rawMemory.generation : 0,
+      parentIds: Array.isArray(rawMemory.parentIds) ? (rawMemory.parentIds as string[]) : [],
+      tags: Array.isArray(rawMemory.tags) ? (rawMemory.tags as string[]) : [],
+      createdAt: typeof rawMemory.createdAt === 'string' ? rawMemory.createdAt : now,
+      lastEvolvedAt: typeof rawMemory.lastEvolvedAt === 'string' ? rawMemory.lastEvolvedAt : now,
+    };
+
+    const op = operation.value as EvolutionOp;
+
+    try {
+      let resultText: string;
+
+      switch (op) {
+        case 'strengthen': {
+          const result = state.memoryEvolution.strengthen(memory, reason.value);
+          resultText = `Strengthened "${memory.id}" → confidence: ${result.confidence.toFixed(2)}`;
+          break;
+        }
+        case 'weaken': {
+          const result = state.memoryEvolution.weaken(memory, reason.value);
+          resultText = `Weakened "${memory.id}" → confidence: ${result.confidence.toFixed(2)}`;
+          break;
+        }
+        case 'merge': {
+          const rawSecond = call.input?.second_memory as Record<string, unknown> | undefined;
+          if (!rawSecond || typeof rawSecond.id !== 'string' || typeof rawSecond.content !== 'string') {
+            return failureResult(call.id, 'merge requires second_memory with id and content.');
+          }
+          const mergeContent = optionalString(call, 'new_content');
+          if (!mergeContent) {
+            return failureResult(call.id, 'merge requires new_content — the merged text.');
+          }
+          const secondMemory: EvolvableMemory = {
+            id: rawSecond.id as string,
+            content: rawSecond.content as string,
+            confidence: typeof rawSecond.confidence === 'number' ? rawSecond.confidence : 0.5,
+            generation: typeof rawSecond.generation === 'number' ? rawSecond.generation : 0,
+            parentIds: Array.isArray(rawSecond.parentIds) ? (rawSecond.parentIds as string[]) : [],
+            tags: Array.isArray(rawSecond.tags) ? (rawSecond.tags as string[]) : [],
+            createdAt: typeof rawSecond.createdAt === 'string' ? rawSecond.createdAt : now,
+            lastEvolvedAt: typeof rawSecond.lastEvolvedAt === 'string' ? rawSecond.lastEvolvedAt : now,
+          };
+          const merged = state.memoryEvolution.merge(memory, secondMemory, mergeContent, reason.value);
+          resultText = `Merged "${memory.id}" + "${secondMemory.id}" → "${merged.id}" (gen ${merged.generation})`;
+          break;
+        }
+        case 'split': {
+          const rawSplitContents = call.input?.split_contents;
+          if (!Array.isArray(rawSplitContents) || rawSplitContents.length < 2) {
+            return failureResult(call.id, 'split requires split_contents — array of 2+ content strings.');
+          }
+          const splitContents = rawSplitContents.map(String);
+          const splits = state.memoryEvolution.split(memory, splitContents, reason.value);
+          resultText = `Split "${memory.id}" → ${splits.map((r) => `"${r.id}"`).join(', ')} (gen ${splits[0]?.generation ?? 0})`;
+          break;
+        }
+        case 'generalize': {
+          const genContent = optionalString(call, 'new_content');
+          if (!genContent) {
+            return failureResult(call.id, 'generalize requires new_content — the generalized text.');
+          }
+          const generalized = state.memoryEvolution.generalize(memory, genContent, reason.value);
+          resultText = `Generalized "${memory.id}" → "${generalized.id}" (gen ${generalized.generation})`;
+          break;
+        }
+        case 'specialize': {
+          const specContent = optionalString(call, 'new_content');
+          if (!specContent) {
+            return failureResult(call.id, 'specialize requires new_content — the specialized text.');
+          }
+          const specialized = state.memoryEvolution.specialize(memory, specContent, reason.value);
+          resultText = `Specialized "${memory.id}" → "${specialized.id}" (gen ${specialized.generation})`;
+          break;
+        }
+        default:
+          return failureResult(call.id, `Unknown operation: ${op}`);
+      }
+
+      await state.memoryEvolution.save();
+      return successResult(call.id, resultText, config.maxOutputChars);
+    } catch (err) {
+      return failureResult(call.id, `Evolution failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── evolution_lineage (Advanced Memory: Memory Evolution A-MEM) ──────────
+
+  executors.set('evolution_lineage', async (call) => {
+    if (!state.memoryEvolution) {
+      return failureResult(call.id, 'Memory evolution not available.');
+    }
+
+    const memoryId = requireString(call, 'memory_id');
+    if ('error' in memoryId) return memoryId.error;
+
+    const events = state.memoryEvolution.getLineage(memoryId.value);
+
+    if (events.length === 0) {
+      return successResult(call.id, `No evolution history found for "${memoryId.value}".`, config.maxOutputChars);
+    }
+
+    const lines = [
+      `## Evolution Lineage: ${memoryId.value} (${events.length} events)`,
+      '',
+      '| Op | Sources → Results | Reason | Date |',
+      '|----|-------------------|--------|------|',
+    ];
+
+    for (const e of events) {
+      lines.push(`| ${e.operation} | ${e.sourceIds.join(',')} → ${e.resultIds.join(',')} | ${e.reason.slice(0, 50)} | ${e.timestamp.split('T')[0]} |`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── evolution_log (Advanced Memory: Memory Evolution A-MEM) ──────────────
+
+  executors.set('evolution_log', async (call) => {
+    if (!state.memoryEvolution) {
+      return failureResult(call.id, 'Memory evolution not available.');
+    }
+
+    const filterOp = optionalString(call, 'operation') as EvolutionOp | undefined;
+    const limit = typeof call.input?.limit === 'number' ? call.input.limit : 20;
+
+    let events = filterOp
+      ? state.memoryEvolution.getEventsByType(filterOp)
+      : [...state.memoryEvolution.getEvents()];
+
+    // Most recent first
+    events = events.slice(-limit).reverse();
+
+    if (events.length === 0) {
+      return successResult(
+        call.id,
+        filterOp
+          ? `No ${filterOp} events found. Total events: ${state.memoryEvolution.eventCount()}.`
+          : `No evolution events yet. Use evolve_memory to start tracking memory transformations.`,
+        config.maxOutputChars,
+      );
+    }
+
+    const lines = [
+      `## Evolution Log (${events.length} events${filterOp ? `, filter: ${filterOp}` : ''})`,
+      '',
+      '| ID | Op | Sources → Results | Reason | Date |',
+      '|----|----|--------------------|--------|------|',
+    ];
+
+    for (const e of events) {
+      const delta = e.confidenceDelta !== undefined ? ` (Δ${e.confidenceDelta > 0 ? '+' : ''}${e.confidenceDelta.toFixed(2)})` : '';
+      lines.push(`| ${e.id} | ${e.operation}${delta} | ${e.sourceIds.join(',')} → ${e.resultIds.join(',')} | ${e.reason.slice(0, 40)} | ${e.timestamp.split('T')[0]} |`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── register_temporal (Advanced Memory: Temporal Invalidation Mem0) ──────
+
+  executors.set('register_temporal', async (call) => {
+    if (!state.temporalInvalidation) {
+      return failureResult(call.id, 'Temporal invalidation not available.');
+    }
+
+    const entryId = requireString(call, 'entry_id');
+    if ('error' in entryId) return entryId.error;
+    const category = requireString(call, 'category');
+    if ('error' in category) return category.error;
+
+    const validCategories = ['fact', 'observation', 'opinion', 'working_note', 'crystal', 'rule'];
+    if (!validCategories.includes(category.value)) {
+      return failureResult(call.id, `Invalid category: ${category.value}. Must be one of: ${validCategories.join(', ')}`);
+    }
+
+    const entry = state.temporalInvalidation.register({
+      id: entryId.value,
+      category: category.value,
+    });
+
+    const policy = state.temporalInvalidation.getPolicy(category.value);
+    const ttl = policy ? `${policy.ttlDays}d TTL, ${policy.gracePeriodDays}d grace, ${policy.decay} decay` : 'default policy';
+
+    return successResult(
+      call.id,
+      `Registered "${entryId.value}" for temporal tracking (${category.value}: ${ttl}). Freshness: ${entry.freshness.toFixed(2)}`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── check_freshness (Advanced Memory: Temporal Invalidation Mem0) ────────
+
+  executors.set('check_freshness', async (call) => {
+    if (!state.temporalInvalidation) {
+      return failureResult(call.id, 'Temporal invalidation not available.');
+    }
+
+    const entryId = optionalString(call, 'entry_id');
+    const category = optionalString(call, 'category');
+
+    if (entryId) {
+      const freshness = state.temporalInvalidation.getFreshness(entryId);
+      if (freshness === null) {
+        return failureResult(call.id, `Entry "${entryId}" is not being tracked. Use register_temporal first.`);
+      }
+
+      const expired = state.temporalInvalidation.isExpired(entryId);
+      const pct = Math.round(freshness * 100);
+      return successResult(
+        call.id,
+        `**${entryId}**: ${pct}% fresh${expired ? ' (EXPIRED)' : ''}`,
+        config.maxOutputChars,
+      );
+    }
+
+    if (category) {
+      const entries = state.temporalInvalidation.getByCategory(category);
+      if (entries.length === 0) {
+        return successResult(call.id, `No entries tracked in category "${category}".`, config.maxOutputChars);
+      }
+
+      const lines = [
+        `## Tracked Entries: ${category} (${entries.length})`,
+        '',
+        '| ID | Freshness | Expired | Grace |',
+        '|----|-----------|---------|-------|',
+      ];
+
+      for (const e of entries) {
+        const pct = Math.round(e.freshness * 100);
+        lines.push(`| ${e.id} | ${pct}% | ${e.expired ? 'yes' : 'no'} | ${e.inGracePeriod ? 'yes' : 'no'} |`);
+      }
+
+      return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+    }
+
+    // No filters — show summary
+    const all = state.temporalInvalidation.getAll();
+    if (all.length === 0) {
+      return successResult(call.id, 'No entries tracked. Use register_temporal to start tracking.', config.maxOutputChars);
+    }
+
+    const fresh = all.filter((e) => !e.expired).length;
+    const expired = all.filter((e) => e.expired && e.inGracePeriod).length;
+    const deletion = all.filter((e) => e.expired && !e.inGracePeriod).length;
+
+    return successResult(
+      call.id,
+      `Tracking ${all.length} entries: ${fresh} fresh, ${expired} expired (grace), ${deletion} ready for deletion.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── sweep_expired (Advanced Memory: Temporal Invalidation Mem0) ──────────
+
+  executors.set('sweep_expired', async (call) => {
+    if (!state.temporalInvalidation) {
+      return failureResult(call.id, 'Temporal invalidation not available.');
+    }
+
+    const report = state.temporalInvalidation.sweep();
+
+    const lines = [
+      `## Temporal Sweep Results`,
+      '',
+      `| Metric | Count |`,
+      `|--------|-------|`,
+      `| Evaluated | ${report.evaluated} |`,
+      `| Fresh | ${report.fresh} |`,
+      `| Newly expired | ${report.newlyExpired} |`,
+      `| Ready for deletion | ${report.readyForDeletion} |`,
+    ];
+
+    if (report.deletionCandidates.length > 0) {
+      lines.push('', '**Deletion candidates:**');
+      for (const id of report.deletionCandidates.slice(0, 20)) {
+        lines.push(`- ${id}`);
+      }
+      if (report.deletionCandidates.length > 20) {
+        lines.push(`- ... and ${report.deletionCandidates.length - 20} more`);
+      }
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── learn_skill (Advanced Memory: Skill Files Letta) ─────────────────────
+
+  executors.set('learn_skill', async (call) => {
+    if (!state.skillFilesManager) {
+      return failureResult(call.id, 'Skill files manager not available.');
+    }
+
+    const name = requireString(call, 'name');
+    if ('error' in name) return name.error;
+    const description = requireString(call, 'description');
+    if ('error' in description) return description.error;
+
+    const rawSteps = call.input?.steps;
+    if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
+      return failureResult(call.id, 'steps must be a non-empty array of strings.');
+    }
+    const steps = rawSteps.filter((s): s is string => typeof s === 'string');
+
+    const rawPreconditions = call.input?.preconditions;
+    const preconditions = Array.isArray(rawPreconditions)
+      ? rawPreconditions.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const rawCriteria = call.input?.success_criteria;
+    const successCriteria = Array.isArray(rawCriteria)
+      ? rawCriteria.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const rawTags = call.input?.tags;
+    const tags = Array.isArray(rawTags)
+      ? rawTags.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const result = state.skillFilesManager.learn({
+      name: name.value,
+      description: description.value,
+      steps,
+      ...(preconditions ? { preconditions } : {}),
+      ...(successCriteria ? { successCriteria } : {}),
+      ...(tags ? { tags } : {}),
+    });
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Failed to learn skill.');
+    }
+
+    return successResult(call.id, `Skill learned: **${name.value}** (${result.skillId})`, config.maxOutputChars);
+  });
+
+  // ── refine_skill (Advanced Memory: Skill Files Letta) ──────────────────
+
+  executors.set('refine_skill', async (call) => {
+    if (!state.skillFilesManager) {
+      return failureResult(call.id, 'Skill files manager not available.');
+    }
+
+    const skillId = requireString(call, 'skill_id');
+    if ('error' in skillId) return skillId.error;
+
+    const rawSteps = call.input?.steps;
+    const steps = Array.isArray(rawSteps)
+      ? rawSteps.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const rawPreconditions = call.input?.preconditions;
+    const preconditions = Array.isArray(rawPreconditions)
+      ? rawPreconditions.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const rawCriteria = call.input?.success_criteria;
+    const successCriteria = Array.isArray(rawCriteria)
+      ? rawCriteria.filter((s): s is string => typeof s === 'string')
+      : undefined;
+
+    const descUpdate = optionalString(call, 'description');
+
+    const result = state.skillFilesManager.refine(skillId.value, {
+      ...(steps ? { steps } : {}),
+      ...(preconditions ? { preconditions } : {}),
+      ...(successCriteria ? { successCriteria } : {}),
+      ...(descUpdate ? { description: descUpdate } : {}),
+    });
+
+    if (!result.success) {
+      return failureResult(call.id, result.error ?? 'Failed to refine skill.');
+    }
+
+    const skill = state.skillFilesManager.getById(skillId.value);
+    return successResult(call.id, `Skill refined: **${skill?.name ?? skillId.value}** v${skill?.version ?? '?'}`, config.maxOutputChars);
+  });
+
+  // ── search_skills (Advanced Memory: Skill Files Letta) ─────────────────
+
+  executors.set('search_skills', async (call) => {
+    if (!state.skillFilesManager) {
+      return failureResult(call.id, 'Skill files manager not available.');
+    }
+
+    const query = optionalString(call, 'query');
+    const mastery = optionalString(call, 'mastery');
+
+    let skills = query
+      ? state.skillFilesManager.search(query)
+      : [...state.skillFilesManager.getAll()];
+
+    if (mastery) {
+      skills = skills.filter((s) => s.mastery === mastery);
+    }
+
+    if (skills.length === 0) {
+      return successResult(call.id, 'No skills found.', config.maxOutputChars);
+    }
+
+    const lines = [`## Skills (${skills.length} found)`, ''];
+    for (const s of skills.slice(0, 20)) {
+      const rate = s.useCount > 0 ? `${((s.successCount / s.useCount) * 100).toFixed(0)}%` : 'N/A';
+      lines.push(`### ${s.name} (${s.id})`);
+      lines.push(`- **Mastery:** ${s.mastery} | **Uses:** ${s.useCount} | **Success rate:** ${rate} | **Version:** v${s.version}`);
+      lines.push(`- **Description:** ${s.description}`);
+      lines.push(`- **Steps:** ${s.steps.length} | **Tags:** ${s.tags.join(', ') || 'none'}`);
+      lines.push('');
+    }
+    if (skills.length > 20) {
+      lines.push(`... and ${skills.length - 20} more skills.`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── record_skill_use (Advanced Memory: Skill Files Letta) ──────────────
+
+  executors.set('record_skill_use', async (call) => {
+    if (!state.skillFilesManager) {
+      return failureResult(call.id, 'Skill files manager not available.');
+    }
+
+    const skillId = requireString(call, 'skill_id');
+    if ('error' in skillId) return skillId.error;
+
+    const rawSuccess = call.input?.success;
+    if (typeof rawSuccess !== 'boolean') {
+      return failureResult(call.id, 'success must be a boolean.');
+    }
+
+    const ok = state.skillFilesManager.recordUse(skillId.value, rawSuccess);
+    if (!ok) {
+      return failureResult(call.id, `Skill not found: ${skillId.value}`);
+    }
+
+    const skill = state.skillFilesManager.getById(skillId.value);
+    return successResult(
+      call.id,
+      `Recorded ${rawSuccess ? 'successful' : 'failed'} use of **${skill?.name ?? skillId.value}** (mastery: ${skill?.mastery ?? 'unknown'}, uses: ${skill?.useCount ?? 0})`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── dream_concurrency_config (Advanced Memory: Concurrent Dream Letta) ──
+
+  executors.set('dream_concurrency_config', async (call) => {
+    if (!state.concurrentDreamExecutor) {
+      return failureResult(call.id, 'Concurrent dream executor not available.');
+    }
+
+    // The executor exposes its config via its constructor defaults.
+    // We report the known defaults since the executor is stateless.
+    const lines = [
+      '## Concurrent Dream Configuration',
+      '',
+      '| Setting | Value |',
+      '|---------|-------|',
+      '| Max concurrency | 4 phases per group |',
+      '| Phase timeout | 120,000 ms (2 min) |',
+      '| Abort on critical failure | No |',
+      '| Critical phases | consolidateReflections, updateWorldModel |',
+      '',
+      '### Dependency Groups',
+      '',
+      '- **Group 1** (independent): consolidation, world model, archaeology',
+      '- **Group 2** (depends on 1): goal reorganization, self-model',
+      '- **Group 3** (depends on 2): shadow analysis, tool inventory',
+      '- **Group 4** (depends on 3): challenges, prompt evolution, training',
+      '- **Group 5** (final): retrospective',
+      '',
+      'Phases within the same group run concurrently. Groups execute sequentially.',
+    ];
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── graph_add_node (Advanced Memory: Graph Relational Memory Mem0) ──────
+
+  executors.set('graph_add_node', async (call) => {
+    if (!state.graphMemory) {
+      return failureResult(call.id, 'Graph memory not available.');
+    }
+
+    const label = requireString(call, 'label');
+    if ('error' in label) return label.error;
+    const nodeType = requireString(call, 'node_type');
+    if ('error' in nodeType) return nodeType.error;
+
+    const validTypes: NodeType[] = ['file', 'concept', 'person', 'tool', 'module', 'pattern'];
+    if (!validTypes.includes(nodeType.value as NodeType)) {
+      return failureResult(call.id, `Invalid node_type: "${nodeType.value}". Must be one of: ${validTypes.join(', ')}`);
+    }
+
+    const memoryId = optionalString(call, 'memory_id');
+
+    const node = state.graphMemory.addNode({
+      label: label.value,
+      type: nodeType.value as NodeType,
+      ...(memoryId ? { memoryId } : {}),
+    });
+
+    return successResult(
+      call.id,
+      `Node **${node.label}** (${node.id}) — type: ${node.type}, mentions: ${node.mentionCount}`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── graph_add_edge (Advanced Memory: Graph Relational Memory Mem0) ──────
+
+  executors.set('graph_add_edge', async (call) => {
+    if (!state.graphMemory) {
+      return failureResult(call.id, 'Graph memory not available.');
+    }
+
+    const sourceId = requireString(call, 'source_id');
+    if ('error' in sourceId) return sourceId.error;
+    const targetId = requireString(call, 'target_id');
+    if ('error' in targetId) return targetId.error;
+    const edgeType = requireString(call, 'edge_type');
+    if ('error' in edgeType) return edgeType.error;
+
+    const validEdgeTypes: EdgeType[] = ['depends_on', 'related_to', 'uses', 'modifies', 'contains', 'authored_by', 'tested_by'];
+    if (!validEdgeTypes.includes(edgeType.value as EdgeType)) {
+      return failureResult(call.id, `Invalid edge_type: "${edgeType.value}". Must be one of: ${validEdgeTypes.join(', ')}`);
+    }
+
+    const rawWeight = call.input?.weight;
+    const weight = typeof rawWeight === 'number' ? rawWeight : undefined;
+
+    const ok = state.graphMemory.addEdge({
+      sourceId: sourceId.value,
+      targetId: targetId.value,
+      type: edgeType.value as EdgeType,
+      ...(weight !== undefined ? { weight } : {}),
+    });
+
+    if (!ok) {
+      return failureResult(call.id, `Failed to add edge. Ensure both nodes exist and are different.`);
+    }
+
+    const sourceNode = state.graphMemory.getNode(sourceId.value);
+    const targetNode = state.graphMemory.getNode(targetId.value);
+    return successResult(
+      call.id,
+      `Edge added: **${sourceNode?.label ?? sourceId.value}** —[${edgeType.value}]→ **${targetNode?.label ?? targetId.value}**`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── graph_search (Advanced Memory: Graph Relational Memory Mem0) ────────
+
+  executors.set('graph_search', async (call) => {
+    if (!state.graphMemory) {
+      return failureResult(call.id, 'Graph memory not available.');
+    }
+
+    const query = optionalString(call, 'query');
+    const nodeId = optionalString(call, 'node_id');
+    const nodeType = optionalString(call, 'node_type');
+
+    // Inspect a specific node
+    if (nodeId) {
+      const node = state.graphMemory.getNode(nodeId);
+      if (!node) {
+        return failureResult(call.id, `Node not found: ${nodeId}`);
+      }
+
+      const edges = state.graphMemory.getEdgesForNode(nodeId);
+      const neighbors = state.graphMemory.getNeighbors(nodeId);
+
+      const lines = [
+        `## Node: ${node.label} (${node.id})`,
+        '',
+        `- **Type:** ${node.type}`,
+        `- **Mentions:** ${node.mentionCount}`,
+        `- **First seen:** ${node.firstSeen}`,
+        `- **Last seen:** ${node.lastSeen}`,
+        `- **Memory IDs:** ${node.memoryIds.length > 0 ? node.memoryIds.join(', ') : 'none'}`,
+        '',
+        `### Edges (${edges.length})`,
+        '',
+      ];
+
+      for (const e of edges.slice(0, 20)) {
+        const other = e.sourceId === nodeId ? e.targetId : e.sourceId;
+        const otherNode = state.graphMemory.getNode(other);
+        const dir = e.sourceId === nodeId ? '→' : '←';
+        lines.push(`- ${dir} [${e.type}] **${otherNode?.label ?? other}** (weight: ${e.weight.toFixed(2)})`);
+      }
+      if (edges.length > 20) lines.push(`- ... and ${edges.length - 20} more`);
+
+      lines.push('', `### Neighbors (${neighbors.length})`, '');
+      for (const n of neighbors.slice(0, 20)) {
+        lines.push(`- **${n.label}** (${n.type}, mentions: ${n.mentionCount})`);
+      }
+      if (neighbors.length > 20) lines.push(`- ... and ${neighbors.length - 20} more`);
+
+      return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+    }
+
+    // Search or list
+    let nodes = query
+      ? state.graphMemory.searchNodes(query)
+      : [...state.graphMemory.getAllNodes()];
+
+    if (nodeType) {
+      nodes = nodes.filter((n) => n.type === nodeType);
+    }
+
+    if (nodes.length === 0 && !query) {
+      return successResult(
+        call.id,
+        `## Graph Summary\n\n- **Nodes:** ${state.graphMemory.nodeCount()}\n- **Edges:** ${state.graphMemory.edgeCount()}\n\nGraph is empty.`,
+        config.maxOutputChars,
+      );
+    }
+
+    const lines = [
+      `## Graph Search${query ? `: "${query}"` : ''} (${nodes.length} nodes)`,
+      '',
+      `**Total graph:** ${state.graphMemory.nodeCount()} nodes, ${state.graphMemory.edgeCount()} edges`,
+      '',
+    ];
+
+    for (const n of nodes.slice(0, 20)) {
+      lines.push(`- **${n.label}** (${n.id}) — ${n.type}, mentions: ${n.mentionCount}`);
+    }
+    if (nodes.length > 20) lines.push(`- ... and ${nodes.length - 20} more`);
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
+  // ── check_memory (Advanced Memory: Checker Pattern SAGE) ────────────────
+
+  executors.set('check_memory', async (call) => {
+    if (!state.memoryChecker) {
+      return failureResult(call.id, 'Memory checker not available.');
+    }
+
+    const content = requireString(call, 'content');
+    if ('error' in content) return content.error;
+    const category = optionalString(call, 'category');
+
+    // Parse existing knowledge entries
+    const rawExisting = call.input?.existing;
+    const existing: ExistingKnowledge[] = [];
+    if (Array.isArray(rawExisting)) {
+      for (const item of rawExisting) {
+        if (typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).id === 'string' && typeof (item as Record<string, unknown>).content === 'string') {
+          existing.push({ id: (item as Record<string, unknown>).id as string, content: (item as Record<string, unknown>).content as string });
+        }
+      }
+    }
+
+    const verdict = state.memoryChecker.check(
+      { content: content.value, ...(category ? { category } : {}) },
+      existing,
+    );
+
+    const lines = [
+      `## Memory Check: ${verdict.approved ? 'APPROVED' : 'REJECTED'}`,
+      '',
+      `**Composite score:** ${(verdict.compositeScore * 100).toFixed(0)}%`,
+      `**Summary:** ${verdict.summary}`,
+      '',
+      '| Check | Verdict | Score | Explanation |',
+      '|-------|---------|-------|-------------|',
+    ];
+
+    for (const c of verdict.checks) {
+      const icon = c.verdict === 'pass' ? 'pass' : c.verdict === 'warn' ? 'WARN' : 'FAIL';
+      lines.push(`| ${c.check} | ${icon} | ${(c.score * 100).toFixed(0)}% | ${c.explanation} |`);
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   return executors;
 }
 
@@ -4551,6 +6301,41 @@ export function buildAgentToolkit(
     EXPLORE_CODEBASE_SCHEMA,
     REBUILD_SELF_MODEL_SCHEMA,
     WRITE_RETROSPECTIVE_SCHEMA,
+    // Advanced Memory: Zettelkasten Link Network (A-MEM)
+    LINK_MEMORIES_SCHEMA,
+    GET_LINKS_SCHEMA,
+    TRAVERSE_LINKS_SCHEMA,
+    // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+    AUDN_ENQUEUE_SCHEMA,
+    AUDN_STATUS_SCHEMA,
+    // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+    ENTROPY_SCORE_SCHEMA,
+    EVALUATE_TIERS_SCHEMA,
+    // Advanced Memory: Git-Backed Memory Versioning (Letta)
+    SNAPSHOT_MEMORY_SCHEMA,
+    LIST_SNAPSHOTS_SCHEMA,
+    DIFF_SNAPSHOTS_SCHEMA,
+    // Advanced Memory: Memory Evolution (A-MEM)
+    EVOLVE_MEMORY_SCHEMA,
+    EVOLUTION_LINEAGE_SCHEMA,
+    EVOLUTION_LOG_SCHEMA,
+    // Advanced Memory: Temporal Invalidation (Mem0)
+    REGISTER_TEMPORAL_SCHEMA,
+    CHECK_FRESHNESS_SCHEMA,
+    SWEEP_EXPIRED_SCHEMA,
+    // Advanced Memory: Skill Files (Letta)
+    LEARN_SKILL_SCHEMA,
+    REFINE_SKILL_SCHEMA,
+    SEARCH_SKILLS_SCHEMA,
+    RECORD_SKILL_USE_SCHEMA,
+    // Advanced Memory: Concurrent Dream Processing (Letta)
+    DREAM_CONCURRENCY_CONFIG_SCHEMA,
+    // Advanced Memory: Graph Relational Memory (Mem0)
+    GRAPH_ADD_NODE_SCHEMA,
+    GRAPH_ADD_EDGE_SCHEMA,
+    GRAPH_SEARCH_SCHEMA,
+    // Advanced Memory: Checker Pattern (SAGE)
+    CHECK_MEMORY_SCHEMA,
   ];
 
   // Build all executors
@@ -4675,4 +6460,59 @@ export {
   EXPLORE_CODEBASE_SCHEMA,
   REBUILD_SELF_MODEL_SCHEMA,
   WRITE_RETROSPECTIVE_SCHEMA,
+  // Advanced Memory: Zettelkasten Link Network (A-MEM)
+  LINK_MEMORIES_SCHEMA,
+  GET_LINKS_SCHEMA,
+  TRAVERSE_LINKS_SCHEMA,
+  // Advanced Memory: AUDN Consolidation Cycle (Mem0)
+  AUDN_ENQUEUE_SCHEMA,
+  AUDN_STATUS_SCHEMA,
+  // Advanced Memory: Entropy-Based Tier Migration (SAGE)
+  ENTROPY_SCORE_SCHEMA,
+  EVALUATE_TIERS_SCHEMA,
+  // Advanced Memory: Git-Backed Memory Versioning (Letta)
+  SNAPSHOT_MEMORY_SCHEMA,
+  LIST_SNAPSHOTS_SCHEMA,
+  DIFF_SNAPSHOTS_SCHEMA,
+  // Advanced Memory: Memory Evolution (A-MEM)
+  EVOLVE_MEMORY_SCHEMA,
+  EVOLUTION_LINEAGE_SCHEMA,
+  EVOLUTION_LOG_SCHEMA,
+  // Advanced Memory: Temporal Invalidation (Mem0)
+  REGISTER_TEMPORAL_SCHEMA,
+  CHECK_FRESHNESS_SCHEMA,
+  SWEEP_EXPIRED_SCHEMA,
+  // Advanced Memory: Skill Files (Letta)
+  LEARN_SKILL_SCHEMA,
+  REFINE_SKILL_SCHEMA,
+  SEARCH_SKILLS_SCHEMA,
+  RECORD_SKILL_USE_SCHEMA,
+  // Advanced Memory: Concurrent Dream Processing (Letta)
+  DREAM_CONCURRENCY_CONFIG_SCHEMA,
+  // Advanced Memory: Graph Relational Memory (Mem0)
+  GRAPH_ADD_NODE_SCHEMA,
+  GRAPH_ADD_EDGE_SCHEMA,
+  GRAPH_SEARCH_SCHEMA,
+  // Advanced Memory: Checker Pattern (SAGE)
+  CHECK_MEMORY_SCHEMA,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool Registry Re-exports
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The tool registry system splits tools into 14 categories with progressive
+// hydration support for small models. Import from here for backwards compat,
+// or from './tools/index.js' for the full registry API.
+
+export {
+  buildFilteredToolkit,
+  buildPresetToolkit,
+  hydrateCategories,
+  buildCompactManifest,
+  TOOL_MAP,
+  getCategoryTools,
+  TASK_CATEGORY_PRESETS,
+} from './tools/registry.js';
+
+export type { CategoryName, ToolCategory, ExecutorContext, ToolMapEntry } from './tools/index.js';

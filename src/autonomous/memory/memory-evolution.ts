@@ -22,6 +22,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getTracer } from '../debug.js';
+import type { LinkNetwork } from './link-network.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -124,6 +125,18 @@ function generateMemoryId(): string {
   return `emem-${ts}-${rand}`;
 }
 
+/**
+ * Maps evolution operations to the appropriate link type for auto-linking.
+ */
+const EVOLUTION_LINK_TYPE: Record<EvolutionOp, import('./link-network.js').LinkType> = {
+  strengthen: 'supports',
+  weaken: 'contradicts',
+  merge: 'derived_from',
+  split: 'derived_from',
+  generalize: 'derived_from',
+  specialize: 'derived_from',
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Memory Evolution Engine
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,8 +146,20 @@ export class MemoryEvolution {
   private events: EvolutionEvent[] = [];
   private loaded: boolean = false;
 
+  /** Optional link network — when set, evolution ops auto-create links. */
+  private linkNetwork: LinkNetwork | null = null;
+
   constructor(config?: Partial<EvolutionConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  /**
+   * Wire a LinkNetwork so that evolution operations automatically create
+   * links between source and result memories. Call this once after both
+   * modules are initialized.
+   */
+  setLinkNetwork(network: LinkNetwork): void {
+    this.linkNetwork = network;
   }
 
   // ── Persistence ──────────────────────────────────────────────────────────
@@ -385,6 +410,25 @@ export class MemoryEvolution {
     // Trim old events
     if (this.events.length > this.config.maxEvents) {
       this.events = this.events.slice(-this.config.maxEvents);
+    }
+
+    // Auto-create links between source and result memories when a
+    // LinkNetwork is wired in. This implements the A-MEM principle that
+    // evolution operations generate structural links automatically.
+    if (this.linkNetwork) {
+      const linkType = EVOLUTION_LINK_TYPE[event.operation];
+      for (const sourceId of event.sourceIds) {
+        for (const resultId of event.resultIds) {
+          if (sourceId !== resultId) {
+            this.linkNetwork.createLink({
+              sourceId,
+              targetId: resultId,
+              type: linkType,
+              annotation: `auto: ${event.operation} — ${event.reason.slice(0, 60)}`,
+            });
+          }
+        }
+      }
     }
 
     const tracer = getTracer();

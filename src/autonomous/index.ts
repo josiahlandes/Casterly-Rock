@@ -164,6 +164,18 @@ export type {
   AgentState,
 } from './agent-tools.js';
 
+// Tool registry (category-based filtering + progressive hydration)
+export {
+  buildFilteredToolkit,
+  buildPresetToolkit,
+  hydrateCategories,
+  buildCompactManifest,
+  TOOL_MAP,
+  getCategoryTools,
+  TASK_CATEGORY_PRESETS,
+} from './tools/registry.js';
+export type { CategoryName, ToolCategory, ToolMapEntry } from './tools/index.js';
+
 // Agent loop
 export { AgentLoop, createAgentLoop } from './agent-loop.js';
 export type {
