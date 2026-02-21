@@ -45,6 +45,7 @@ import type { AudnConsolidator } from '../memory/audn-consolidator.js';
 import type { EntropyMigrator } from '../memory/entropy-migrator.js';
 import type { MemoryVersioning } from '../memory/memory-versioning.js';
 import type { MemoryEvolution } from '../memory/memory-evolution.js';
+import type { TemporalInvalidation } from '../memory/temporal-invalidation.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -146,6 +147,11 @@ export interface DreamOutcome {
   /** Memory evolution: total events recorded since last dream cycle */
   evolutionEventsLogged: number;
 
+  /** Temporal invalidation: entries swept / newly expired / deletion candidates */
+  temporalSwept: number;
+  temporalNewlyExpired: number;
+  temporalDeletionCandidates: number;
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -212,6 +218,7 @@ export class DreamCycleRunner {
     entropyMigrator?: EntropyMigrator,
     memoryVersioning?: MemoryVersioning,
     memoryEvolution?: MemoryEvolution,
+    temporalInvalidation?: TemporalInvalidation,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -246,6 +253,9 @@ export class DreamCycleRunner {
         entropyDemotions: 0,
         snapshotTaken: false,
         evolutionEventsLogged: 0,
+        temporalSwept: 0,
+        temporalNewlyExpired: 0,
+        temporalDeletionCandidates: 0,
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -540,6 +550,21 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Memory evolution summary failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('memoryEvolution');
+        }
+      }
+
+      // Phase 15: Temporal invalidation sweep (Advanced Memory: Mem0)
+      if (temporalInvalidation && temporalInvalidation.count() > 0) {
+        try {
+          const report = temporalInvalidation.sweep();
+          outcome.temporalSwept = report.evaluated;
+          outcome.temporalNewlyExpired = report.newlyExpired;
+          outcome.temporalDeletionCandidates = report.readyForDeletion;
+          outcome.phasesCompleted.push('temporalInvalidation');
+          tracer.log('dream', 'info', `Temporal sweep: ${report.evaluated} entries, ${report.newlyExpired} newly expired, ${report.readyForDeletion} for deletion`);
+        } catch (err) {
+          tracer.log('dream', 'warn', `Temporal invalidation failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('temporalInvalidation');
         }
       }
 

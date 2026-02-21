@@ -74,6 +74,8 @@ import { createAudnConsolidator, type AudnConsolidator } from './memory/audn-con
 import { createEntropyMigrator, type EntropyMigrator } from './memory/entropy-migrator.js';
 // Advanced Memory: Git-Backed Memory Versioning (Letta)
 import { createMemoryVersioning, type MemoryVersioning } from './memory/memory-versioning.js';
+// Advanced Memory: Temporal Invalidation (Mem0)
+import { createTemporalInvalidation, type TemporalInvalidation } from './memory/temporal-invalidation.js';
 
 // ============================================================================
 // CONSTANTS
@@ -208,6 +210,8 @@ export class AutonomousLoop {
   private entropyMigrator: EntropyMigrator;
   // Advanced Memory: Git-Backed Memory Versioning (Letta)
   private memoryVersioning: MemoryVersioning;
+  // Advanced Memory: Temporal Invalidation (Mem0)
+  private temporalInvalidation: TemporalInvalidation;
 
   // Roadmap: Optional providers
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
@@ -314,6 +318,9 @@ export class AutonomousLoop {
 
     // Advanced Memory: Git-Backed Memory Versioning (Letta)
     this.memoryVersioning = createMemoryVersioning();
+
+    // Advanced Memory: Temporal Invalidation (Mem0) — stateless, no load/save needed
+    this.temporalInvalidation = createTemporalInvalidation();
   }
 
   /**
@@ -764,6 +771,8 @@ export class AutonomousLoop {
         entropyMigrator: this.entropyMigrator,
         // Advanced Memory: Git-Backed Memory Versioning (Letta)
         memoryVersioning: this.memoryVersioning,
+        // Advanced Memory: Temporal Invalidation (Mem0)
+        temporalInvalidation: this.temporalInvalidation,
       };
 
       this.agentToolkit = buildAgentToolkit(
@@ -917,6 +926,7 @@ export class AutonomousLoop {
         this.entropyMigrator,
         this.memoryVersioning,
         this.memoryEvolution,
+        this.temporalInvalidation,
       );
 
       this.lastDreamCycleDate = today;

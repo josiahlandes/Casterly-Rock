@@ -69,6 +69,7 @@ import type { MemoryEvolution, EvolvableMemory, EvolutionOp } from './memory/mem
 import type { AudnConsolidator } from './memory/audn-consolidator.js';
 import type { EntropyMigrator, EntryForScoring, MemoryTier } from './memory/entropy-migrator.js';
 import type { MemoryVersioning } from './memory/memory-versioning.js';
+import type { TemporalInvalidation } from './memory/temporal-invalidation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -203,6 +204,8 @@ export interface AgentState {
   entropyMigrator?: EntropyMigrator;
   /** Git-backed memory versioning (Letta) */
   memoryVersioning?: MemoryVersioning;
+  /** Temporal invalidation (Mem0) — TTL-based memory expiry */
+  temporalInvalidation?: TemporalInvalidation;
 }
 
 /**
@@ -2281,6 +2284,66 @@ reason, and timestamp. Optionally filter by operation type.`,
         description: 'Maximum events to return (default: 20).',
       },
     },
+    required: [],
+  },
+};
+
+// ── Advanced Memory: Temporal Invalidation (Mem0) ────────────────────────────
+
+const REGISTER_TEMPORAL_SCHEMA: ToolSchema = {
+  name: 'register_temporal',
+  description: `Register a memory entry for TTL-based temporal tracking. Each category has a
+different TTL: facts (90 days), observations (30 days), opinions (14 days),
+working notes (7 days), crystals (180 days), rules (120 days). Entries decay
+over time and are eventually flagged for deletion.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entry_id: {
+        type: 'string',
+        description: 'The memory entry ID to track.',
+      },
+      category: {
+        type: 'string',
+        enum: ['fact', 'observation', 'opinion', 'working_note', 'crystal', 'rule'],
+        description: 'TTL category determining how long the entry lives.',
+      },
+    },
+    required: ['entry_id', 'category'],
+  },
+};
+
+const CHECK_FRESHNESS_SCHEMA: ToolSchema = {
+  name: 'check_freshness',
+  description: `Check the freshness and expiry status of a tracked memory entry, or list all
+entries in a given category with their freshness scores. Returns freshness (0-1,
+where 1 = fresh and 0 = expired) and whether the entry is in its grace period.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      entry_id: {
+        type: 'string',
+        description: 'Specific entry ID to check (optional if category is given).',
+      },
+      category: {
+        type: 'string',
+        enum: ['fact', 'observation', 'opinion', 'working_note', 'crystal', 'rule'],
+        description: 'List all entries in this category with their freshness.',
+      },
+    },
+    required: [],
+  },
+};
+
+const SWEEP_EXPIRED_SCHEMA: ToolSchema = {
+  name: 'sweep_expired',
+  description: `Run a temporal invalidation sweep across all tracked memory entries. Updates
+freshness scores, identifies newly expired entries, and lists entries past their
+grace period that are candidates for deletion. Use this during maintenance or
+before dream cycles to clean up stale memories.`,
+  inputSchema: {
+    type: 'object',
+    properties: {},
     required: [],
   },
 };
@@ -5344,6 +5407,134 @@ function buildExecutors(
     return successResult(call.id, lines.join('\n'), config.maxOutputChars);
   });
 
+  // ── register_temporal (Advanced Memory: Temporal Invalidation Mem0) ──────
+
+  executors.set('register_temporal', async (call) => {
+    if (!state.temporalInvalidation) {
+      return failureResult(call.id, 'Temporal invalidation not available.');
+    }
+
+    const entryId = requireString(call, 'entry_id');
+    if ('error' in entryId) return entryId.error;
+    const category = requireString(call, 'category');
+    if ('error' in category) return category.error;
+
+    const validCategories = ['fact', 'observation', 'opinion', 'working_note', 'crystal', 'rule'];
+    if (!validCategories.includes(category.value)) {
+      return failureResult(call.id, `Invalid category: ${category.value}. Must be one of: ${validCategories.join(', ')}`);
+    }
+
+    const entry = state.temporalInvalidation.register({
+      id: entryId.value,
+      category: category.value,
+    });
+
+    const policy = state.temporalInvalidation.getPolicy(category.value);
+    const ttl = policy ? `${policy.ttlDays}d TTL, ${policy.gracePeriodDays}d grace, ${policy.decay} decay` : 'default policy';
+
+    return successResult(
+      call.id,
+      `Registered "${entryId.value}" for temporal tracking (${category.value}: ${ttl}). Freshness: ${entry.freshness.toFixed(2)}`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── check_freshness (Advanced Memory: Temporal Invalidation Mem0) ────────
+
+  executors.set('check_freshness', async (call) => {
+    if (!state.temporalInvalidation) {
+      return failureResult(call.id, 'Temporal invalidation not available.');
+    }
+
+    const entryId = optionalString(call, 'entry_id');
+    const category = optionalString(call, 'category');
+
+    if (entryId) {
+      const freshness = state.temporalInvalidation.getFreshness(entryId);
+      if (freshness === null) {
+        return failureResult(call.id, `Entry "${entryId}" is not being tracked. Use register_temporal first.`);
+      }
+
+      const expired = state.temporalInvalidation.isExpired(entryId);
+      const pct = Math.round(freshness * 100);
+      return successResult(
+        call.id,
+        `**${entryId}**: ${pct}% fresh${expired ? ' (EXPIRED)' : ''}`,
+        config.maxOutputChars,
+      );
+    }
+
+    if (category) {
+      const entries = state.temporalInvalidation.getByCategory(category);
+      if (entries.length === 0) {
+        return successResult(call.id, `No entries tracked in category "${category}".`, config.maxOutputChars);
+      }
+
+      const lines = [
+        `## Tracked Entries: ${category} (${entries.length})`,
+        '',
+        '| ID | Freshness | Expired | Grace |',
+        '|----|-----------|---------|-------|',
+      ];
+
+      for (const e of entries) {
+        const pct = Math.round(e.freshness * 100);
+        lines.push(`| ${e.id} | ${pct}% | ${e.expired ? 'yes' : 'no'} | ${e.inGracePeriod ? 'yes' : 'no'} |`);
+      }
+
+      return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+    }
+
+    // No filters — show summary
+    const all = state.temporalInvalidation.getAll();
+    if (all.length === 0) {
+      return successResult(call.id, 'No entries tracked. Use register_temporal to start tracking.', config.maxOutputChars);
+    }
+
+    const fresh = all.filter((e) => !e.expired).length;
+    const expired = all.filter((e) => e.expired && e.inGracePeriod).length;
+    const deletion = all.filter((e) => e.expired && !e.inGracePeriod).length;
+
+    return successResult(
+      call.id,
+      `Tracking ${all.length} entries: ${fresh} fresh, ${expired} expired (grace), ${deletion} ready for deletion.`,
+      config.maxOutputChars,
+    );
+  });
+
+  // ── sweep_expired (Advanced Memory: Temporal Invalidation Mem0) ──────────
+
+  executors.set('sweep_expired', async (call) => {
+    if (!state.temporalInvalidation) {
+      return failureResult(call.id, 'Temporal invalidation not available.');
+    }
+
+    const report = state.temporalInvalidation.sweep();
+
+    const lines = [
+      `## Temporal Sweep Results`,
+      '',
+      `| Metric | Count |`,
+      `|--------|-------|`,
+      `| Evaluated | ${report.evaluated} |`,
+      `| Fresh | ${report.fresh} |`,
+      `| Newly expired | ${report.newlyExpired} |`,
+      `| Ready for deletion | ${report.readyForDeletion} |`,
+    ];
+
+    if (report.deletionCandidates.length > 0) {
+      lines.push('', '**Deletion candidates:**');
+      for (const id of report.deletionCandidates.slice(0, 20)) {
+        lines.push(`- ${id}`);
+      }
+      if (report.deletionCandidates.length > 20) {
+        lines.push(`- ... and ${report.deletionCandidates.length - 20} more`);
+      }
+    }
+
+    return successResult(call.id, lines.join('\n'), config.maxOutputChars);
+  });
+
   return executors;
 }
 
@@ -5481,6 +5672,10 @@ export function buildAgentToolkit(
     EVOLVE_MEMORY_SCHEMA,
     EVOLUTION_LINEAGE_SCHEMA,
     EVOLUTION_LOG_SCHEMA,
+    // Advanced Memory: Temporal Invalidation (Mem0)
+    REGISTER_TEMPORAL_SCHEMA,
+    CHECK_FRESHNESS_SCHEMA,
+    SWEEP_EXPIRED_SCHEMA,
   ];
 
   // Build all executors
@@ -5623,4 +5818,8 @@ export {
   EVOLVE_MEMORY_SCHEMA,
   EVOLUTION_LINEAGE_SCHEMA,
   EVOLUTION_LOG_SCHEMA,
+  // Advanced Memory: Temporal Invalidation (Mem0)
+  REGISTER_TEMPORAL_SCHEMA,
+  CHECK_FRESHNESS_SCHEMA,
+  SWEEP_EXPIRED_SCHEMA,
 };
