@@ -44,7 +44,6 @@ import { BASH_TOOL } from './tools/schemas/core.js';
 import {
   resolveModelProfile,
   enrichToolDescriptions,
-  getGenerationOverrides,
 } from './models/index.js';
 
 // ─── CLI Parsing ─────────────────────────────────────────────────────────────

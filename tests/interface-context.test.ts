@@ -13,9 +13,6 @@ import {
 import type { ConversationMessage, Session, SessionState } from '../src/interface/session.js';
 import {
   getMessageText,
-  isSimpleContent,
-  createTextMessage,
-  createBlockMessage,
   generateSessionKey,
   getSessionFilePath,
   loadSessionState,
@@ -23,7 +20,6 @@ import {
   appendMessageToSession,
   shouldSessionReset,
 } from '../src/interface/session.js';
-import type { ContentBlock } from '../src/interface/session.js';
 
 // ─── Temp dir helpers ────────────────────────────────────────────────────────
 
@@ -111,62 +107,6 @@ describe('getMessageText', () => {
       timestamp: '2024-01-01T00:00:00Z',
     };
     expect(getMessageText(msg)).toBe('');
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// isSimpleContent
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('isSimpleContent', () => {
-  it('returns true for string', () => {
-    expect(isSimpleContent('hello')).toBe(true);
-  });
-
-  it('returns false for content blocks array', () => {
-    expect(isSimpleContent([{ type: 'text', text: 'x' }])).toBe(false);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// createTextMessage / createBlockMessage
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('createTextMessage', () => {
-  it('creates a user text message', () => {
-    const msg = createTextMessage('user', 'Hi');
-    expect(msg.role).toBe('user');
-    expect(msg.content).toBe('Hi');
-    expect(msg.sender).toBeUndefined();
-  });
-
-  it('includes sender when provided', () => {
-    const msg = createTextMessage('user', 'Hi', 'John');
-    expect(msg.sender).toBe('John');
-  });
-
-  it('creates assistant message', () => {
-    const msg = createTextMessage('assistant', 'Hello!');
-    expect(msg.role).toBe('assistant');
-    expect(msg.content).toBe('Hello!');
-  });
-});
-
-describe('createBlockMessage', () => {
-  it('creates a message with content blocks', () => {
-    const blocks: ContentBlock[] = [
-      { type: 'text', text: 'Result' },
-      { type: 'tool_result', tool_use_id: 't1', content: 'output' },
-    ];
-    const msg = createBlockMessage('assistant', blocks);
-    expect(msg.role).toBe('assistant');
-    expect(Array.isArray(msg.content)).toBe(true);
-    expect((msg.content as ContentBlock[]).length).toBe(2);
-  });
-
-  it('includes sender when provided', () => {
-    const msg = createBlockMessage('user', [{ type: 'text', text: 'Hi' }], 'Katie');
-    expect(msg.sender).toBe('Katie');
   });
 });
 

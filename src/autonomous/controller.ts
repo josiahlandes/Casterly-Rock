@@ -5,7 +5,7 @@
  * so the iMessage daemon can manage the autonomous cycle in-process.
  *
  * Key design: we never call AutonomousLoop.start() (blocking). Instead the
- * daemon calls tick() every poll interval, which calls runCycle() once when
+ * daemon calls tick() every poll interval, which calls runAgentCycle() once when
  * the cycle interval has elapsed and the loop is enabled.
  *
  * Handoff: when the work window closes (6am) or a cycle completes with
@@ -170,13 +170,14 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     abortController = new AbortController();
 
     try {
-      safeLogger.info('Autonomous: starting cycle');
-      await loop.runCycle(abortController.signal);
+      safeLogger.info('Autonomous: starting agent cycle');
+      // The agent loop is the sole execution path
+      await loop.runAgentCycle();
 
       totalCycles++;
       successfulCycles++;
       lastCycleAt = new Date().toISOString();
-      safeLogger.info('Autonomous: cycle completed');
+      safeLogger.info('Autonomous: agent cycle completed');
 
       // Write handoff after each cycle if there are pending branches
       if (loop.pendingBranchList.length > 0) {
@@ -298,25 +299,16 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Check if the current time is within the work window (outside quiet hours).
- * Returns true if the loop should be working, false if in quiet hours.
+ * Check if the current time is within quiet hours.
+ * Returns true always — quiet hours are a scheduling preference, not
+ * a hard gate. The LLM receives quiet hours info via the system prompt
+ * and prefers consolidation work during those times.
+ *
+ * The function is kept for backward compatibility (callers that check
+ * work window transitions for handoff writing). It now returns true
+ * unconditionally — the loop always works. See docs/vision.md.
  */
-export function isInWorkWindow(config: AutonomousConfig): boolean {
-  if (!config.quietHours?.enabled) return true;
-
-  const now = new Date();
-  const currentTime = now.getHours() * 60 + now.getMinutes();
-
-  const startParts = config.quietHours.start.split(':').map(Number);
-  const endParts = config.quietHours.end.split(':').map(Number);
-  const startTime = (startParts[0] ?? 0) * 60 + (startParts[1] ?? 0);
-  const endTime = (endParts[0] ?? 0) * 60 + (endParts[1] ?? 0);
-
-  // Quiet hours: startTime <= currentTime < endTime
-  // Work window = NOT in quiet hours
-  if (currentTime >= startTime && currentTime < endTime) {
-    return false; // In quiet hours = not working
-  }
+export function isInWorkWindow(_config: AutonomousConfig): boolean {
   return true;
 }
 

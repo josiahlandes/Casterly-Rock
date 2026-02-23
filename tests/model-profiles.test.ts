@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import {
   DEFAULT_PROFILE,
   resolveModelProfile,
-  getBuiltInProfile,
   enrichSystemPrompt,
   enrichToolDescriptions,
   applyResponseHints,
@@ -219,18 +218,6 @@ profiles:
     const profile = resolveModelProfile('unknown:latest', '/nonexistent/path.yaml');
     expect(profile.modelId).toBe('unknown:latest');
     expect(profile.displayName).toBe('Default Profile');
-  });
-});
-
-describe('getBuiltInProfile', () => {
-  it('returns profile for known model', () => {
-    const profile = getBuiltInProfile('gpt-oss:120b');
-    expect(profile).toBeDefined();
-    expect(profile?.modelId).toBe('gpt-oss:120b');
-  });
-
-  it('returns undefined for unknown model', () => {
-    expect(getBuiltInProfile('unknown:latest')).toBeUndefined();
   });
 });
 

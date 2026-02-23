@@ -9,6 +9,8 @@
 export * from './types.js';
 
 // Provider abstraction
+// @deprecated — Legacy 4-phase provider. Use LlmProvider from providers/base.js instead.
+// Retained for test/script compatibility; will be removed in a future release.
 export { createProvider, BaseAutonomousProvider, PROMPTS } from './provider.js';
 export type {
   AutonomousProvider,
@@ -30,11 +32,10 @@ export type { AggregateStats, MemoryEntry } from './reflector.js';
 
 // Main loop
 export { AutonomousLoop, AbortError, loadConfig, main } from './loop.js';
-export type { LoopOptions } from './loop.js';
 
 // Controller (daemon-side management)
-export { createAutonomousController, isInWorkWindow } from './controller.js';
-export type { AutonomousController, AutonomousStatus, ControllerOptions } from './controller.js';
+export { createAutonomousController } from './controller.js';
+export type { AutonomousController } from './controller.js';
 
 // Reports
 export { formatDailyReport, formatMorningSummary } from './report.js';
@@ -61,7 +62,7 @@ export type {
 // ── Phase 1: Persistent Identity & Memory ──────────────────────────────────
 
 // Debug and tracing
-export { DebugTracer, getTracer, initTracer, resetTracer } from './debug.js';
+export { getTracer } from './debug.js';
 export type {
   DebugSubsystem,
   DebugLevel,
@@ -113,7 +114,7 @@ export type {
 
 // Journal system
 export { Journal, createJournal } from './journal.js';
-export type { JournalEntry, JournalConfig } from './journal.js';
+export type { JournalEntry } from './journal.js';
 
 // Trigger router
 export {
@@ -133,7 +134,6 @@ export {
   formatStateDiff,
   runInspector,
 } from '../debug/inspector.js';
-export type { InspectOptions, StateSnapshot, StateDiff } from '../debug/inspector.js';
 
 // User model (from world-model)
 export type { UserModel } from './world-model.js';
@@ -164,6 +164,18 @@ export type {
   AgentState,
 } from './agent-tools.js';
 
+// Tool registry (category-based filtering + progressive hydration)
+export {
+  buildFilteredToolkit,
+  buildPresetToolkit,
+  hydrateCategories,
+  buildCompactManifest,
+  TOOL_MAP,
+  getCategoryTools,
+  TASK_CATEGORY_PRESETS,
+} from './tools/registry.js';
+export type { CategoryName, ToolCategory, ToolMapEntry } from './tools/index.js';
+
 // Agent loop
 export { AgentLoop, createAgentLoop } from './agent-loop.js';
 export type {
@@ -177,7 +189,7 @@ export type {
 // ── Phase 3: Event-Driven Awareness ──────────────────────────────────────────
 
 // Event bus
-export { EventBus, getEventPriority, compareEventPriority } from './events.js';
+export { EventBus } from './events.js';
 export type {
   SystemEvent,
   EventHandler,
@@ -215,7 +227,7 @@ export type {
 // ── Phase 5: Hardware Maximization ──────────────────────────────────────────
 
 // Reasoning scaler
-export { ReasoningScaler, createReasoningScaler } from './reasoning/scaling.js';
+export { ReasoningScaler } from './reasoning/scaling.js';
 export type {
   Difficulty,
   ReasoningScalerConfig,
@@ -224,7 +236,7 @@ export type {
 } from './reasoning/scaling.js';
 
 // Adversarial tester
-export { AdversarialTester, createAdversarialTester } from './reasoning/adversarial.js';
+export { AdversarialTester } from './reasoning/adversarial.js';
 export type {
   TestCase as AdversarialTestCase,
   AttackCategory,
@@ -236,7 +248,7 @@ export type {
 // ── Phase 6: Dream Cycles ────────────────────────────────────────────────────
 
 // Self-model
-export { SelfModel, createSelfModel } from './dream/self-model.js';
+export { SelfModel } from './dream/self-model.js';
 export type {
   SkillAssessment,
   SelfModelData,
@@ -244,7 +256,7 @@ export type {
 } from './dream/self-model.js';
 
 // Code archaeology
-export { CodeArchaeologist, createCodeArchaeologist } from './dream/archaeology.js';
+export { CodeArchaeologist } from './dream/archaeology.js';
 export type {
   FileHistory,
   FragileFile,
@@ -252,16 +264,124 @@ export type {
 } from './dream/archaeology.js';
 
 // Dream cycle runner
-export { DreamCycleRunner, createDreamCycleRunner } from './dream/runner.js';
+export { DreamCycleRunner } from './dream/runner.js';
 export type {
   DreamCycleConfig,
   DreamOutcome,
 } from './dream/runner.js';
 
+// ── Vision Tier 1: Self-Knowledge ─────────────────────────────────────────────
+
+// Crystal store (memory crystallization)
+export { CrystalStore, createCrystalStore } from './crystal-store.js';
+export type {
+  Crystal,
+  CrystalStoreConfig,
+  CrystalResult,
+} from './crystal-store.js';
+
+// Constitution store (self-governance)
+export { ConstitutionStore, createConstitutionStore } from './constitution-store.js';
+export type {
+  ConstitutionalRule,
+  ConstitutionStoreConfig,
+  RuleResult,
+} from './constitution-store.js';
+
+// Trace replay (self-debugging)
+export { TraceReplayStore, createTraceReplayStore } from './trace-replay.js';
+export type {
+  TraceStep,
+  ExecutionTrace,
+  TraceIndexEntry,
+  TraceReplayConfig,
+  TraceComparison,
+} from './trace-replay.js';
+
+// ── Vision Tier 2: Self-Improvement ──────────────────────────────────────────
+
+// Prompt store (self-modifying prompts)
+export { PromptStore } from './prompt-store.js';
+export type {
+  PromptVersion,
+  VersionMetrics,
+  EditResult,
+  PromptStoreConfig,
+} from './prompt-store.js';
+
+// Shadow store (shadow execution)
+export { ShadowStore } from './shadow-store.js';
+export type {
+  Shadow,
+  JudgmentPattern,
+  ShadowAnalysis,
+  ShadowStoreConfig,
+} from './shadow-store.js';
+
+// Tool synthesizer (re-exported from tools)
+export { ToolSynthesizer } from '../tools/synthesizer.js';
+export type {
+  SynthesizedTool,
+  ToolImplementation,
+  CreateToolResult,
+  ToolSynthesizerConfig,
+} from '../tools/synthesizer.js';
+
+// ── Vision Tier 3: Advanced Self-Improvement ─────────────────────────────────
+
+// Challenge generator (adversarial dual-model self-testing)
+export { ChallengeGenerator } from './dream/challenge-generator.js';
+export type {
+  Challenge,
+  ChallengeType,
+  ChallengeResult,
+  ChallengeBatch,
+  ChallengeBatchSummary,
+  ChallengeGeneratorConfig,
+} from './dream/challenge-generator.js';
+
+// Challenge evaluator (sub-skill tracking)
+export { ChallengeEvaluator } from './dream/challenge-evaluator.js';
+export type {
+  SubSkillAssessment,
+  EvaluationHistory,
+  EvaluationRecord,
+  ChallengeEvaluatorConfig,
+} from './dream/challenge-evaluator.js';
+
+// Prompt evolution (genetic algorithm)
+export { PromptEvolution } from './dream/prompt-evolution.js';
+export type {
+  PromptVariant,
+  FitnessMetrics,
+  EvolutionMetadata,
+  MutationType,
+  PromptEvolutionConfig,
+} from './dream/prompt-evolution.js';
+
+// Training extractor (LoRA data extraction)
+export { TrainingExtractor } from './dream/training-extractor.js';
+export type {
+  TrainingExample,
+  PreferencePair,
+  TrainingDataset,
+  TrainingExtractorConfig,
+} from './dream/training-extractor.js';
+
+// LoRA trainer (adapter management)
+export { LoraTrainer } from './dream/lora-trainer.js';
+export type {
+  LoraAdapter,
+  LoraTrainingParams,
+  AdapterRegistry,
+  BenchmarkTask,
+  AdapterEvaluation,
+  LoraTrainerConfig,
+} from './dream/lora-trainer.js';
+
 // ── Phase 7: Communication ───────────────────────────────────────────────────
 
 // Message policy
-export { MessagePolicy, createMessagePolicy } from './communication/policy.js';
 export type {
   NotifiableEvent,
   DailySummaryStats,

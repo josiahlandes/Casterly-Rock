@@ -10,12 +10,10 @@
  * Part of Phase 0: Debugging Infrastructure.
  */
 
-import { readFile } from 'node:fs/promises';
 import { WorldModel } from '../autonomous/world-model.js';
 import { GoalStack } from '../autonomous/goal-stack.js';
 import { IssueLog } from '../autonomous/issue-log.js';
 import { Journal } from '../autonomous/journal.js';
-import { getTracer, type DebugSubsystem } from '../autonomous/debug.js';
 import { safeLogger } from '../logging/safe-logger.js';
 
 // ─────────────────────────────────────────────────────────────────────────────

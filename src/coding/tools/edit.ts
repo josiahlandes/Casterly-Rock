@@ -34,7 +34,7 @@ export interface EditResult {
   originalContent?: string;
 }
 
-export interface EditHistoryEntry {
+interface EditHistoryEntry {
   id: string;
   timestamp: string;
   path: string;
@@ -77,20 +77,6 @@ function addToHistory(entry: Omit<EditHistoryEntry, 'id' | 'timestamp'>): string
   }
 
   return id;
-}
-
-/**
- * Get edit history.
- */
-export function getEditHistory(limit?: number): EditHistoryEntry[] {
-  return editHistory.slice(0, limit);
-}
-
-/**
- * Clear edit history.
- */
-export function clearEditHistory(): void {
-  editHistory.length = 0;
 }
 
 /**
@@ -301,162 +287,10 @@ export async function editFile(request: EditRequest): Promise<EditResult> {
 }
 
 /**
- * Perform multiple edits as a transaction.
- * All edits succeed or all are rolled back.
- */
-export async function editFilesTransaction(
-  requests: EditRequest[]
-): Promise<{ success: boolean; results: EditResult[]; error?: string }> {
-  const results: EditResult[] = [];
-  const backups: Map<string, string> = new Map();
-
-  // First pass: backup all files and validate
-  for (const request of requests) {
-    const absolutePath = path.isAbsolute(request.path)
-      ? request.path
-      : path.resolve(request.path);
-
-    try {
-      const content = await fs.readFile(absolutePath, 'utf-8');
-      backups.set(absolutePath, content);
-
-      // Check if search string exists
-      if (!content.includes(request.search)) {
-        // Rollback and fail
-        return {
-          success: false,
-          results,
-          error: `Search string not found in ${absolutePath}`,
-        };
-      }
-    } catch (err) {
-      return {
-        success: false,
-        results,
-        error: `Failed to read ${absolutePath}: ${(err as Error).message}`,
-      };
-    }
-  }
-
-  // Second pass: apply all edits
-  for (const request of requests) {
-    const result = await editFile(request);
-    results.push(result);
-
-    if (!result.success) {
-      // Rollback all changes
-      for (const [filePath, content] of backups) {
-        try {
-          await fs.writeFile(filePath, content, 'utf-8');
-        } catch {
-          // Best effort rollback
-        }
-      }
-
-      return {
-        success: false,
-        results,
-        error: `Edit failed for ${request.path}: ${result.error}`,
-      };
-    }
-  }
-
-  return { success: true, results };
-}
-
-/**
- * Undo the last edit.
- */
-export async function undoLastEdit(): Promise<{
-  success: boolean;
-  entry?: EditHistoryEntry;
-  error?: string;
-}> {
-  if (editHistory.length === 0) {
-    return { success: false, error: 'No edits to undo' };
-  }
-
-  const entry = editHistory.shift();
-  if (!entry) {
-    return { success: false, error: 'No edits to undo' };
-  }
-
-  try {
-    await fs.writeFile(entry.path, entry.before, 'utf-8');
-    return { success: true, entry };
-  } catch (err) {
-    // Put entry back
-    editHistory.unshift(entry);
-    return {
-      success: false,
-      error: `Failed to undo: ${(err as Error).message}`,
-    };
-  }
-}
-
-/**
- * Undo a specific edit by ID.
- */
-export async function undoEdit(
-  editId: string
-): Promise<{ success: boolean; entry?: EditHistoryEntry; error?: string }> {
-  const index = editHistory.findIndex((e) => e.id === editId);
-
-  if (index === -1) {
-    return { success: false, error: `Edit not found: ${editId}` };
-  }
-
-  const entry = editHistory[index];
-  if (!entry) {
-    return { success: false, error: `Edit not found: ${editId}` };
-  }
-
-  try {
-    await fs.writeFile(entry.path, entry.before, 'utf-8');
-    editHistory.splice(index, 1);
-    return { success: true, entry: entry };
-  } catch (err) {
-    return {
-      success: false,
-      error: `Failed to undo: ${(err as Error).message}`,
-    };
-  }
-}
-
-/**
  * Escape special regex characters in a string.
  */
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * Parse search/replace blocks from LLM output.
- *
- * Format:
- * <<<<<<< SEARCH
- * old code
- * =======
- * new code
- * >>>>>>> REPLACE
- */
-export function parseSearchReplaceBlocks(
-  text: string
-): Array<{ search: string; replace: string }> {
-  const blocks: Array<{ search: string; replace: string }> = [];
-  const pattern = /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/g;
 
-  let match;
-  while ((match = pattern.exec(text)) !== null) {
-    const searchPart = match[1];
-    const replacePart = match[2];
-    if (searchPart !== undefined && replacePart !== undefined) {
-      blocks.push({
-        search: searchPart,
-        replace: replacePart,
-      });
-    }
-  }
-
-  return blocks;
-}

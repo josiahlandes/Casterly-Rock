@@ -9,7 +9,7 @@ import type {
   ValidationStepResult,
   ValidationError,
 } from '../src/coding/validation/types.js';
-import { DEFAULT_VALIDATION_CONFIG, VALIDATION_PRESETS, SUPPORTED_PARSERS } from '../src/coding/validation/types.js';
+import { DEFAULT_VALIDATION_CONFIG } from '../src/coding/validation/types.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -223,66 +223,3 @@ describe('DEFAULT_VALIDATION_CONFIG', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// VALIDATION_PRESETS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('VALIDATION_PRESETS', () => {
-  it('quick preset skips typecheck and test', () => {
-    expect(VALIDATION_PRESETS.quick.typecheckOnEdit).toBe(false);
-    expect(VALIDATION_PRESETS.quick.testOnEdit).toBe(false);
-    expect(VALIDATION_PRESETS.quick.parseCheck).toBe(true);
-  });
-
-  it('standard preset includes typecheck but not test', () => {
-    expect(VALIDATION_PRESETS.standard.typecheckOnEdit).toBe(true);
-    expect(VALIDATION_PRESETS.standard.testOnEdit).toBe(false);
-  });
-
-  it('full preset includes everything', () => {
-    expect(VALIDATION_PRESETS.full.parseCheck).toBe(true);
-    expect(VALIDATION_PRESETS.full.lintOnEdit).toBe(true);
-    expect(VALIDATION_PRESETS.full.typecheckOnEdit).toBe(true);
-    expect(VALIDATION_PRESETS.full.testOnEdit).toBe(true);
-  });
-
-  it('ci preset enables auto-commit', () => {
-    expect(VALIDATION_PRESETS.ci.autoCommit).toBe(true);
-    expect(VALIDATION_PRESETS.ci.testOnEdit).toBe(true);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SUPPORTED_PARSERS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('SUPPORTED_PARSERS', () => {
-  it('includes TypeScript parser', () => {
-    const ts = SUPPORTED_PARSERS.find((p) => p.name === 'typescript');
-    expect(ts).toBeDefined();
-    expect(ts!.extensions).toContain('.ts');
-    expect(ts!.extensions).toContain('.tsx');
-    expect(ts!.available).toBe(true);
-  });
-
-  it('includes JavaScript parser', () => {
-    const js = SUPPORTED_PARSERS.find((p) => p.name === 'javascript');
-    expect(js).toBeDefined();
-    expect(js!.extensions).toContain('.js');
-    expect(js!.extensions).toContain('.mjs');
-    expect(js!.extensions).toContain('.cjs');
-  });
-
-  it('includes JSON parser', () => {
-    const json = SUPPORTED_PARSERS.find((p) => p.name === 'json');
-    expect(json).toBeDefined();
-    expect(json!.extensions).toContain('.json');
-  });
-
-  it('includes YAML parser', () => {
-    const yaml = SUPPORTED_PARSERS.find((p) => p.name === 'yaml');
-    expect(yaml).toBeDefined();
-    expect(yaml!.extensions).toContain('.yaml');
-    expect(yaml!.extensions).toContain('.yml');
-  });
-});

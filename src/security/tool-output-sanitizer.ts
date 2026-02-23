@@ -20,7 +20,7 @@ import { safeLogger } from '../logging/safe-logger.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface SanitizationResult {
+interface SanitizationResult {
   /** The sanitized output string */
   output: string;
   /** Whether any injection patterns were detected */

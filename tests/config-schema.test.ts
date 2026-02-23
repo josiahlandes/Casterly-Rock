@@ -1,29 +1,37 @@
 import { describe, expect, it } from 'vitest';
 
-import { appConfigSchema, sensitiveCategorySchema } from '../src/config/schema.js';
+import { appConfigSchema } from '../src/config/schema.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// sensitiveCategorySchema
+// sensitiveCategorySchema (validated through appConfigSchema)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+const baseConfig = (alwaysLocal: unknown[]) => ({
+  local: {
+    provider: 'ollama' as const,
+    model: 'test-model',
+    baseUrl: 'http://localhost:11434',
+  },
+  sensitivity: { alwaysLocal },
+});
 
 describe('sensitiveCategorySchema', () => {
   it('accepts valid categories', () => {
     const valid = ['calendar', 'finances', 'voice_memos', 'health', 'credentials', 'documents', 'contacts', 'location'];
-    for (const cat of valid) {
-      expect(sensitiveCategorySchema.parse(cat)).toBe(cat);
-    }
+    const result = appConfigSchema.parse(baseConfig(valid));
+    expect(result.sensitivity.alwaysLocal).toEqual(valid);
   });
 
   it('rejects invalid category', () => {
-    expect(() => sensitiveCategorySchema.parse('invalid')).toThrow();
+    expect(() => appConfigSchema.parse(baseConfig(['invalid']))).toThrow();
   });
 
   it('rejects empty string', () => {
-    expect(() => sensitiveCategorySchema.parse('')).toThrow();
+    expect(() => appConfigSchema.parse(baseConfig(['']))).toThrow();
   });
 
   it('rejects non-string', () => {
-    expect(() => sensitiveCategorySchema.parse(123)).toThrow();
+    expect(() => appConfigSchema.parse(baseConfig([123]))).toThrow();
   });
 });
 

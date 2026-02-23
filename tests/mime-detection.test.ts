@@ -5,7 +5,6 @@ import {
   mimeToFormat,
   extToFormat,
   detectFormat,
-  isDocumentFormat,
   isArchiveFormat,
 } from '../src/tools/executors/parsers/mime.js';
 
@@ -189,27 +188,8 @@ describe('detectFormat', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// isDocumentFormat / isArchiveFormat
+// isArchiveFormat
 // ═══════════════════════════════════════════════════════════════════════════════
-
-describe('isDocumentFormat', () => {
-  it('returns true for document formats', () => {
-    expect(isDocumentFormat('pdf')).toBe(true);
-    expect(isDocumentFormat('docx')).toBe(true);
-    expect(isDocumentFormat('xlsx')).toBe(true);
-    expect(isDocumentFormat('csv')).toBe(true);
-  });
-
-  it('returns false for archive formats', () => {
-    expect(isDocumentFormat('zip')).toBe(false);
-    expect(isDocumentFormat('gzip')).toBe(false);
-    expect(isDocumentFormat('tar')).toBe(false);
-  });
-
-  it('returns false for unknown', () => {
-    expect(isDocumentFormat('png')).toBe(false);
-  });
-});
 
 describe('isArchiveFormat', () => {
   it('returns true for archive formats', () => {

@@ -21,8 +21,6 @@ import { loadConfig } from '../src/autonomous/loop.js';
 import type {
   BacklogItem,
   BacklogStatus,
-  ObservationType,
-  HypothesisApproach,
   Observation,
   Hypothesis,
 } from '../src/autonomous/types.js';
@@ -64,7 +62,7 @@ function makePendingItem(overrides?: Partial<BacklogItem>): BacklogItem {
     title: 'Test feature',
     description: 'A test feature description',
     priority: 1,
-    approach: 'add_feature' as HypothesisApproach,
+    approach: 'add_feature' as Hypothesis['approach'],
     affectedAreas: ['src/test/'],
     acceptanceCriteria: ['It works'],
     status: 'pending' as BacklogStatus,
@@ -379,12 +377,12 @@ describe('Prompt templates include backlog support', () => {
 
 describe('New type values', () => {
   it('feature_request is a valid ObservationType', () => {
-    const obsType: ObservationType = 'feature_request';
+    const obsType: Observation['type'] = 'feature_request';
     expect(obsType).toBe('feature_request');
   });
 
   it('add_feature is a valid HypothesisApproach', () => {
-    const approach: HypothesisApproach = 'add_feature';
+    const approach: Hypothesis['approach'] = 'add_feature';
     expect(approach).toBe('add_feature');
   });
 

@@ -4,14 +4,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { createEditFileExecutor } from '../src/tools/executors/edit-file.js';
-import { clearEditHistory } from '../src/coding/tools/edit.js';
 
 // ─── Temp dir helpers ────────────────────────────────────────────────────────
 
 const TEST_BASE = join(tmpdir(), `casterly-edit-file-exec-test-${Date.now()}`);
 
 afterEach(() => {
-  clearEditHistory();
   if (existsSync(TEST_BASE)) {
     rmSync(TEST_BASE, { recursive: true, force: true });
   }

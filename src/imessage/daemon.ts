@@ -49,7 +49,6 @@ import {
   createTaskManager,
   createExecutionLog,
   type TaskManager,
-  type ExecutionLog,
 } from '../tasks/index.js';
 import {
   AutonomousLoop,
@@ -95,17 +94,32 @@ async function processMessage(
   const sender = message.senderHandle || message.chatId;
   const { enableTools, maxToolIterations, workspacePath, jobStore, approvalBridge, taskManager, autonomousController, modeManager } = options;
 
-  // ─── Autonomous commands (bypass LLM entirely) ─────────────────────
-  const autonomousReply = handleAutonomousCommand(message.text, autonomousController);
-  if (autonomousReply !== null) {
-    const sender = message.senderHandle || message.chatId;
-    const result = sendMessage(sender, autonomousReply);
-    if (result.success) {
-      safeLogger.info('Autonomous command handled', { command: message.text.substring(0, 30) });
-    } else {
-      safeLogger.error('Failed to send autonomous command reply', { error: result.error });
+  // Autonomous start/stop commands are deprecated — the loop is always
+  // active. Status queries are still handled for visibility.
+  if (/^autonomous\s+status$/i.test(message.text.trim())) {
+    const autonomousReply = handleAutonomousCommand(message.text, autonomousController);
+    if (autonomousReply !== null) {
+      sendMessage(sender, autonomousReply);
+      return;
     }
-    return;
+  }
+
+  // Emit the user message as a trigger via the event bus so the agent
+  // loop is aware of all inputs (vision: all input enters through triggers).
+  if (autonomousController) {
+    try {
+      const loop = (autonomousController as unknown as { loop?: { getEventBus?: () => { emit: (e: unknown) => void } } }).loop;
+      if (loop?.getEventBus) {
+        loop.getEventBus().emit({
+          type: 'user_message' as const,
+          sender,
+          message: message.text,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch {
+      // Non-critical — trigger emission is informational
+    }
   }
 
   // Build ChatInput for the shared pipeline
@@ -160,31 +174,18 @@ async function processMessage(
 
 // ─── Autonomous Command Patterns ─────────────────────────────────────────────
 
-const AUTONOMOUS_START_RE = /^start\s+autonomous$/i;
-const AUTONOMOUS_STOP_RE = /^stop\s+autonomous$/i;
 const AUTONOMOUS_STATUS_RE = /^autonomous\s+status$/i;
 
 /**
- * Try to handle the message as a direct autonomous command.
- * Returns the reply string if handled, or null if not an autonomous command.
+ * Handle the autonomous status command.
+ * Start/stop commands are removed — the loop is always active.
+ * There is no "autonomous mode" toggle. See docs/vision.md.
  */
 function handleAutonomousCommand(
   text: string,
   controller?: AutonomousController,
 ): string | null {
   const trimmed = text.trim();
-
-  if (AUTONOMOUS_START_RE.test(trimmed)) {
-    if (!controller) return 'Autonomous mode is not configured.';
-    controller.start();
-    return 'Autonomous mode started. I will run self-improvement cycles continuously and only pause for incoming messages.';
-  }
-
-  if (AUTONOMOUS_STOP_RE.test(trimmed)) {
-    if (!controller) return 'Autonomous mode is not configured.';
-    controller.stop();
-    return 'Autonomous mode stopped.';
-  }
 
   if (AUTONOMOUS_STATUS_RE.test(trimmed)) {
     if (!controller) return 'Autonomous mode is not configured.';
@@ -620,15 +621,32 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   // Set up interval
   const intervalId = setInterval(poll, pollIntervalMs);
 
-  // Handle shutdown
-  const shutdown = () => {
-    safeLogger.info('iMessage daemon shutting down');
+  // Handle graceful shutdown — wait for in-flight work to finish
+  let shuttingDown = false;
+
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    safeLogger.info('iMessage daemon shutting down gracefully...');
     clearInterval(intervalId);
+
+    // Wait for any in-flight poll cycle to complete (up to 30s)
+    const deadline = Date.now() + 30_000;
+    while (isPolling && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    if (isPolling) {
+      safeLogger.warn('Shutdown timeout — in-flight poll cycle did not complete');
+    }
+
+    safeLogger.info('iMessage daemon stopped');
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
 
   safeLogger.info('iMessage daemon running. Press Ctrl+C to stop.');
 

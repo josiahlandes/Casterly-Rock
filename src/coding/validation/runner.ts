@@ -138,9 +138,6 @@ export function parseEslintErrors(output: string): ValidationError[] {
 
   // ESLint default format: /path/file.ts
   //   line:col  error/warning  message  rule-name
-  const filePattern = /^(.+\.[a-z]+)$/gm;
-  const errorPattern = /^\s+(\d+):(\d+)\s+(error|warning)\s+(.+?)\s{2,}(.+)$/gm;
-
   let currentFile = '';
   const lines = output.split('\n');
 
@@ -219,7 +216,7 @@ export function parseTestErrors(output: string): ValidationError[] {
 /**
  * Run a validation command and return structured result.
  */
-export async function runValidationCommand(
+async function runValidationCommand(
   step: ValidationStep,
   command: string,
   cwd: string,

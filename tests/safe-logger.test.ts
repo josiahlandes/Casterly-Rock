@@ -11,10 +11,13 @@ describe('safeLogger', () => {
 
   beforeEach(() => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Enable all levels for testing
+    safeLogger.setLevel('debug');
   });
 
   afterEach(() => {
     logSpy.mockRestore();
+    safeLogger.setLevel('info');
   });
 
   it('has info, warn, error, debug methods', () => {
@@ -77,5 +80,39 @@ describe('safeLogger', () => {
     expect(logSpy).toHaveBeenCalled();
     const args = logSpy.mock.calls[0]!;
     expect(args[2]).toContain('42');
+  });
+
+  // ── Level filtering ─────────────────────────────────────────────────
+
+  it('suppresses debug messages when level is info', () => {
+    safeLogger.setLevel('info');
+    safeLogger.debug('should be suppressed');
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it('suppresses info and debug when level is warn', () => {
+    safeLogger.setLevel('warn');
+    safeLogger.debug('suppressed');
+    safeLogger.info('suppressed');
+    expect(logSpy).not.toHaveBeenCalled();
+    safeLogger.warn('visible');
+    expect(logSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('only allows error when level is error', () => {
+    safeLogger.setLevel('error');
+    safeLogger.debug('suppressed');
+    safeLogger.info('suppressed');
+    safeLogger.warn('suppressed');
+    expect(logSpy).not.toHaveBeenCalled();
+    safeLogger.error('visible');
+    expect(logSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('getLevel returns current level', () => {
+    safeLogger.setLevel('warn');
+    expect(safeLogger.getLevel()).toBe('warn');
+    safeLogger.setLevel('debug');
+    expect(safeLogger.getLevel()).toBe('debug');
   });
 });

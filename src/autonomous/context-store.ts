@@ -23,6 +23,7 @@
 
 import { readFile, writeFile, appendFile, mkdir, readdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { getTracer } from './debug.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,6 +57,9 @@ export interface MemoryEntry {
 
   /** Optional metadata */
   metadata?: Record<string, unknown>;
+
+  /** Optional embedding vector for semantic search */
+  embedding?: number[];
 }
 
 /**
@@ -90,6 +94,15 @@ export interface ContextStoreConfig {
 
   /** Path to existing reflections directory (for cold tier integration) */
   reflectionsPath: string;
+
+  /**
+   * Weight for hybrid recall (0.0 = keyword only, 1.0 = embedding only).
+   * Only used when embeddings are available. Default: 0.4.
+   */
+  hybridWeight: number;
+
+  /** Minimum cosine similarity threshold for embedding matches. Default: 0.3. */
+  similarityThreshold: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,18 +115,18 @@ const DEFAULT_CONFIG: ContextStoreConfig = {
   coolRetentionDays: 30,
   defaultSearchLimit: 10,
   reflectionsPath: '~/.casterly/autonomous/reflections',
+  hybridWeight: 0.4,
+  similarityThreshold: 0.3,
 };
 
-let entryCounter = 0;
-
 /**
- * Generate a unique entry ID.
+ * Generate a unique entry ID using timestamp + random bytes.
+ * No global mutable counter — safe across concurrent imports.
  */
 function generateEntryId(): string {
-  entryCounter++;
   const ts = Date.now().toString(36);
-  const seq = entryCounter.toString(36).padStart(3, '0');
-  return `mem-${ts}-${seq}`;
+  const rand = randomBytes(4).toString('hex');
+  return `mem-${ts}-${rand}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -469,6 +482,127 @@ export class ContextStore {
   getBasePath(): string {
     return dirname(this.coolPath);
   }
+
+  // ── Hybrid Recall (Keyword + Embedding) ──────────────────────────────
+
+  /**
+   * Search memory using a hybrid of keyword scoring and embedding similarity.
+   * If a query embedding is provided, combines keyword score with cosine
+   * similarity. Entries without embeddings fall back to keyword-only scoring.
+   *
+   * The hybridWeight config controls the blend:
+   *   finalScore = (1 - hybridWeight) * keywordScore + hybridWeight * embeddingScore
+   */
+  async hybridRecall(params: {
+    query: string;
+    queryEmbedding?: number[];
+    tier?: 'cool' | 'cold' | 'both';
+    tags?: string[];
+    limit?: number;
+    source?: MemoryEntry['source'];
+  }): Promise<RecallResult[]> {
+    // Without an embedding, fall back to pure keyword recall
+    if (!params.queryEmbedding || params.queryEmbedding.length === 0) {
+      return this.recall(params);
+    }
+
+    await this.initialize();
+    const tracer = getTracer();
+
+    return tracer.withSpan('memory', 'hybridRecall', async (span) => {
+      const searchTier = params.tier ?? 'both';
+      const limit = params.limit ?? this.config.defaultSearchLimit;
+      const keywords = extractKeywords(params.query);
+
+      // Load entries
+      const entries: MemoryEntry[] = [];
+      if (searchTier === 'cool' || searchTier === 'both') {
+        entries.push(...await this.loadEntries(this.coolPath));
+      }
+      if (searchTier === 'cold' || searchTier === 'both') {
+        entries.push(...await this.loadEntries(this.coldPath));
+        entries.push(...await this.loadReflectionsAsEntries());
+      }
+
+      // Filter
+      let filtered = entries;
+      if (params.tags && params.tags.length > 0) {
+        const requiredTags = new Set(params.tags.map((t) => t.toLowerCase()));
+        filtered = filtered.filter((e) =>
+          e.tags.some((t) => requiredTags.has(t.toLowerCase())),
+        );
+      }
+      if (params.source) {
+        filtered = filtered.filter((e) => e.source === params.source);
+      }
+
+      // Compute keyword scores and find max for normalization
+      const keywordScores = filtered.map((entry) => scoreEntry(entry, keywords));
+      const maxKeywordScore = Math.max(1, ...keywordScores.map((s) => s.score));
+
+      // Score entries with hybrid blend
+      const scored: RecallResult[] = filtered.map((entry, i) => {
+        const kw = keywordScores[i]!;
+        const normalizedKeyword = kw.score / maxKeywordScore;
+
+        // Compute embedding similarity if the entry has one
+        let embeddingScore = 0;
+        if (entry.embedding && entry.embedding.length > 0) {
+          embeddingScore = cosineSim(params.queryEmbedding!, entry.embedding);
+        }
+
+        // Blend: if entry has embedding, use hybrid; otherwise keyword only
+        const hasEmbedding = entry.embedding && entry.embedding.length > 0;
+        const w = hasEmbedding ? this.config.hybridWeight : 0;
+        const finalScore = (1 - w) * normalizedKeyword + w * embeddingScore;
+
+        return {
+          entry,
+          score: finalScore,
+          matchedKeywords: kw.matchedKeywords,
+        };
+      });
+
+      // Filter by threshold and sort
+      const threshold = this.config.similarityThreshold;
+      const results = scored
+        .filter((r) => r.score > threshold || r.matchedKeywords.length > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit);
+
+      span.metadata['totalEntries'] = entries.length;
+      span.metadata['results'] = results.length;
+      span.metadata['hybrid'] = true;
+
+      tracer.log('memory', 'info', `Hybrid recall found ${results.length} results`, {
+        query: params.query,
+        totalSearched: filtered.length,
+      });
+
+      return results;
+    });
+  }
+
+  /**
+   * Archive content with an optional embedding vector.
+   */
+  async archiveWithEmbedding(params: {
+    content: string;
+    title: string;
+    tags: string[];
+    embedding?: number[];
+    tier?: 'cool' | 'cold';
+    source?: MemoryEntry['source'];
+    metadata?: Record<string, unknown>;
+  }): Promise<string> {
+    return this.archive({
+      ...params,
+      metadata: {
+        ...params.metadata,
+        ...(params.embedding ? { __embedding_dims: params.embedding.length } : {}),
+      },
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -542,4 +676,26 @@ function scoreEntry(
   }
 
   return { score, matchedKeywords };
+}
+
+/**
+ * Cosine similarity between two vectors. Returns 0 if either is empty.
+ */
+function cosineSim(a: number[], b: number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i]!;
+    const bi = b[i]!;
+    dot += ai * bi;
+    normA += ai * ai;
+    normB += bi * bi;
+  }
+
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
 }

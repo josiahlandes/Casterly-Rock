@@ -155,6 +155,8 @@ export function buildIdentityPrompt(
   handoffNote?: JournalEntry | null,
   userModel?: UserModel | null,
   config?: Partial<IdentityConfig>,
+  crystalsPrompt?: string | null,
+  constitutionPrompt?: string | null,
 ): IdentityPromptResult {
   const tracer = getTracer();
   return tracer.withSpanSync('identity', 'buildIdentityPrompt', (span) => {
@@ -237,6 +239,32 @@ export function buildIdentityPrompt(
         tracer.log('identity', 'debug', `Self-model section: ${selfModelText.length} chars`);
       } else {
         tracer.log('identity', 'debug', 'Self-model section skipped (budget exceeded)');
+      }
+    }
+
+    // ── Crystals Section (Vision Tier 1: Memory Crystallization) ──────────
+
+    if (crystalsPrompt && crystalsPrompt.length > 0) {
+      if (totalChars + crystalsPrompt.length + 50 < cfg.maxChars) {
+        parts.push('\n# Crystallized Knowledge\n');
+        parts.push(crystalsPrompt);
+        totalChars += crystalsPrompt.length + 30;
+        tracer.log('identity', 'debug', `Crystals section: ${crystalsPrompt.length} chars`);
+      } else {
+        tracer.log('identity', 'debug', 'Crystals section skipped (budget exceeded)');
+      }
+    }
+
+    // ── Constitution Section (Vision Tier 1: Self-Governance) ─────────────
+
+    if (constitutionPrompt && constitutionPrompt.length > 0) {
+      if (totalChars + constitutionPrompt.length + 50 < cfg.maxChars) {
+        parts.push('\n# Operational Rules\n');
+        parts.push(constitutionPrompt);
+        totalChars += constitutionPrompt.length + 30;
+        tracer.log('identity', 'debug', `Constitution section: ${constitutionPrompt.length} chars`);
+      } else {
+        tracer.log('identity', 'debug', 'Constitution section skipped (budget exceeded)');
       }
     }
 

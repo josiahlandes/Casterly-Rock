@@ -86,7 +86,8 @@ autonomous:
   enabled: false
 `);
     const config = await loadConfig(fp);
-    expect(config.enabled).toBe(false);
+    // Always active — no master switch (see docs/vision.md)
+    expect(config.enabled).toBe(true);
     expect(config.provider).toBe('ollama');
     expect(config.model).toBe('qwen3-coder-next:latest');
     expect(config.cycleIntervalMinutes).toBe(60);
@@ -305,5 +306,134 @@ describe('loadConfig — error handling', () => {
       // Throwing is also acceptable for invalid YAML
       expect(true).toBe(true);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// loadConfig — vision tiers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('loadConfig — vision tiers', () => {
+  it('enables tier2 when self_improvement section exists', async () => {
+    const fp = writeYaml('tier2.yaml', `
+autonomous:
+  enabled: true
+self_improvement:
+  prompts:
+    max_versions: 20
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers).toBeDefined();
+    expect(config.visionTiers!.tier2).toBe(true);
+  });
+
+  it('enables tier3 when advanced_self_improvement section exists', async () => {
+    const fp = writeYaml('tier3.yaml', `
+autonomous:
+  enabled: true
+advanced_self_improvement:
+  adversarial:
+    challenge_budget: 20
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers).toBeDefined();
+    expect(config.visionTiers!.tier3).toBe(true);
+  });
+
+  it('disables tier2 when self_improvement section is absent', async () => {
+    const fp = writeYaml('no-tier2.yaml', `
+autonomous:
+  enabled: true
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers).toBeDefined();
+    expect(config.visionTiers!.tier2).toBe(false);
+  });
+
+  it('disables tier3 when advanced_self_improvement section is absent', async () => {
+    const fp = writeYaml('no-tier3.yaml', `
+autonomous:
+  enabled: true
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers).toBeDefined();
+    expect(config.visionTiers!.tier3).toBe(false);
+  });
+
+  it('enables both tiers when both sections are present', async () => {
+    const fp = writeYaml('both-tiers.yaml', `
+autonomous:
+  enabled: true
+self_improvement:
+  prompts:
+    max_versions: 10
+advanced_self_improvement:
+  adversarial:
+    challenge_budget: 5
+`);
+    const config = await loadConfig(fp);
+    expect(config.visionTiers!.tier2).toBe(true);
+    expect(config.visionTiers!.tier3).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// loadConfig — dream cycles
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('loadConfig — dream cycles', () => {
+  it('parses dream_cycles section with custom values', async () => {
+    const fp = writeYaml('dream.yaml', `
+autonomous:
+  enabled: true
+dream_cycles:
+  consolidation_interval_hours: 12
+  exploration_budget_turns: 100
+  self_model_rebuild_interval_hours: 72
+  archaeology_lookback_days: 60
+  retrospective_interval_days: 14
+`);
+    const config = await loadConfig(fp);
+    expect(config.dreamCycles).toBeDefined();
+    expect(config.dreamCycles!.consolidationIntervalHours).toBe(12);
+    expect(config.dreamCycles!.explorationBudgetTurns).toBe(100);
+    expect(config.dreamCycles!.selfModelRebuildIntervalHours).toBe(72);
+    expect(config.dreamCycles!.archaeologyLookbackDays).toBe(60);
+    expect(config.dreamCycles!.retrospectiveIntervalDays).toBe(14);
+  });
+
+  it('applies defaults when dream_cycles section is present but sparse', async () => {
+    const fp = writeYaml('dream-defaults.yaml', `
+autonomous:
+  enabled: true
+dream_cycles:
+  consolidation_interval_hours: 6
+`);
+    const config = await loadConfig(fp);
+    expect(config.dreamCycles).toBeDefined();
+    expect(config.dreamCycles!.consolidationIntervalHours).toBe(6);
+    expect(config.dreamCycles!.explorationBudgetTurns).toBe(50);
+    expect(config.dreamCycles!.selfModelRebuildIntervalHours).toBe(48);
+    expect(config.dreamCycles!.archaeologyLookbackDays).toBe(90);
+    expect(config.dreamCycles!.retrospectiveIntervalDays).toBe(7);
+  });
+
+  it('returns undefined dreamCycles when section is absent', async () => {
+    const fp = writeYaml('no-dream.yaml', `
+autonomous:
+  enabled: true
+`);
+    const config = await loadConfig(fp);
+    expect(config.dreamCycles).toBeUndefined();
+  });
+
+  it('returns undefined dreamCycles when only autonomous section exists', async () => {
+    const fp = writeYaml('only-auto.yaml', `
+autonomous:
+  model: test-model
+  cycle_interval_minutes: 15
+`);
+    const config = await loadConfig(fp);
+    expect(config.dreamCycles).toBeUndefined();
   });
 });

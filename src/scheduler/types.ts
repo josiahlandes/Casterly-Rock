@@ -41,6 +41,12 @@ export interface ScheduledJob {
   cronExpression?: string | undefined;
   /** For cron: the next computed fire time (UTC ms) */
   nextFireTime?: number | undefined;
+  /**
+   * IANA timezone for evaluating cron expressions (e.g. "America/New_York").
+   * Defaults to UTC if omitted. One-shot jobs use absolute timestamps so
+   * timezone only affects cron scheduling.
+   */
+  timezone?: string | undefined;
   /** When the job was created (UTC ms) */
   createdAt: number;
   /** When the job last fired (UTC ms), if ever */
@@ -74,6 +80,8 @@ export interface CreateJobInput {
   fireAt?: string | undefined;
   /** For recurring: 5-field cron expression */
   cronExpression?: string | undefined;
+  /** IANA timezone for cron evaluation (e.g. "America/Phoenix"). Defaults to UTC. */
+  timezone?: string | undefined;
   /** Source of the job */
   source?: JobSource | undefined;
   /** If true, the message is executed as a task instead of sent verbatim */

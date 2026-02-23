@@ -105,7 +105,6 @@ function buildTestToolkit(): AgentToolkit {
       allowedDirectories: ['src/', 'tests/'],
       forbiddenPatterns: ['**/*.env*'],
       delegationEnabled: false,
-      userMessagingEnabled: false,
     },
     state,
   );

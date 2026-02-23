@@ -59,7 +59,6 @@ async function setupToolkit(configOverrides?: Partial<AgentToolkitConfig>): Prom
       allowedDirectories: ['src/', 'tests/', 'scripts/'],
       forbiddenPatterns: ['**/*.env*', '**/secrets*'],
       delegationEnabled: false,
-      userMessagingEnabled: false,
       ...configOverrides,
     },
     state,
@@ -93,9 +92,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 25 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(25);
-    expect(toolkit.toolNames).toHaveLength(25);
+  it('exposes all 96 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(96);
+    expect(toolkit.toolNames).toHaveLength(96);
   });
 
   it('includes all expected tool names', () => {
@@ -110,6 +109,36 @@ describe('AgentToolkit — Schema Validation', () => {
       'recall', 'archive',
       'adversarial_test', 'update_world_model',
       'recall_journal', 'consolidate',
+      // Vision Tier 1
+      'crystallize', 'dissolve', 'list_crystals',
+      'create_rule', 'update_rule', 'list_rules',
+      'replay', 'compare_traces', 'search_traces',
+      // Vision Tier 2
+      'edit_prompt', 'revert_prompt', 'get_prompt',
+      'shadow', 'list_shadows',
+      'create_tool', 'manage_tools', 'list_custom_tools',
+      // Vision Tier 3
+      'run_challenges', 'challenge_history', 'evolve_prompt',
+      'evolution_status', 'extract_training_data', 'list_adapters',
+      'load_adapter',
+      // Roadmap Phases 1-5 + Supporting
+      'meta',
+      'classify', 'plan', 'verify',
+      'peek_queue', 'check_budget', 'list_context', 'review_steps', 'assess_self',
+      'load_context', 'evict_context', 'set_budget',
+      'schedule', 'list_schedules', 'cancel_schedule',
+      'semantic_recall', 'parallel_reason',
+      // Reconciliation: Dream Cycle Phases
+      'consolidate_reflections', 'reorganize_goals', 'explore_codebase',
+      'rebuild_self_model', 'write_retrospective',
+      // Advanced Memory: Memory Evolution (A-MEM)
+      'evolve_memory', 'evolution_lineage', 'evolution_log',
+      // Advanced Memory: Skill Files (Letta)
+      'learn_skill', 'refine_skill', 'search_skills', 'record_skill_use',
+      // Advanced Memory: Concurrent Dream Processing (Letta)
+      'dream_concurrency_config',
+      // Advanced Memory: Graph Relational Memory (Mem0)
+      'graph_add_node', 'graph_add_edge', 'graph_search',
     ];
     for (const name of expected) {
       expect(names).toContain(name);
@@ -520,14 +549,14 @@ describe('AgentToolkit — delegate', () => {
 });
 
 describe('AgentToolkit — message_user', () => {
-  it('fails when messaging is disabled', async () => {
+  it('fails when messaging is not configured', async () => {
     const result = await toolkit.execute(makeCall('message_user', {
       message: 'Tests are passing!',
       urgency: 'low',
     }));
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('not yet enabled');
+    expect(result.error).toContain('not configured');
   });
 });
 

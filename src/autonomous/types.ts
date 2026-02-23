@@ -6,7 +6,7 @@
 // OBSERVATIONS
 // ============================================================================
 
-export type ObservationType =
+type ObservationType =
   | 'error_pattern'
   | 'performance_issue'
   | 'capability_gap'
@@ -32,7 +32,7 @@ export interface Observation {
 // HYPOTHESES
 // ============================================================================
 
-export type HypothesisApproach =
+type HypothesisApproach =
   | 'fix_bug'
   | 'optimize_performance'
   | 'add_tool'
@@ -42,7 +42,7 @@ export type HypothesisApproach =
   | 'improve_docs'
   | 'add_feature';
 
-export type Complexity = 'trivial' | 'simple' | 'moderate' | 'complex';
+type Complexity = 'trivial' | 'simple' | 'moderate' | 'complex';
 
 export interface Hypothesis {
   id: string;
@@ -102,7 +102,7 @@ export interface ValidationResult {
 // INTEGRATION
 // ============================================================================
 
-export type IntegrationMode = 'direct' | 'pull_request' | 'approval_required';
+type IntegrationMode = 'direct' | 'pull_request' | 'approval_required';
 
 export interface IntegrationResult {
   success: boolean;
@@ -242,6 +242,67 @@ export interface AutonomousConfig {
     };
   };
 
+  // Vision tier toggles — controls which self-improvement stores are active
+  visionTiers?: VisionTiersConfig | undefined;
+
+  // Communication — proactive user messaging
+  communication?: CommunicationConfig | undefined;
+
+  // Dream cycle scheduling — controls automatic dream cycle triggering
+  dreamCycles?: DreamCyclesConfig | undefined;
+}
+
+// ============================================================================
+// VISION TIERS
+// ============================================================================
+
+export interface VisionTiersConfig {
+  /** Enable Vision Tier 2: prompt-store, shadow-store, tool-synthesizer */
+  tier2: boolean;
+  /** Enable Vision Tier 3: challenges, prompt-evolution, LoRA training */
+  tier3: boolean;
+}
+
+// ============================================================================
+// DREAM CYCLES
+// ============================================================================
+
+export interface DreamCyclesConfig {
+  /** Hours between consolidation runs (default: 24) */
+  consolidationIntervalHours: number;
+  /** Maximum turns for the exploration phase (default: 50) */
+  explorationBudgetTurns: number;
+  /** Hours between self-model rebuilds (default: 48) */
+  selfModelRebuildIntervalHours: number;
+  /** Days to look back for code archaeology (default: 90) */
+  archaeologyLookbackDays: number;
+  /** Days between retrospective writes (default: 7) */
+  retrospectiveIntervalDays: number;
+}
+
+// ============================================================================
+// COMMUNICATION
+// ============================================================================
+
+export interface CommunicationConfig {
+  /** Whether messaging is enabled */
+  enabled: boolean;
+  /** Delivery channel */
+  deliveryChannel?: 'imessage' | 'console' | undefined;
+  /** iMessage recipient (required when channel is imessage) */
+  recipient?: string | undefined;
+  /** Throttle settings */
+  throttle?: {
+    maxPerHour: number;
+    maxPerDay: number;
+    quietHours: boolean;
+    quietStart: string;
+    quietEnd: string;
+  } | undefined;
+  /** Test failure notification threshold */
+  testFailureMinSeverity?: 'always' | 'unresolvable' | undefined;
+  /** Whether to send daily summary notifications */
+  dailySummaryEnabled?: boolean | undefined;
 }
 
 // ============================================================================
@@ -327,7 +388,7 @@ export interface InvariantCheckResult {
 // SECURITY AGENT
 // ============================================================================
 
-export type ThreatType =
+type ThreatType =
   | 'prompt_injection'
   | 'command_injection'
   | 'script_injection'
@@ -336,7 +397,7 @@ export type ThreatType =
   | 'encoding_suspicious'
   | 'semantic_threat';
 
-export interface ThreatReport {
+interface ThreatReport {
   type: ThreatType;
   severity: Severity;
   pattern?: string | undefined;
@@ -345,7 +406,7 @@ export interface ThreatReport {
   description?: string | undefined;
 }
 
-export interface SecurityScanResult {
+interface SecurityScanResult {
   safe: boolean;
   content?: string | undefined;
   threats: ThreatReport[];
@@ -354,62 +415,8 @@ export interface SecurityScanResult {
   timestamp: string;
 }
 
-export interface SecurityAgentConfig {
-  enabled: boolean;
 
-  // Static pattern checking
-  patterns: {
-    promptInjection: boolean;
-    commandInjection: boolean;
-    scriptInjection: boolean;
-    dataExfiltration: boolean;
-  };
-
-  // Content limits
-  limits: {
-    maxContentLength: number;
-    maxNestingDepth: number;
-    maxEncodedRatio: number;
-    minReadableRatio: number;
-  };
-
-  // LLM-based semantic analysis
-  semanticAnalysis: {
-    enabled: boolean;
-    model: string;
-    confidenceThreshold: number;
-  };
-
-  // Response behavior
-  onThreat: {
-    action: 'block' | 'sanitize' | 'warn';
-    log: boolean;
-    alert: boolean;
-  };
-
-  // Trusted sources that bypass checks
-  trustedDomains: string[];
-}
-
-// ============================================================================
-// RESEARCH AGENT
-// ============================================================================
-
-export interface ResearchRequest {
-  query: string;
-  context?: string | undefined;
-  maxResults?: number | undefined;
-}
-
-export interface ResearchResult {
-  query: string;
-  findings: ResearchFinding[];
-  securityScan: SecurityScanResult;
-  timestamp: string;
-  durationMs: number;
-}
-
-export interface ResearchFinding {
+interface ResearchFinding {
   source: string;
   title?: string | undefined;
   content: string;
@@ -419,8 +426,6 @@ export interface ResearchFinding {
 // ============================================================================
 // CODING INTERFACE
 // ============================================================================
-
-export type CodingMode = 'code' | 'architect' | 'ask' | 'review';
 
 export type SymbolKind =
   | 'function'
@@ -432,7 +437,7 @@ export type SymbolKind =
   | 'method'
   | 'property';
 
-export interface RepoSymbol {
+interface RepoSymbol {
   name: string;
   kind: SymbolKind;
   signature: string;
@@ -473,14 +478,6 @@ export interface TokenBudget {
   response: number;
 }
 
-export interface CodingContext {
-  systemPrompt: string;
-  repoMap: string;
-  fileContents: Record<string, string>;
-  conversation: Array<{ role: string; content: string }>;
-  tokenUsage: TokenBudget;
-}
-
 export interface SessionMemory {
   sessionId: string;
   startedAt: string;
@@ -493,7 +490,7 @@ export interface SessionMemory {
   learnings: string[];
 }
 
-export interface SessionDecision {
+interface SessionDecision {
   timestamp: string;
   context: string;
   decision: string;
@@ -514,16 +511,7 @@ export interface EditResult {
   error?: string | undefined;
 }
 
-export interface EditValidationResult {
-  passed: boolean;
-  parseOk: boolean;
-  lintOk: boolean;
-  typecheckOk: boolean;
-  testOk?: boolean | undefined;
-  errors: EditValidationError[];
-}
-
-export interface EditValidationError {
+interface EditValidationError {
   phase: 'parse' | 'lint' | 'typecheck' | 'test';
   file: string;
   line?: number | undefined;
@@ -531,40 +519,3 @@ export interface EditValidationError {
   severity: 'error' | 'warning';
 }
 
-export interface CodingConfig {
-  repoMap: RepoMapConfig;
-
-  context: {
-    maxFiles: number;
-    maxFileTokens: number;
-    autoAddImports: boolean;
-    autoAddTests: boolean;
-  };
-
-  edit: {
-    format: 'search_replace' | 'whole_file' | 'diff';
-    requireExactMatch: boolean;
-    showDiffPreview: boolean;
-  };
-
-  validation: {
-    parseCheck: boolean;
-    lintOnEdit: boolean;
-    typecheckOnEdit: boolean;
-    testOnEdit: boolean;
-    autoCommit: boolean;
-  };
-
-  models: {
-    architect: string;
-    code: string;
-    ask: string;
-    review: string;
-  };
-
-  session: {
-    persist: boolean;
-    persistPath: string;
-    maxHistoryTokens: number;
-  };
-}

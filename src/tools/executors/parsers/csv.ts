@@ -8,12 +8,12 @@ import { parse } from 'csv-parse/sync';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface CsvParseOptions {
+interface CsvParseOptions {
   maxRows?: number | undefined;
   delimiter?: string | undefined;
 }
 
-export interface CsvParseResult {
+interface CsvParseResult {
   headers: string[];
   rows: string[][];
   totalRows: number;

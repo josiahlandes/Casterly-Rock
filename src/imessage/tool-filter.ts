@@ -1,6 +1,6 @@
 import type { NativeToolCall } from '../tools/index.js';
 
-export interface ToolFilterResult {
+interface ToolFilterResult {
   allowed: NativeToolCall[];
   blocked: NativeToolCall[];
 }

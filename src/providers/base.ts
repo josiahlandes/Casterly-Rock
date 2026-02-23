@@ -6,7 +6,7 @@ import type {
 
 export type { GenerateWithToolsResponse } from '../tools/schemas/types.js';
 
-export type ProviderKind = 'local' | 'cloud';
+type ProviderKind = 'local' | 'cloud';
 
 /**
  * Represents a previous assistant response that contained tool calls.

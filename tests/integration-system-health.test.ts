@@ -11,7 +11,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import type { AutonomousConfig } from '../src/autonomous/types.js';
 
 const PROJECT_ROOT = resolve(import.meta.dirname, '..');
 
@@ -191,7 +190,6 @@ describe('model module exports', () => {
     const models = await import('../src/models/index.js');
     expect(models.DEFAULT_PROFILE).toBeDefined();
     expect(models.resolveModelProfile).toBeDefined();
-    expect(models.getBuiltInProfile).toBeDefined();
     expect(models.enrichSystemPrompt).toBeDefined();
     expect(models.enrichToolDescriptions).toBeDefined();
     expect(models.applyResponseHints).toBeDefined();
@@ -228,7 +226,6 @@ describe('autonomous barrel export (index.ts)', () => {
     expect(auto.GoalStack).toBeDefined();
     expect(auto.IssueLog).toBeDefined();
     expect(auto.buildIdentityPrompt).toBeDefined();
-    expect(auto.DebugTracer).toBeDefined();
 
     // Phase 2
     expect(auto.AgentLoop).toBeDefined();
@@ -249,9 +246,6 @@ describe('autonomous barrel export (index.ts)', () => {
     expect(auto.DreamCycleRunner).toBeDefined();
     expect(auto.SelfModel).toBeDefined();
     expect(auto.CodeArchaeologist).toBeDefined();
-
-    // Phase 7
-    expect(auto.MessagePolicy).toBeDefined();
 
     // Utilities
     expect(auto.createAutonomousController).toBeDefined();
@@ -425,8 +419,7 @@ describe('project structure', () => {
 describe('controller work window', () => {
   it('isInWorkWindow function exists and returns boolean', async () => {
     const { isInWorkWindow } = await import('../src/autonomous/controller.js');
-    const config = { quietHours: { start: '06:00', end: '22:00', enabled: true } } as AutonomousConfig;
-    const result = isInWorkWindow(config);
+    const result = isInWorkWindow({ quietHours: { start: '06:00', end: '22:00', enabled: true } } as any);
     expect(typeof result).toBe('boolean');
   });
 
@@ -436,11 +429,11 @@ describe('controller work window', () => {
     // Quiet hours: 6am-10pm (work window is 10pm-6am)
     // A time at 2am should be IN work window
     // A time at 2pm should be OUT of work window (in quiet hours)
-    const config = { quietHours: { start: '06:00', end: '22:00', enabled: true } } as AutonomousConfig;
+    const quietHours = { quietHours: { start: '06:00', end: '22:00', enabled: true } } as any;
 
     // We can't control the current time in this test, but we can verify
     // the function handles the config correctly
-    const result = isInWorkWindow(config);
+    const result = isInWorkWindow(quietHours);
     expect(typeof result).toBe('boolean');
   });
 });

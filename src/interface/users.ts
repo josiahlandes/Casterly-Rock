@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-export interface UserProfile {
+interface UserProfile {
   /** Unique user identifier (e.g., 'josiah', 'user2') */
   id: string;
   /** Display name for logging */
@@ -25,7 +25,7 @@ export interface UserProfile {
   enabled: boolean;
 }
 
-export interface UsersConfig {
+interface UsersConfig {
   /** List of configured users */
   users: UserProfile[];
 }
@@ -42,21 +42,21 @@ export function normalizePhoneNumber(phone: string): string {
 /**
  * Get the default users config path
  */
-export function getUsersConfigPath(): string {
+function getUsersConfigPath(): string {
   return join(homedir(), '.casterly', 'users.json');
 }
 
 /**
  * Get the default base path for user workspaces
  */
-export function getUserWorkspaceBasePath(): string {
+function getUserWorkspaceBasePath(): string {
   return join(homedir(), '.casterly', 'users');
 }
 
 /**
  * Load users configuration
  */
-export function loadUsersConfig(): UsersConfig {
+function loadUsersConfig(): UsersConfig {
   const configPath = getUsersConfigPath();
 
   if (!existsSync(configPath)) {
@@ -74,7 +74,7 @@ export function loadUsersConfig(): UsersConfig {
 /**
  * Save users configuration
  */
-export function saveUsersConfig(config: UsersConfig): void {
+function saveUsersConfig(config: UsersConfig): void {
   const configPath = getUsersConfigPath();
   const dir = join(homedir(), '.casterly');
 
@@ -88,7 +88,7 @@ export function saveUsersConfig(config: UsersConfig): void {
 /**
  * Find a user by phone number
  */
-export function findUserByPhone(phone: string, config?: UsersConfig): UserProfile | undefined {
+function findUserByPhone(phone: string, config?: UsersConfig): UserProfile | undefined {
   const usersConfig = config ?? loadUsersConfig();
   const normalizedPhone = normalizePhoneNumber(phone);
 
@@ -109,25 +109,9 @@ export function findUserByPhone(phone: string, config?: UsersConfig): UserProfil
 }
 
 /**
- * Get list of all allowed phone numbers (for daemon allowlist)
- */
-export function getAllowedPhoneNumbers(config?: UsersConfig): string[] {
-  const usersConfig = config ?? loadUsersConfig();
-  const phones: string[] = [];
-
-  for (const user of usersConfig.users) {
-    if (user.enabled) {
-      phones.push(...user.phoneNumbers);
-    }
-  }
-
-  return phones;
-}
-
-/**
  * Create user workspace directory structure
  */
-export function ensureUserWorkspace(user: UserProfile): void {
+function ensureUserWorkspace(user: UserProfile): void {
   const workspacePath = user.workspacePath;
 
   // Create workspace directory
@@ -152,7 +136,7 @@ export function ensureUserWorkspace(user: UserProfile): void {
 /**
  * Create default bootstrap files for a new user
  */
-export function createDefaultBootstrapFiles(user: UserProfile): void {
+function createDefaultBootstrapFiles(user: UserProfile): void {
   ensureUserWorkspace(user);
 
   // IDENTITY.md
@@ -259,84 +243,3 @@ Use [MEMORY] tags in responses to add information here.
   }
 }
 
-/**
- * Add a new user
- */
-export function addUser(
-  id: string,
-  name: string,
-  phoneNumbers: string[],
-  workspacePath?: string
-): UserProfile {
-  const config = loadUsersConfig();
-
-  // Check for duplicate ID
-  if (config.users.some(u => u.id === id)) {
-    throw new Error(`User with ID '${id}' already exists`);
-  }
-
-  // Check for duplicate phone numbers
-  for (const phone of phoneNumbers) {
-    const existing = findUserByPhone(phone, config);
-    if (existing) {
-      throw new Error(`Phone number '${phone}' is already assigned to user '${existing.id}'`);
-    }
-  }
-
-  const user: UserProfile = {
-    id,
-    name,
-    phoneNumbers,
-    workspacePath: workspacePath ?? join(getUserWorkspaceBasePath(), id),
-    enabled: true,
-  };
-
-  config.users.push(user);
-  saveUsersConfig(config);
-
-  // Create workspace and bootstrap files
-  createDefaultBootstrapFiles(user);
-
-  return user;
-}
-
-/**
- * Remove a user (keeps workspace files)
- */
-export function removeUser(id: string): boolean {
-  const config = loadUsersConfig();
-  const index = config.users.findIndex(u => u.id === id);
-
-  if (index === -1) {
-    return false;
-  }
-
-  config.users.splice(index, 1);
-  saveUsersConfig(config);
-
-  return true;
-}
-
-/**
- * Enable or disable a user
- */
-export function setUserEnabled(id: string, enabled: boolean): boolean {
-  const config = loadUsersConfig();
-  const user = config.users.find(u => u.id === id);
-
-  if (!user) {
-    return false;
-  }
-
-  user.enabled = enabled;
-  saveUsersConfig(config);
-
-  return true;
-}
-
-/**
- * List all users
- */
-export function listUsers(): UserProfile[] {
-  return loadUsersConfig().users;
-}

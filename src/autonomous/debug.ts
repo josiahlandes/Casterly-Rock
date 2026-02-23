@@ -45,7 +45,8 @@ export type DebugSubsystem =
   | 'context-budget'
   | 'state-diff'
   | 'trigger'
-  | 'session';
+  | 'session'
+  | 'embedding';
 
 export type DebugLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 

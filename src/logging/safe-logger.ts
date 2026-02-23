@@ -1,6 +1,22 @@
 import { redactSensitiveText } from '../security/redactor.js';
 
-type LogLevel = 'info' | 'warn' | 'error' | 'debug';
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+const LEVEL_PRIORITY: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
+
+/**
+ * Minimum log level. Messages below this level are suppressed.
+ * Controlled by the LOG_LEVEL environment variable (default: "info").
+ */
+let minLevel: LogLevel = (process.env.LOG_LEVEL as LogLevel) ?? 'info';
+if (!(minLevel in LEVEL_PRIORITY)) {
+  minLevel = 'info';
+}
 
 function sanitize(value: unknown): string {
   if (value === undefined) {
@@ -20,6 +36,8 @@ function sanitize(value: unknown): string {
 }
 
 function log(level: LogLevel, message: string, meta?: unknown): void {
+  if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[minLevel]) return;
+
   const safeMessage = redactSensitiveText(message);
   const safeMeta = sanitize(meta);
   const prefix = `[${level.toUpperCase()}]`;
@@ -44,5 +62,13 @@ export const safeLogger = {
   },
   debug(message: string, meta?: unknown): void {
     log('debug', message, meta);
-  }
+  },
+  /** Change the minimum log level at runtime. */
+  setLevel(level: LogLevel): void {
+    minLevel = level;
+  },
+  /** Get the current minimum log level. */
+  getLevel(): LogLevel {
+    return minLevel;
+  },
 };

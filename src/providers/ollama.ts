@@ -8,7 +8,7 @@ import type {
 } from '../tools/schemas/types.js';
 import type { OllamaTool } from '../tools/schemas/registry.js';
 
-export interface OllamaProviderOptions {
+interface OllamaProviderOptions {
   baseUrl: string;
   model: string;
   timeoutMs?: number;
