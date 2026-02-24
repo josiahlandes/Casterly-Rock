@@ -68,7 +68,7 @@ Each turn in the loop:
 | Reason | Meaning |
 |--------|---------|
 | `completed` | Agent finished and returned a text summary |
-| `max_turns` | Hit the turn limit (default 20) |
+| `max_turns` | Hit the turn limit (default 100) |
 | `max_tokens` | Estimated token budget exceeded (default 50,000) |
 | `aborted` | External interrupt (e.g. user message arrived during autonomous work) |
 | `error` | Unrecoverable error during a turn |
@@ -77,7 +77,7 @@ Each turn in the loop:
 
 | Control | Default | Behavior |
 |---------|---------|----------|
-| `maxTurns` | 20 | Hard limit on reasoning loops per cycle |
+| `maxTurns` | 100 | Hard limit on reasoning loops per cycle |
 | `maxTokensPerCycle` | 50,000 | Soft limit on total tokens (input + output). Estimated at ~3.5 chars/token |
 | `maxResponseTokens` | 4,096 | Maximum tokens per individual LLM response |
 | `temperature` | 0.2 | Low temperature for deterministic reasoning |
@@ -584,7 +584,7 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 
 ```typescript
 {
-  maxTurns: 20,
+  maxTurns: 100,
   maxTokensPerCycle: 50_000,
   reasoningModel: 'hermes3:70b',
   codingModel: 'qwen3-coder-next:latest',

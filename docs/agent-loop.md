@@ -259,7 +259,7 @@ Safeguards prevent tight loops:
 
 ```typescript
 {
-  maxTurns: 20,
+  maxTurns: 100,
   maxTokensPerCycle: 50_000,
   reasoningModel: 'hermes3:70b',
   codingModel: 'qwen3-coder-next:latest',

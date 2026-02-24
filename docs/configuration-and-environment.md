@@ -173,7 +173,7 @@ This is the largest config file, controlling all 7 phases of the autonomous syst
 | Key | Default | Description |
 |-----|---------|-------------|
 | `agent_loop.enabled` | `false` | Use ReAct loop instead of legacy pipeline |
-| `agent_loop.max_turns` | `20` | Max reasoning turns per cycle |
+| `agent_loop.max_turns` | `100` | Max reasoning turns per cycle |
 | `agent_loop.max_tokens_per_cycle` | `50000` | Soft token limit |
 | `agent_loop.reasoning_model` | `gpt-oss:120b` | Reasoning/planning model |
 | `agent_loop.coding_model` | `qwen3-coder-next:latest` | Code generation model |

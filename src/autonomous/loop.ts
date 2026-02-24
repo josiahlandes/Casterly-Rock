@@ -847,7 +847,7 @@ export class AutonomousLoop {
       // Scale max turns by difficulty
       const difficultyTurnMultiplier = { easy: 0.5, medium: 1.0, hard: 1.5 };
       const scaledMaxTurns = Math.round(
-        (this.agentConfig.maxTurns ?? 20) * difficultyTurnMultiplier[difficulty]
+        (this.agentConfig.maxTurns ?? 100) * difficultyTurnMultiplier[difficulty]
       );
 
       tracer.log('agent-loop', 'info', `Difficulty: ${difficulty} → maxTurns: ${scaledMaxTurns}`);
