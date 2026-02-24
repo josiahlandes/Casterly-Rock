@@ -250,6 +250,9 @@ export interface AutonomousConfig {
 
   // Dream cycle scheduling — controls automatic dream cycle triggering
   dreamCycles?: DreamCyclesConfig | undefined;
+
+  // Agent loop overrides parsed from config/autonomous.yaml → agent_loop
+  agentLoop?: Partial<import('./agent-loop.js').AgentLoopConfig> | undefined;
 }
 
 // ============================================================================

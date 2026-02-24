@@ -1109,6 +1109,19 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
           retrospectiveIntervalDays: raw.dream_cycles.retrospective_interval_days ?? 7,
         }
       : undefined,
+    agentLoop: raw.agent_loop
+      ? {
+          maxTurns: raw.agent_loop.max_turns,
+          maxTokensPerCycle: raw.agent_loop.max_tokens_per_cycle,
+          reasoningModel: raw.agent_loop.reasoning_model,
+          codingModel: raw.agent_loop.coding_model,
+          thinkToolEnabled: raw.agent_loop.think_tool_enabled,
+          delegationEnabled: raw.agent_loop.delegation_enabled,
+          userMessagingEnabled: raw.agent_loop.user_messaging_enabled,
+          temperature: raw.agent_loop.temperature,
+          maxResponseTokens: raw.agent_loop.max_response_tokens,
+        }
+      : undefined,
   };
 }
 
@@ -1126,7 +1139,7 @@ export async function main(): Promise<void> {
   const provider = await createProvider(config);
 
   console.log('Starting autonomous loop...');
-  const loop = new AutonomousLoop(config, projectRoot, provider);
+  const loop = new AutonomousLoop(config, projectRoot, provider, undefined, config.agentLoop);
 
   // Handle shutdown signals
   process.on('SIGINT', () => {

@@ -104,7 +104,7 @@ agent_loop:
   # fallback. See docs/vision.md.
 
   # Maximum reasoning turns per cycle (prevents infinite loops)
-  max_turns: 20
+  max_turns: 100
 
   # Soft limit on estimated tokens per cycle (input + output)
   max_tokens_per_cycle: 50000
