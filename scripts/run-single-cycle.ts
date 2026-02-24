@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   console.log('  (This may take 5-15 minutes with local inference)\n');
 
   const startTime = Date.now();
-  const loop = new AutonomousLoop(config, projectRoot, provider);
+  const loop = new AutonomousLoop(config, projectRoot, provider, undefined, config.agentLoop);
 
   try {
     const outcome = await loop.runAgentCycle();

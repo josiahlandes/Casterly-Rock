@@ -16,7 +16,7 @@
  *   5. On completion: state is saved, outcome is recorded.
  *
  * Budget controls:
- *   - max_turns: Hard limit on reasoning loops per cycle (default 20).
+ *   - max_turns: Hard limit on reasoning loops per cycle (default 100).
  *   - max_tokens: Soft limit on total tokens consumed per cycle (default 50000).
  *   - Each turn that exceeds the budget triggers a forced completion.
  *
@@ -177,7 +177,7 @@ export interface AgentOutcome {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
-  maxTurns: 20,
+  maxTurns: 100,
   maxTokensPerCycle: 50_000,
   reasoningModel: 'hermes3:70b',
   codingModel: 'qwen3-coder-next:latest',
