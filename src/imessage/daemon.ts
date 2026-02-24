@@ -406,6 +406,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         approvalBridge,
         approvalRecipient: allowedSenders?.[0],
       },
+      autonomousConfig.agentLoop,
     );
 
     autonomousController = createAutonomousController({
