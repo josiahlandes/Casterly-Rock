@@ -22,6 +22,8 @@ import type {
 // Phase 2: Agent Loop imports
 import { AgentLoop, createAgentLoop } from './agent-loop.js';
 import type { AgentTrigger, AgentLoopConfig, AgentOutcome, RuntimeContext } from './agent-loop.js';
+import type { LlmProvider } from '../providers/base.js';
+import { OllamaProvider } from '../providers/ollama.js';
 
 // Interface utilities (reused for runtime context injection)
 import { loadBootstrapFiles } from '../interface/bootstrap.js';
@@ -145,6 +147,7 @@ export class AutonomousLoop {
   private readonly config: AutonomousConfig;
   private readonly projectRoot: string;
   private readonly provider: AutonomousProvider;
+  private readonly llmProvider: LlmProvider;
   private readonly git: GitOperations;
   private readonly reflector: Reflector;
   private readonly approvalBridge?: ApprovalBridge | undefined;
@@ -250,6 +253,16 @@ export class AutonomousLoop {
     this.provider = provider;
     this.approvalBridge = options?.approvalBridge;
     this.approvalRecipient = options?.approvalRecipient;
+
+    // Create the LlmProvider (with tool-use support) for the agent loop.
+    // The AutonomousProvider (this.provider) is the legacy 4-phase provider
+    // and does NOT implement generateWithTools(). The agent loop needs a
+    // real LlmProvider that talks to Ollama's /api/chat endpoint with tools.
+    this.llmProvider = new OllamaProvider({
+      baseUrl: process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434',
+      model: config.model,
+      timeoutMs: 300_000, // 5 min — local inference can be slow
+    });
 
     this.git = new GitOperations(projectRoot, config.git);
     this.reflector = new Reflector({ projectRoot });
@@ -874,11 +887,9 @@ export class AutonomousLoop {
       );
 
       // 6. Build and run agent loop (with self-model from Phase 6)
-      const llmProvider = this.provider as unknown as import('../providers/base.js').LlmProvider;
-
       this.activeAgentLoop = createAgentLoop(
         { ...this.agentConfig, maxTurns: scaledMaxTurns, maxTokensPerCycle: tokenBudget, cycleId },
-        llmProvider,
+        this.llmProvider,
         this.agentToolkit,
         agentState,
         this.selfModelSummary,
