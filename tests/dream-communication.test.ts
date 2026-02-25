@@ -312,8 +312,7 @@ describe('CodeArchaeologist', () => {
 describe('DreamCycleRunner', () => {
   it('should create with factory function', () => {
     const runner = createDreamCycleRunner({ enabled: false });
-    // Dream cycles are always available — isEnabled() always returns true (see docs/vision.md)
-    expect(runner.isEnabled()).toBe(true);
+    expect(runner.isEnabled()).toBe(false);
   });
 
   it('should create enabled by default', () => {

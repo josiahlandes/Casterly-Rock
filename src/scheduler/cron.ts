@@ -124,7 +124,10 @@ function isWildcard(field: Set<number>, min: number, max: number): boolean {
 }
 
 /**
- * Extract date components in a given IANA timezone (or UTC if omitted).
+ * Extract date components in a given IANA timezone (or local time if omitted).
+ *
+ * Local-first: cron expressions mean local time by default. A "0 8 * * *"
+ * schedule fires at 8am in the user's timezone, not 8am UTC.
  */
 function datePartsInTz(
   date: Date,
@@ -132,11 +135,11 @@ function datePartsInTz(
 ): { month: number; dayOfMonth: number; dayOfWeek: number; hour: number; minute: number } {
   if (!timezone) {
     return {
-      month: date.getUTCMonth() + 1,
-      dayOfMonth: date.getUTCDate(),
-      dayOfWeek: date.getUTCDay(),
-      hour: date.getUTCHours(),
-      minute: date.getUTCMinutes(),
+      month: date.getMonth() + 1,
+      dayOfMonth: date.getDate(),
+      dayOfWeek: date.getDay(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
     };
   }
 
@@ -177,13 +180,15 @@ function datePartsInTz(
  * restricted (non-wildcard), the day matches if *either* field matches.
  * When only one is restricted, it alone determines the day match.
  *
- * @param timezone - Optional IANA timezone (e.g. "America/New_York"). Defaults to UTC.
+ * @param timezone - Optional IANA timezone (e.g. "America/New_York"). Defaults to local time.
  */
 export function getNextFireTime(cron: CronParts, after: Date, timezone?: string): Date {
-  // Start from the next minute boundary
-  const candidate = new Date(after.getTime());
-  candidate.setUTCSeconds(0, 0);
-  candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
+  // Start from the next minute boundary.
+  // Use absolute ms to advance — works correctly across DST transitions.
+  const startMs = after.getTime();
+  const offsetMs = (60 - after.getSeconds()) * 1000 - after.getMilliseconds();
+  let candidateMs = startMs + offsetMs; // next whole minute
+  if (candidateMs <= startMs) candidateMs += 60_000;
 
   const maxIterations = 366 * 24 * 60; // 366 days in minutes
 
@@ -191,6 +196,7 @@ export function getNextFireTime(cron: CronParts, after: Date, timezone?: string)
   const dowIsWildcard = isWildcard(cron.daysOfWeek, 0, 6);
 
   for (let i = 0; i < maxIterations; i++) {
+    const candidate = new Date(candidateMs);
     const { month, dayOfMonth, dayOfWeek, hour, minute } = datePartsInTz(candidate, timezone);
 
     // Standard cron day matching: OR when both DOM and DOW are restricted
@@ -211,7 +217,7 @@ export function getNextFireTime(cron: CronParts, after: Date, timezone?: string)
     }
 
     // Advance one minute
-    candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
+    candidateMs += 60_000;
   }
 
   // Fallback: should not reach here for valid cron expressions

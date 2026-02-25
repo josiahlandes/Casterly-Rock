@@ -28,6 +28,7 @@ autonomous:
   # The LLM prefers consolidation work during quiet hours but the
   # system never refuses to run cycles. See docs/vision.md.
   quiet_hours:
+    enabled: true
     start: "06:00"   # 6 AM — quiet starts (prefer consolidation)
     end: "22:00"     # 10 PM — quiet ends (normal priority work)
 

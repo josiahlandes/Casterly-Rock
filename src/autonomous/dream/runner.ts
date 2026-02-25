@@ -851,11 +851,10 @@ export class DreamCycleRunner {
   }
 
   /**
-   * Dream cycles are always available — the LLM decides when to run
-   * them as low-priority goals. There is no toggle.
+   * Whether dream cycles are enabled via config.
    */
   isEnabled(): boolean {
-    return true;
+    return this.config.enabled !== false;
   }
 }
 
