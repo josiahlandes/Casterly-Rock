@@ -515,6 +515,22 @@ communication:
   daily_summary_enabled: true
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# VOICE FILTER (post-processing personality rewrite)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Rewrites the agent's stock response in Tyrion's voice as the last step
+# before sending via iMessage. The agent loop reasons with full clarity
+# (no persona overhead), then this filter transforms the user-facing text.
+# On any failure (timeout, Ollama down), falls back to the raw response.
+
+voice_filter:
+  enabled: true
+  model: qwen3.5:122b          # Same as primary/reasoning model
+  max_tokens: 512               # Responses should be same length or shorter
+  temperature: 0.7              # Natural variation in voice
+  timeout_ms: 30000             # 30s timeout — falls back to raw on failure
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 

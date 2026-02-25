@@ -5,7 +5,10 @@
  */
 
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import * as yaml from 'yaml';
 import { safeLogger } from '../logging/safe-logger.js';
+import { createVoiceFilter, type VoiceFilter } from './voice-filter.js';
 import {
   findWorkspacePath,
   loadAddressBook,
@@ -52,6 +55,7 @@ export interface DaemonConfig {
 async function processMessage(
   message: Message,
   autonomousController: AutonomousController,
+  voiceFilter: VoiceFilter,
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
 
@@ -72,7 +76,8 @@ async function processMessage(
     const outcome = await autonomousController.runTriggeredCycle(trigger);
 
     const response = outcome.summary || 'Done.';
-    const result = sendMessage(sender, response);
+    const voiced = await voiceFilter.apply(response);
+    const result = sendMessage(sender, voiced);
     if (result.success) {
       safeLogger.info('Agent loop response sent', {
         turns: outcome.totalTurns,
@@ -253,6 +258,21 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   );
   safeLogger.info('Approval bridge initialized');
 
+  // ── Voice filter ────────────────────────────────────────────────────────
+  // Parse voice_filter config from autonomous.yaml and create the filter.
+  // The filter rewrites agent responses in Tyrion's voice before sending.
+  const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
+  let voiceFilter: VoiceFilter;
+
+  try {
+    const rawYaml = yaml.parse(await readFile(autonomousConfigPath, 'utf-8'));
+    voiceFilter = createVoiceFilter(rawYaml.voice_filter as Record<string, unknown> | undefined);
+    safeLogger.info('Voice filter initialized', { enabled: rawYaml.voice_filter?.enabled !== false });
+  } catch {
+    voiceFilter = createVoiceFilter(undefined); // disabled fallback
+    safeLogger.warn('Voice filter config not found, disabled');
+  }
+
   // ── Autonomous controller ──────────────────────────────────────────────
   // Attempt to load autonomous config and create the controller.
   // If the autonomous module is not configured, the controller stays undefined
@@ -260,7 +280,6 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   let autonomousController: AutonomousController | undefined;
 
   try {
-    const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
     const autonomousConfig = await loadAutonomousConfig(autonomousConfigPath);
     const autonomousProvider = await createAutonomousProvider(autonomousConfig);
     const autonomousLoop = new AutonomousLoop(
@@ -320,7 +339,8 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       safeLogger.info('Morning summary: generating from handoff + reflector');
       try {
         const summary = await autonomousController.getMorningSummary();
-        const result = sendMessage(recipient, summary);
+        const voiced = await voiceFilter.apply(summary);
+        const result = sendMessage(recipient, voiced);
         if (!result.success) {
           safeLogger.error('Failed to send morning summary', { error: result.error });
         }
@@ -349,7 +369,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       senderHandle: recipient,
     };
 
-    await processMessage(syntheticMessage, autonomousController);
+    await processMessage(syntheticMessage, autonomousController, voiceFilter);
   };
 
   // Get the current latest message ID (don't process old messages)
@@ -438,7 +458,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           continue;
         }
 
-        await processMessage(message, autonomousController);
+        await processMessage(message, autonomousController, voiceFilter);
       }
 
       // Check for due scheduled jobs after processing messages
