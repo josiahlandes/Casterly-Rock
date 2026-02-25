@@ -46,7 +46,7 @@ session:
 tools:
   # Native tool use is enabled by default
   enabled: true
-  maxIterations: 5              # Max tool call loops per request
+  maxIterations: 200            # Safety ceiling — dedup logic prevents infinite loops
 
   # Bash tool safety settings
   bash:

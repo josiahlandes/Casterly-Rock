@@ -844,19 +844,22 @@ export class AutonomousLoop {
         tags: [],
       });
 
-      // Scale max turns by difficulty
-      const difficultyTurnMultiplier = { easy: 0.5, medium: 1.0, hard: 1.5 };
-      const scaledMaxTurns = Math.round(
-        (this.agentConfig.maxTurns ?? 100) * difficultyTurnMultiplier[difficulty]
-      );
+      // Difficulty informs candidate generation (bestOfN) but NOT turn limits.
+      // Local inference has no cost — every task gets full turns for reflection.
+      const scaledMaxTurns = this.agentConfig.maxTurns ?? 200;
 
-      tracer.log('agent-loop', 'info', `Difficulty: ${difficulty} → maxTurns: ${scaledMaxTurns}`);
+      // Token budget: user/goal work gets full budget, background cycles get moderate budget
+      const tokenBudget = (effectiveTrigger.type === 'user' || effectiveTrigger.type === 'goal')
+        ? (this.agentConfig.maxTokensPerCycle ?? 500_000)
+        : (this.agentConfig.maxTokensPerCycleBackground ?? this.agentConfig.maxTokensPerCycle ?? 100_000);
+
+      tracer.log('agent-loop', 'info', `Difficulty: ${difficulty} → maxTurns: ${scaledMaxTurns}, tokenBudget: ${tokenBudget}`);
 
       // 5. Build and run agent loop (with self-model from Phase 6)
       const llmProvider = this.provider as unknown as import('../providers/base.js').LlmProvider;
 
       this.activeAgentLoop = createAgentLoop(
-        { ...this.agentConfig, maxTurns: scaledMaxTurns, cycleId },
+        { ...this.agentConfig, maxTurns: scaledMaxTurns, maxTokensPerCycle: tokenBudget, cycleId },
         llmProvider,
         this.agentToolkit,
         agentState,
@@ -1113,6 +1116,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
       ? {
           maxTurns: raw.agent_loop.max_turns,
           maxTokensPerCycle: raw.agent_loop.max_tokens_per_cycle,
+          maxTokensPerCycleBackground: raw.agent_loop.max_tokens_per_cycle_background,
           reasoningModel: raw.agent_loop.reasoning_model,
           codingModel: raw.agent_loop.coding_model,
           thinkToolEnabled: raw.agent_loop.think_tool_enabled,

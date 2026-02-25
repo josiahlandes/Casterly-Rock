@@ -103,11 +103,15 @@ agent_loop:
   # The agent loop is the sole execution path. There is no legacy
   # fallback. See docs/vision.md.
 
-  # Maximum reasoning turns per cycle (prevents infinite loops)
-  max_turns: 100
+  # Maximum reasoning turns per cycle (safety ceiling)
+  max_turns: 200
 
   # Soft limit on estimated tokens per cycle (input + output)
-  max_tokens_per_cycle: 50000
+  # Local inference has no cost — set high to allow deep reflection.
+  max_tokens_per_cycle: 500000
+
+  # Moderate budget for background (scheduled/event) cycles
+  max_tokens_per_cycle_background: 100000
 
   # Model used for reasoning / planning / decision-making
   reasoning_model: qwen3.5:122b

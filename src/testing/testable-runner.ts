@@ -52,7 +52,7 @@ export function createTestableRunner(
 ) {
   const {
     enableTools = true,
-    maxToolIterations = 5,
+    maxToolIterations = 200,
     workspacePath = findWorkspacePath() || process.cwd(),
     autoApproveBash = true,
   } = options;

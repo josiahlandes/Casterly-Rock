@@ -17,6 +17,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { safeLogger } from '../logging/safe-logger.js';
 import { AutonomousLoop, AbortError } from './loop.js';
+import type { AgentTrigger, AgentOutcome } from './agent-loop.js';
 import type { Reflector } from './reflector.js';
 import { formatDailyReport, formatMorningSummary } from './report.js';
 import type { AutonomousConfig, HandoffState } from './types.js';
@@ -62,6 +63,8 @@ export interface AutonomousController {
   writeHandoff(): Promise<void>;
   /** Read the current handoff file, or null if none exists. */
   getHandoff(): Promise<HandoffState | null>;
+  /** Run a triggered cycle (e.g., from user message). Bypasses enabled check. */
+  runTriggeredCycle(trigger: AgentTrigger): Promise<AgentOutcome>;
   /** Whether autonomous mode is enabled. */
   readonly enabled: boolean;
   /** Whether a cycle is currently executing. */
@@ -200,6 +203,63 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     }
   }
 
+  // ─── runTriggeredCycle ──────────────────────────────────────────────────
+
+  async function runTriggeredCycle(trigger: AgentTrigger): Promise<AgentOutcome> {
+    // If a background cycle is running, interrupt it — user work takes priority
+    if (busy) {
+      safeLogger.info('Interrupting background cycle for triggered cycle');
+      await interrupt();
+    }
+
+    busy = true;
+    abortController = new AbortController();
+
+    try {
+      safeLogger.info('Running triggered agent cycle', { triggerType: trigger.type });
+      const outcome = await loop.runAgentCycle(trigger);
+
+      totalCycles++;
+      successfulCycles++;
+      lastCycleAt = new Date().toISOString();
+      safeLogger.info('Triggered agent cycle completed', { stopReason: outcome.stopReason });
+
+      return outcome;
+    } catch (error) {
+      totalCycles++;
+
+      if (error instanceof AbortError) {
+        safeLogger.info('Triggered cycle aborted');
+      } else {
+        safeLogger.error('Triggered cycle failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      // Return a minimal error outcome so callers always get a result
+      return {
+        trigger,
+        success: false,
+        stopReason: 'error',
+        summary: error instanceof Error ? error.message : 'Cycle failed unexpectedly.',
+        turns: [],
+        totalTurns: 0,
+        totalTokensEstimate: 0,
+        durationMs: 0,
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        filesModified: [],
+        issuesFiled: [],
+        goalsUpdated: [],
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      busy = false;
+      abortController = null;
+      lastCycleEnd = Date.now();
+    }
+  }
+
   // ─── getStatus ──────────────────────────────────────────────────────────
 
   function getStatus(): AutonomousStatus {
@@ -289,6 +349,7 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     getMorningSummary,
     writeHandoff,
     getHandoff,
+    runTriggeredCycle,
     get enabled() { return enabled; },
     get busy() { return busy; },
   };

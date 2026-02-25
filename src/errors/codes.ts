@@ -121,7 +121,7 @@ export const ERROR_CODES: Record<string, ErrorDefinition> = {
     code: 'E303',
     category: 'Tools',
     message: 'Too many tool iterations',
-    suggestion: 'Reached max tool calls (5). Task may be too complex.',
+    suggestion: 'Reached max tool iterations. Task may be too complex.',
     severity: 'warning',
   },
 

@@ -98,6 +98,9 @@ export interface AgentLoopConfig {
   /** Maximum tokens per individual LLM response */
   maxResponseTokens: number;
 
+  /** Soft limit for background (non-user) cycles. Falls back to maxTokensPerCycle. */
+  maxTokensPerCycleBackground?: number | undefined;
+
   /** Cycle ID for journal entries */
   cycleId?: string;
 }
@@ -177,8 +180,8 @@ export interface AgentOutcome {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
-  maxTurns: 100,
-  maxTokensPerCycle: 50_000,
+  maxTurns: 200,
+  maxTokensPerCycle: 500_000,
   reasoningModel: 'hermes3:70b',
   codingModel: 'qwen3-coder-next:latest',
   thinkToolEnabled: true,

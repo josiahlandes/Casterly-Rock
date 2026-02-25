@@ -1545,13 +1545,13 @@ describe('Wiring Validation', () => {
       expect(source).toContain('selfModelSummary');
     });
 
-    it('difficulty assessment scales agent loop turns', () => {
+    it('difficulty assessment feeds into agent loop (turns use flat budget)', () => {
       const source = readFileSync(
         resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
         'utf8',
       );
-      expect(source).toContain('difficultyTurnMultiplier');
       expect(source).toContain('scaledMaxTurns');
+      expect(source).toContain('assessDifficulty');
     });
   });
 

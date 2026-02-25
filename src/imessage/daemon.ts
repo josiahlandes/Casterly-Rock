@@ -5,18 +5,8 @@
  */
 
 import { join } from 'node:path';
-import { loadConfig } from '../config/index.js';
 import { safeLogger } from '../logging/safe-logger.js';
-import { buildProviders, type LlmProvider, type ProviderRegistry } from '../providers/index.js';
-import { createSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import {
-  createToolRegistry,
-  createToolOrchestrator,
-  createBashExecutor,
-  registerNativeExecutors,
-} from '../tools/index.js';
-import {
-  createSessionManager,
   findWorkspacePath,
   loadAddressBook,
   addContact,
@@ -24,7 +14,6 @@ import {
   getAllowedPhones,
   isAdmin,
   findContactByPhone,
-  type SessionManager,
   type AddressBook,
 } from '../interface/index.js';
 import { wrapError, formatErrorForUser } from '../errors/index.js';
@@ -33,69 +22,40 @@ import { sendMessage, checkMessagesAvailable } from './sender.js';
 import { guardInboundMessage } from './input-guard.js';
 import {
   createJobStore,
-  getSchedulerToolSchemas,
   checkDueJobs,
   parseCronExpression,
   getNextFireTime,
-  type JobStore,
   type ActionableHandler,
 } from '../scheduler/index.js';
 import {
   createApprovalStore,
   createApprovalBridge,
-  type ApprovalBridge,
 } from '../approval/index.js';
-import {
-  createTaskManager,
-  createExecutionLog,
-  type TaskManager,
-} from '../tasks/index.js';
 import {
   AutonomousLoop,
   loadConfig as loadAutonomousConfig,
   createProvider as createAutonomousProvider,
   createAutonomousController,
+  triggerFromMessage,
   type AutonomousController,
 } from '../autonomous/index.js';
-import {
-  createModeManager,
-  type ModeManager,
-} from '../coding/modes/index.js';
-import { processChatMessage, type ChatInput } from '../pipeline/index.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
-  enableTools?: boolean | undefined;
-  maxToolIterations?: number | undefined;
   workspacePath?: string | undefined;
-  sessionScope?: 'main' | 'per-peer' | undefined;
 }
 
 /**
- * Process an incoming message through Casterly and send a response
+ * Process an incoming message through the agent loop and send a response.
+ * The agent loop is the sole execution path — no legacy fallback.
  */
 async function processMessage(
   message: Message,
-  provider: LlmProvider,
-  skillRegistry: SkillRegistry,
-  sessionManager: SessionManager,
-  options: {
-    enableTools: boolean;
-    maxToolIterations: number;
-    workspacePath: string;
-    jobStore?: JobStore | undefined;
-    approvalBridge?: ApprovalBridge | undefined;
-    taskManager?: TaskManager | undefined;
-    autonomousController?: AutonomousController | undefined;
-    modeManager?: ModeManager | undefined;
-    providers?: ProviderRegistry | undefined;
-  }
+  autonomousController: AutonomousController,
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
-  const { enableTools, maxToolIterations, workspacePath, jobStore, approvalBridge, taskManager, autonomousController, modeManager } = options;
 
-  // Autonomous start/stop commands are deprecated — the loop is always
-  // active. Status queries are still handled for visibility.
+  // Status query — direct reply, no agent loop needed
   if (/^autonomous\s+status$/i.test(message.text.trim())) {
     const autonomousReply = handleAutonomousCommand(message.text, autonomousController);
     if (autonomousReply !== null) {
@@ -104,71 +64,31 @@ async function processMessage(
     }
   }
 
-  // Emit the user message as a trigger via the event bus so the agent
-  // loop is aware of all inputs (vision: all input enters through triggers).
-  if (autonomousController) {
-    try {
-      const loop = (autonomousController as unknown as { loop?: { getEventBus?: () => { emit: (e: unknown) => void } } }).loop;
-      if (loop?.getEventBus) {
-        loop.getEventBus().emit({
-          type: 'user_message' as const,
-          sender,
-          message: message.text,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    } catch {
-      // Non-critical — trigger emission is informational
-    }
-  }
-
-  // Build ChatInput for the shared pipeline
   const contact = findContactByPhone(sender);
   const senderLabel = contact ? `${contact.name} (${sender})` : sender;
-  const chatInput: ChatInput = {
-    text: message.text,
-    sender,
-    senderLabel,
-    channel: 'imessage',
-  };
 
   try {
-    const pipelineResult = await processChatMessage(chatInput, {
-      provider,
-      skillRegistry,
-      sessionManager,
-      modeManager,
-      jobStore,
-      approvalBridge,
-      taskManager,
-      providers: options.providers,
-    }, {
-      enableTools,
-      maxToolIterations,
-      workspacePath,
-    });
+    const trigger = triggerFromMessage(message.text, senderLabel);
+    const outcome = await autonomousController.runTriggeredCycle(trigger);
 
-    const result = sendMessage(sender, pipelineResult.response);
+    const response = outcome.summary || 'Done.';
+    const result = sendMessage(sender, response);
     if (result.success) {
-      safeLogger.info('Response sent successfully');
+      safeLogger.info('Agent loop response sent', {
+        turns: outcome.totalTurns,
+        stopReason: outcome.stopReason,
+      });
     } else {
-      safeLogger.error('Failed to send response', { error: result.error });
+      safeLogger.error('Failed to send agent loop response', { error: result.error });
     }
   } catch (error) {
     const casterlyError = wrapError(error);
-
-    safeLogger.error('Failed to generate response', {
+    safeLogger.error('Agent loop failed', {
       code: casterlyError.code,
-      category: casterlyError.category,
       message: casterlyError.message,
-      details: casterlyError.details,
     });
-
     const errorMessage = formatErrorForUser(casterlyError, 'imessage');
-    const result = sendMessage(sender, errorMessage);
-    if (!result.success) {
-      safeLogger.error('Failed to send error message', { error: result.error });
-    }
+    sendMessage(sender, errorMessage);
   }
 }
 
@@ -294,10 +214,7 @@ function getNextReportTime(): number {
 export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   const {
     pollIntervalMs,
-    enableTools = true,
-    maxToolIterations = 8,
     workspacePath,
-    sessionScope = 'per-peer',
   } = daemonConfig;
 
   // Check if Messages is available
@@ -322,38 +239,8 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   safeLogger.info('iMessage daemon starting', {
     pollIntervalMs,
     hasAllowlist: allowedSenders.length > 0,
-    enableTools,
-    maxToolIterations,
     defaultWorkspacePath,
-    sessionScope,
   });
-
-  // Load Casterly config and providers
-  const config = loadConfig();
-  const providers = buildProviders(config);
-
-  safeLogger.info('Using local provider (Ollama)', {
-    model: config.local.model,
-  });
-
-  // Load skills (for context, not for text-parsing)
-  const skillRegistry = createSkillRegistry();
-  const availableSkills = skillRegistry.getAvailable();
-  safeLogger.info('Loaded skills', {
-    total: skillRegistry.skills.size,
-    available: availableSkills.length,
-    names: availableSkills.map((s) => s.id),
-  });
-
-  // Create session manager
-  const sessionManager = createSessionManager({
-    scope: sessionScope,
-  });
-
-  safeLogger.info('Session manager initialized', { scope: sessionScope });
-
-  // Per-peer mode managers (code/architect/ask/review)
-  const modeManagers = new Map<string, ModeManager>();
 
   // Create scheduler job store
   const jobStore = createJobStore();
@@ -365,28 +252,6 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     approvalStore, sendMessage, getMessagesSince, getLatestMessageRowId,
   );
   safeLogger.info('Approval bridge initialized');
-
-  // Create task pipeline (classifier → planner → runner → verifier → manager)
-  const executionLog = createExecutionLog();
-  // Task manager needs an orchestrator and tool list — we create a shared one for startup.
-  // Each processMessage() call creates its own tool registry/orchestrator for per-message state,
-  // but the task manager is shared across calls for operational memory continuity.
-  const startupToolRegistry = createToolRegistry();
-  const startupOrchestrator = createToolOrchestrator();
-  startupOrchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
-  registerNativeExecutors(startupOrchestrator);
-  if (jobStore) {
-    for (const tool of getSchedulerToolSchemas()) {
-      startupToolRegistry.register(tool);
-    }
-  }
-
-  const taskManager = createTaskManager({
-    orchestrator: startupOrchestrator,
-    executionLog,
-    availableTools: startupToolRegistry.getTools(),
-  });
-  safeLogger.info('Task pipeline initialized', { executionLogRecords: executionLog.count() });
 
   // ── Autonomous controller ──────────────────────────────────────────────
   // Attempt to load autonomous config and create the controller.
@@ -447,10 +312,8 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   }
 
   // ── Actionable job handler ───────────────────────────────────────────────
-  // When a scheduled job fires with actionable=true, this callback creates
-  // a synthetic Message and runs it through the full processMessage() pipeline
-  // so the LLM actually executes the task (check weather, summarize emails, etc.)
-  // instead of sending a static reminder string.
+  // When a scheduled job fires with actionable=true, route through the agent
+  // loop so the LLM executes the task (check weather, summarize emails, etc.).
   const actionableHandler: ActionableHandler = async (recipient, instruction, jobId) => {
     // Morning summary: bypass LLM, send directly from controller
     if (jobId === 'daily-autonomous-report' && autonomousController) {
@@ -469,11 +332,15 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       return;
     }
 
-    safeLogger.info('Actionable job: creating synthetic message', { jobId, recipient: recipient.substring(0, 4) + '***' });
+    if (!autonomousController) {
+      safeLogger.warn('Actionable job skipped: no autonomous controller', { jobId });
+      return;
+    }
 
-    // Build a synthetic Message that looks like a user message
+    safeLogger.info('Actionable job: routing through agent loop', { jobId, recipient: recipient.substring(0, 4) + '***' });
+
     const syntheticMessage: Message = {
-      rowid: -1,  // Negative rowid signals synthetic origin
+      rowid: -1,
       guid: `scheduled-${jobId}`,
       text: instruction,
       isFromMe: false,
@@ -482,22 +349,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       senderHandle: recipient,
     };
 
-    // Get or create per-peer mode manager for scheduled jobs
-    if (!modeManagers.has(recipient)) {
-      modeManagers.set(recipient, createModeManager({ autoDetect: false }));
-    }
-
-    await processMessage(syntheticMessage, providers.local, skillRegistry, sessionManager, {
-      enableTools,
-      maxToolIterations,
-      workspacePath: defaultWorkspacePath,
-      jobStore,
-      approvalBridge,
-      taskManager,
-      autonomousController,
-      modeManager: modeManagers.get(recipient),
-      providers,
-    });
+    await processMessage(syntheticMessage, autonomousController);
   };
 
   // Get the current latest message ID (don't process old messages)
@@ -579,22 +431,14 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           continue;
         }
 
-        // Get or create per-peer mode manager (auto-detect off — only explicit /code etc.)
-        if (!modeManagers.has(sender)) {
-          modeManagers.set(sender, createModeManager({ autoDetect: false }));
+        // Route through agent loop (sole execution path)
+        if (!autonomousController) {
+          safeLogger.error('No autonomous controller — cannot process message');
+          sendMessage(sender, 'System is starting up. Please try again in a moment.');
+          continue;
         }
 
-        await processMessage(message, providers.local, skillRegistry, sessionManager, {
-          enableTools,
-          maxToolIterations,
-          workspacePath: defaultWorkspacePath,
-          jobStore,
-          approvalBridge,
-          taskManager,
-          autonomousController,
-          modeManager: modeManagers.get(sender),
-          providers,
-        });
+        await processMessage(message, autonomousController);
       }
 
       // Check for due scheduled jobs after processing messages

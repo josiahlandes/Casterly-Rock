@@ -197,7 +197,7 @@ async function main(): Promise<void> {
   const enableTools = !(args.values['no-tools'] ?? false);
   const maxToolIterations = args.values['max-iterations']
     ? parseInt(args.values['max-iterations'], 10)
-    : 8;
+    : 200;
   const workspaceOverride = args.values.workspace;
 
   // ─── Initialize (mirrors startDaemon) ─────────────────────────────────
