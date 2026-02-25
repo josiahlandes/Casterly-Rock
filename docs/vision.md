@@ -44,7 +44,7 @@ Running inference locally means tokens are effectively free -- electricity is th
 
 This means the system can afford patterns that cloud architectures cannot:
 
-- **Self-correction loops.** Instead of needing to get it right in one shot, the model generates, critiques its own output, and revises. A 120b model that gets 3 attempts at a reasoning step is more reliable than a 200b model that gets one.
+- **Self-correction loops.** Instead of needing to get it right in one shot, the model generates, critiques its own output, and revises. A 122b model that gets 3 attempts at a reasoning step is more reliable than a 200b model that gets one.
 - **Redundant verification.** The model verifies incrementally -- checking each step as it goes rather than running a single verifier at the end. This catches errors before they compound, which is the exact failure mode a local model is most vulnerable to.
 - **Rich context loading.** With 128GB, there's room to load generous amounts of relevant context per inference. The model controls what to load and what to evict, rather than the system budgeting on its behalf.
 - **Exploration.** The model can try approaches, backtrack, and try again. Dead ends are cheap when tokens are free.
@@ -52,7 +52,7 @@ This means the system can afford patterns that cloud architectures cannot:
 ### What 128GB Enables
 
 - **qwen3.5:122b + qwen3-coder-next concurrently** -- two 70B+ parameter models coexisting in memory. No cold starts, no swapping, no choosing between them. The LLM decides which model handles each step at runtime.
-- **Headroom for a third lightweight model** (7b-13b) that can serve as a fast tool -- a draft generator, a quick classifier, or a spell-checker for the executive model's reasoning. The 120b model decides when to invoke it.
+- **Headroom for a third lightweight model** (7b-13b) that can serve as a fast tool -- a draft generator, a quick classifier, or a spell-checker for the executive model's reasoning. The 122b model decides when to invoke it.
 - **Large context windows** -- 128K token windows paired with LLM-controlled context management. Quality over quantity: exactly the right 32K tokens of context outperforms 128K tokens of noise, and the model is the one best positioned to judge what's relevant.
 - **On-device embeddings** for semantic memory without competing for memory with the inference models.
 - **NVMe storage** for fast journal reads, session loading, and repo-map generation.
@@ -120,14 +120,16 @@ With 128GB, there's memory headroom beyond the two primary models. A lightweight
 
 ## Identity and Personality
 
-Casterly's deployed instance is named **Tyrion**. The personality is defined in workspace files that the agent reads at the start of every session:
+Casterly's deployed instance is named **Tyrion**. The personality is defined in workspace files and applied by the **voice filter** (`src/imessage/voice-filter.ts`):
 
 | File | Purpose |
 |------|---------|
-| `workspace/SOUL.md` | Core truths, personality traits, boundaries, communication style |
-| `workspace/IDENTITY.md` | Name, platform, interface, vibe |
-| `workspace/TOOLS.md` | Environment-specific notes, memory system, safety rules |
-| `workspace/USER.md` | User profile -- built over time through interaction |
+| `workspace/SOUL.md` | Core truths, personality traits, boundaries, communication style (used by voice filter, NOT loaded into agent loop) |
+| `workspace/IDENTITY.md` | Name, platform, interface, vibe (loaded into agent loop as runtime context) |
+| `workspace/TOOLS.md` | Environment-specific notes, memory system, safety rules (loaded into agent loop as runtime context) |
+| `workspace/USER.md` | User profile -- built over time through interaction (loaded into agent loop as runtime context) |
+
+**Architecture: Separation of reasoning and personality.** The agent loop operates with a neutral, operational identity (IDENTITY.md, USER.md, TOOLS.md). Personality and communication style are applied *after* the agent loop completes, by the voice filter -- a single LLM call that rewrites the agent's response in Tyrion's voice before `sendMessage()`. This keeps the reasoning context clean of persona overhead and prevents personality from interfering with tool use and logic.
 
 Tyrion has a voice, not just capabilities:
 
@@ -162,7 +164,7 @@ Periodic self-reflection where Casterly rebuilds its understanding of its own st
 
 ## Self-Improvement Mechanisms
 
-The 120b model's raw capability is fixed. Its weights don't change between sessions. But its *effective* capability -- the combination of weights, prompt, tools, context, accumulated operational knowledge, and learned behavioral rules -- is not fixed. Every mechanism below raises the effective capability ceiling without changing the underlying model. Free tokens and local hardware make all of them feasible.
+The 122b model's raw capability is fixed. Its weights don't change between sessions. But its *effective* capability -- the combination of weights, prompt, tools, context, accumulated operational knowledge, and learned behavioral rules -- is not fixed. Every mechanism below raises the effective capability ceiling without changing the underlying model. Free tokens and local hardware make all of them feasible.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -317,7 +319,7 @@ For every non-trivial task, generate an alternative approach but only execute on
 
 **Concept:** Before executing a plan, the LLM generates a second approach -- the "shadow." Only the primary plan is executed. After the cycle completes, the shadow is stored alongside the outcome. During dream cycles, the LLM compares executed plans with their shadows: when the executed approach succeeded, was the shadow also viable? When it failed, would the shadow have worked?
 
-**Why this matters for a 120b model:** The model's biggest weakness is judgment -- choosing the right approach on the first try. Shadow execution gives it data on the approaches it *didn't* take. Over time, the LLM learns to recognize which types of problems call for which types of approaches. This calibrates judgment without requiring real failures to learn from.
+**Why this matters for a 122b model:** The model's biggest weakness is judgment -- choosing the right approach on the first try. Shadow execution gives it data on the approaches it *didn't* take. Over time, the LLM learns to recognize which types of problems call for which types of approaches. This calibrates judgment without requiring real failures to learn from.
 
 **What exists today:**
 - The agent loop already produces a plan (implicitly, through its ReAct reasoning).
@@ -345,7 +347,7 @@ Evolve the system prompt through selection pressure.
 
 **What it optimizes for:** Not task correctness (that's binary) but decision quality: turns-to-completion, unnecessary tool calls, errors caught by verification, context management efficiency, judgment accuracy (measured via shadow execution data).
 
-**The meta-insight:** The LLM is evolving its own instructions. It's not just following a prompt -- it's searching for the *best* prompt for its specific capability level. A 120b model might need very different prompt engineering than a 200b model, and the genetic algorithm discovers the right engineering automatically.
+**The meta-insight:** The LLM is evolving its own instructions. It's not just following a prompt -- it's searching for the *best* prompt for its specific capability level. A 122b model might need very different prompt engineering than a 200b model, and the genetic algorithm discovers the right engineering automatically.
 
 **What exists today:**
 - The self-modifying prompt mechanism (above) provides the substrate -- versioned prompts with performance tracking.
@@ -689,7 +691,7 @@ Wire the existing `ConcurrentProvider` into the agent loop so the LLM can use mu
 
 Across all phases: **the system provides capability, the LLM provides judgment.** The system never decides *what* to do -- only *how* to do it safely. Every decision about strategy, priority, workflow, and resource allocation is the LLM's.
 
-The 120b model will make worse decisions than a frontier model at each step. But with free tokens, it gets to make more of them, correct its mistakes, and learn from its history. Over time, the self-knowledge system captures which strategies work, and the model's effective capability rises above its raw parameter count.
+The 122b model will make worse decisions than a frontier model at each step. But with free tokens, it gets to make more of them, correct its mistakes, and learn from its history. Over time, the self-knowledge system captures which strategies work, and the model's effective capability rises above its raw parameter count.
 
 That's the unique advantage of local-first: you can afford to let the model be wrong, try again, and get better -- without worrying about the bill.
 
@@ -697,7 +699,7 @@ That's the unique advantage of local-first: you can afford to let the model be w
 
 > **Roadmap Implementation Status**
 >
-> All roadmap phases and supporting work are implemented. 17 new tools bring the total to 66.
+> All roadmap phases and supporting work are implemented. 17 new tools bring the total to 66. With all agent tools the total is now 96.
 >
 > | Phase | Tools Added | Status |
 > |-------|------------|--------|
@@ -727,4 +729,4 @@ That's the unique advantage of local-first: you can afford to let the model be w
 > | Deprecated legacy `AutonomousProvider` interface | IMPLEMENTED |
 > | Controller uses `runAgentCycle` instead of `runCycle` | IMPLEMENTED |
 >
-> **Total tools: 76**
+> **Total tools: 96** (all triggers now flow through the unified agent loop, which has access to 96 tools including self-knowledge, self-improvement, introspection, context control, semantic memory, and parallel reasoning tools).

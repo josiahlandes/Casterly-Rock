@@ -157,9 +157,9 @@ Bash execution is registered separately.
 
 ---
 
-## Agent Tools (81)
+## Agent Tools (96)
 
-In addition to the 13 native tools above, the autonomous agent loop has 63 additional tools defined in `src/autonomous/agent-tools.ts`. These are only available when the ReAct agent loop is running — not in interactive/pipeline mode.
+In addition to the 13 native tools above, the autonomous agent loop has additional tools defined in `src/autonomous/agent-tools.ts`. The agent loop is now the **sole execution path** for all triggers (including iMessage) — there is no separate interactive/pipeline mode.
 
 See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categories:
 

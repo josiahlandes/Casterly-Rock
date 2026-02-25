@@ -246,4 +246,4 @@ The trigger system is well-aligned with the vision. Triggers are already normali
 
 **What to do:** Modify the iMessage daemon to call `triggerFromMessage(text, sender)` and emit the trigger via the event bus (or directly invoke the agent loop). Remove the direct `processChatMessage()` call.
 
-> **Status:** iMessage routed through trigger system. `user_message` events emitted to EventBus.
+> **Status:** Fully implemented. The iMessage daemon calls `triggerFromMessage()` → `autonomousController.runTriggeredCycle()`. The legacy `processChatMessage()` pipeline has been completely removed from the daemon, along with session manager, mode managers, skill registry, task pipeline, and tool orchestrator. The voice filter rewrites agent loop responses before `sendMessage()`.

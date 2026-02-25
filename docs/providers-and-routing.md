@@ -14,7 +14,7 @@ Every provider implements the `LlmProvider` interface:
 interface LlmProvider {
   id: string;                    // e.g. 'ollama'
   kind: 'local' | 'cloud';      // always 'local' in current setup
-  model: string;                 // e.g. 'hermes3:70b', 'qwen3-coder-next:latest'
+  model: string;                 // e.g. 'qwen3.5:122b', 'qwen3-coder-next:latest'
 
   generateWithTools(
     request: GenerateRequest,
@@ -107,13 +107,12 @@ The `previousAssistantMessages` field carries prior assistant turns (text + tool
 
 > **Source**: `src/providers/index.ts`
 
-The registry manages two provider slots and handles model selection:
+The registry manages provider slots and model lookup:
 
 ```typescript
 interface ProviderRegistry {
   local: LlmProvider;   // Primary model — reasoning, planning, conversation
   coding: LlmProvider;  // Coding model — code generation, review, file ops
-  forTask(taskType?: string): LlmProvider;  // Route by task type
   get(name: string): LlmProvider;           // Get by name
 }
 ```
@@ -124,20 +123,14 @@ When `config.local.codingModel` is set and differs from the primary model, a sep
 
 | Slot | Config Key | Default Model | Purpose |
 |------|-----------|---------------|---------|
-| `local` | `local.model` | `hermes3:70b` | Reasoning, planning, conversation |
+| `local` | `local.model` | `qwen3.5:122b` | Reasoning, planning, conversation |
 | `coding` | `local.codingModel` | `qwen3-coder-next:latest` | Code generation, review, file operations |
 
 If `codingModel` is not set or matches the primary model, both slots point to the same provider instance.
 
-### Task-Based Routing
+### Model Routing
 
-`forTask(taskType)` routes to the coding model for these task types:
-
-```
-coding, file_operation, code, review, implement, validate
-```
-
-Everything else goes to the primary model.
+Hardcoded task-type routing has been deprecated. The LLM decides which model to use for each sub-task via the `delegate` tool at runtime. `forTask()` returns the local provider for all task types.
 
 ### Name-Based Lookup
 
@@ -154,15 +147,17 @@ Everything else goes to the primary model.
 
 > **Source**: `src/tasks/classifier.ts`
 
-The classifier determines how to handle an incoming message before it reaches a model. It uses a single focused LLM call with a `classify_message` tool as the only available tool, forcing structured output.
+The classifier is available as an **optional agent tool** (`classify`) that the LLM invokes when it judges classification is useful. It is no longer a mandatory pipeline stage.
+
+It uses a single focused LLM call with a `classify_message` tool as the only available tool, forcing structured output.
 
 ### Classification Categories
 
-| Category | Meaning | Action |
-|----------|---------|--------|
-| `conversation` | Chatting, questions, small talk | Respond directly, flat tool loop |
-| `simple_task` | Single unambiguous command | Single tool call, skip decomposition |
-| `complex_task` | Multi-step workflow | Plan → execute → verify pipeline |
+| Category | Meaning |
+|----------|---------|
+| `conversation` | Chatting, questions, small talk |
+| `simple_task` | Single unambiguous command |
+| `complex_task` | Multi-step workflow |
 
 ### How It Works
 
@@ -172,46 +167,28 @@ The classifier determines how to handle an incoming message before it reaches a 
 4. Falls back to `conversation` (confidence 0.3) if the model doesn't call the tool
 5. Falls back to `conversation` (confidence 0.1) on any error
 
-### Classification Rules
+## Message Routing
 
-The system prompt instructs:
-- Default to `conversation` unless the message is clearly and purely a task command
-- Most real user messages include conversational context → classify as `conversation`
-- `simple_task` only when the entire message is a direct, unambiguous single-action command
-- `complex_task` only when the user explicitly wants multiple distinct actions
-
-### Task Types
-
-The classifier also tags messages with a task type (e.g. `calendar`, `file_operation`, `coding`, `reminder`, `system_info`, `communication`) which feeds into the provider routing decision.
-
-## Pipeline Routing
-
-> **Source**: `src/pipeline/process.ts`
-
-The message processing pipeline integrates classification and routing:
+All messages — whether from iMessage, CLI, or scheduled jobs — enter through the **agent loop** as triggers. There is no separate pipeline. The iMessage daemon calls `triggerFromMessage()` to create a user trigger, then `autonomousController.runTriggeredCycle()` to execute it through the agent loop. The agent loop is the sole execution path.
 
 ```
-Message arrives
+Message arrives (iMessage / CLI / scheduled job)
     │
     ▼
-classifyMessage(message, history, provider)
+triggerFromMessage(text, sender)
     │
-    ├── taskClass: conversation ──→ Flat tool loop (direct response)
+    ▼
+autonomousController.runTriggeredCycle(trigger)
     │
-    ├── taskClass: simple_task
-    │   └── taskType: coding/file_operation ──→ Flat tool loop
-    │   └── taskType: other ──→ Task manager pipeline
+    ▼
+Agent Loop (ReAct cycle with 96 tools)
     │
-    └── taskClass: complex_task ──→ Task manager pipeline
-
-    After classification:
-    providers.forTask(taskType) ──→ Switch to coding model if needed
+    ▼
+Voice Filter (personality rewrite)
+    │
+    ▼
+sendMessage(response)
 ```
-
-Key routing decisions:
-1. **Classification first** — cheap single LLM call to determine message type
-2. **Model routing** — if the task type is coding-related, switch to the coding model
-3. **Execution mode** — conversation and coding tasks use the flat tool loop; complex tasks use the full plan-execute-verify pipeline
 
 ## Concurrent Provider
 
@@ -250,31 +227,13 @@ Uses a simple semaphore pattern: `acquireSlot()` busy-waits with 50ms yields unt
 
 All providers are local Ollama instances. No data leaves the machine.
 
-## Autonomous Provider
+## Autonomous Provider (Legacy — Deprecated)
 
 > **Source**: `src/autonomous/provider.ts`, `src/autonomous/providers/ollama.ts`
 
-A separate provider interface for the legacy autonomous improvement loop (the 4-phase pipeline, superseded by the ReAct agent loop). This is distinct from the `LlmProvider` interface — it's structured around the improvement cycle phases rather than generic generation.
+The `AutonomousProvider` interface was designed for the old 4-phase pipeline (analyze → hypothesize → implement → reflect). It has been superseded by the ReAct agent loop, which uses the standard `LlmProvider` interface exclusively.
 
-### AutonomousProvider Interface
-
-| Method | Phase | Returns |
-|--------|-------|---------|
-| `analyze(context)` | Analyze | Observations from error logs, metrics, backlog |
-| `hypothesize(observations)` | Hypothesize | Ranked improvement proposals |
-| `implement(hypothesis, context)` | Implement | File changes + commit message |
-| `reflect(outcome)` | Reflect | Learnings + suggested adjustments |
-
-Each method uses structured prompt templates (`PROMPTS.analyze`, etc.) that expect JSON output from the model.
-
-### OllamaAutonomousProvider
-
-Implementation details:
-- Uses the `/api/generate` endpoint (not `/api/chat`) for simpler prompt-based interaction
-- Temperature: 0.3 (lower than default for more deterministic output)
-- Timeout: 300,000ms (5 min, accommodating slower local inference)
-- JSON parsing: strips markdown code blocks, finds JSON objects/arrays, falls back to default values
-- Cost: always $0 (local inference)
+The `AutonomousLoop` constructor creates a proper `OllamaProvider` (implementing `LlmProvider`) for the agent loop, configured with the model from `autonomous.yaml` and a 5-minute timeout for local inference. The legacy `AutonomousProvider` is no longer used for agent loop execution.
 
 ## Key Files
 
@@ -284,11 +243,11 @@ Implementation details:
 | `src/providers/ollama.ts` | Ollama provider: `/api/chat`, tool call parsing, multi-turn threading |
 | `src/providers/index.ts` | `ProviderRegistry`: two-model setup, task-based routing |
 | `src/providers/concurrent.ts` | Parallel inference, best-of-N generation with judge model |
-| `src/tasks/classifier.ts` | Message classification: `conversation` / `simple_task` / `complex_task` |
+| `src/tasks/classifier.ts` | Message classification: `conversation` / `simple_task` / `complex_task` (available as agent tool) |
 | `src/tasks/types.ts` | `ClassificationResult`, `TaskPlan`, `TaskStep`, verification types |
-| `src/autonomous/provider.ts` | `AutonomousProvider` interface for legacy 4-phase loop |
-| `src/autonomous/providers/ollama.ts` | Ollama implementation of autonomous provider |
-| `src/pipeline/process.ts` | Pipeline integration: classify → route → execute |
+| `src/autonomous/provider.ts` | `AutonomousProvider` interface (legacy, deprecated) |
+| `src/autonomous/providers/ollama.ts` | Ollama implementation of autonomous provider (legacy) |
+| `src/imessage/voice-filter.ts` | Post-processing personality rewrite before message delivery |
 
 ---
 
@@ -314,7 +273,7 @@ The provider interface itself is well-designed and aligned with the vision. All 
 
 **What to do:** Remove `process.ts` as an execution path. All triggers (including iMessage) flow through the agent loop. The classification step in the pipeline becomes an optional agent tool the LLM invokes when needed.
 
-> **Status:** iMessage routed through trigger system. `user_message` events emitted to EventBus.
+> **Status:** Fully implemented. iMessage daemon calls `triggerFromMessage()` → `autonomousController.runTriggeredCycle()`. The legacy `processChatMessage()` pipeline has been removed. All messages flow through the agent loop.
 
 ### 3. Remove the legacy `AutonomousProvider` interface — IMPLEMENTED
 
@@ -324,7 +283,7 @@ The provider interface itself is well-designed and aligned with the vision. All 
 
 **What to do:** Delete `src/autonomous/provider.ts` and `src/autonomous/providers/ollama.ts`. All inference goes through the standard `LlmProvider` interface.
 
-> **Status:** Legacy `AutonomousProvider` interface deprecated. All inference goes through the standard `LlmProvider` interface.
+> **Status:** Legacy `AutonomousProvider` interface deprecated. The `AutonomousLoop` constructor creates a proper `OllamaProvider` (implementing `LlmProvider`) for agent loop inference, bypassing `AutonomousProvider` entirely.
 
 ### 4. Wire `ConcurrentProvider` as an LLM-accessible tool — IMPLEMENTED
 

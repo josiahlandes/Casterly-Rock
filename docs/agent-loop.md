@@ -20,7 +20,7 @@ Build context
   └─ Handoff note: what previous cycle left behind
     │
     ▼
-Build system prompt (task description + tool schemas)
+Build system prompt (runtime context + task description + guidelines)
     │
     ▼
 ┌─── ReAct loop (up to maxTurns) ──────────────────────┐
@@ -75,10 +75,10 @@ Then `AgentLoop.run()` builds the identity prompt from this state and appends th
 
 ## Identity Prompt
 
-Built by `src/autonomous/identity.ts`. Defines who Tyrion is for the current cycle.
+Built by `src/autonomous/identity.ts`. Defines the agent's operational identity for the current cycle. Personality and communication style are **not** included here — they are applied by the voice filter (`src/imessage/voice-filter.ts`) as a post-processing step before message delivery.
 
 Components:
-1. **Character prompt** — fixed personality and behavioral guidelines
+1. **Character prompt** — operational identity and behavioral principles (neutral voice — no persona)
 2. **World model summary** — codebase health (typecheck, tests, lint status), recent activity
 3. **Goal stack summary** — active goals with status and progress
 4. **Issue log summary** — open issues with severity and attempt history
@@ -88,14 +88,26 @@ Components:
 
 Budget: ~4000 characters (configurable via `IdentityConfig.maxChars`). Crystals and constitution each have a 500-token sub-budget within the hot tier.
 
-The handoff note from the previous cycle is appended after the identity prompt:
+The handoff note from the previous cycle is appended after the identity prompt.
+
+## System Prompt: Runtime Context
+
+Built by `buildSystemPrompt()` in `src/autonomous/agent-loop.ts`. The system prompt is assembled from runtime context sections, injected at cycle start:
+
+1. **Date/time** — current date, time, and timezone (so the agent can reason temporally)
+2. **Workspace bootstrap files** — IDENTITY.md, USER.md, TOOLS.md loaded from `~/.casterly/workspace/`. NOT SOUL.md — personality is handled by the voice filter.
+3. **Contacts roster** — address book entries so the agent can resolve "text Katie" → phone number
+4. **File location guidance** — user documents go to `~/Documents/Tyrion/`, not the repo
+5. **Current task** — the trigger description
+6. **Working guidelines** — how to use tools, error recovery, memory persistence, completion format
+
+The `RuntimeContext` type carries this data from `AutonomousLoop` into the agent loop:
 
 ```typescript
-if (this.journal) {
-  const handoff = this.journal.getHandoffNote()
-  if (handoff) {
-    identityPrompt += `\n\n## Last Session Handoff (${handoff.timestamp.split('T')[0]})\n${handoff.content}`
-  }
+interface RuntimeContext {
+  timezone?: string;
+  bootstrapFiles?: Array<{ name: string; content: string }>;
+  contacts?: Array<{ name: string; phone: string }>;
 }
 ```
 
@@ -255,13 +267,26 @@ Safeguards prevent tight loops:
 - **Cooldown**: minimum time between cycles
 - **Daily budget**: maximum turns per day (`dailyBudgetTurns`)
 
+## Voice Filter
+
+> **Source**: `src/imessage/voice-filter.ts`
+
+After the agent loop produces a response, the voice filter rewrites it in Tyrion's personality before `sendMessage()`. The agent loop reasons with full clarity (no persona overhead in the system prompt), then the voice filter transforms just the user-facing text via a single LLM call.
+
+**Skip conditions:** filter disabled, text < 10 chars, provider failure (graceful fallback to raw text).
+
+**Does NOT filter:** admin commands, errors, status queries.
+
+Configurable via `config/autonomous.yaml` under the `voice_filter` section.
+
 ## Default Configuration
 
 ```typescript
 {
-  maxTurns: 100,
-  maxTokensPerCycle: 50_000,
-  reasoningModel: 'hermes3:70b',
+  maxTurns: 200,
+  maxTokensPerCycle: 500_000,
+  maxTokensPerCycleBackground: 100_000,
+  reasoningModel: 'qwen3.5:122b',
   codingModel: 'qwen3-coder-next:latest',
   thinkToolEnabled: true,
   delegationEnabled: true,
@@ -271,14 +296,17 @@ Safeguards prevent tight loops:
 }
 ```
 
+Token budgets are generous because local inference has no cost. User and goal cycles get the full 500K budget; background (scheduled/event) cycles get a moderate 100K budget. The turn limit of 200 is a safety ceiling — deduplication prevents infinite loops.
+
 Overrideable by passing `Partial<AgentLoopConfig>` to the constructor.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/autonomous/agent-loop.ts` | `AgentLoop` class — the ReAct cycle engine (779 lines) |
-| `src/autonomous/loop.ts` | `AutonomousLoop` — orchestrates cycles, manages state persistence, handles events |
+| `src/autonomous/agent-loop.ts` | `AgentLoop` class — the ReAct cycle engine, runtime context injection, system prompt assembly |
+| `src/autonomous/loop.ts` | `AutonomousLoop` — orchestrates cycles, manages state persistence, handles events. Creates a proper `OllamaProvider` for the agent loop. |
+| `src/imessage/voice-filter.ts` | Post-processing personality rewrite — applies Tyrion's voice before message delivery |
 | `src/autonomous/agent-tools.ts` | `AgentToolkit` — 81 tool schemas and executors |
 | `src/autonomous/identity.ts` | Identity prompt builder |
 | `src/autonomous/context-manager.ts` | 4-tier memory hierarchy |
@@ -303,7 +331,7 @@ The agent loop is the closest module to the vision's target architecture. It is 
 
 **What to do:** Remove the `enabled` flag from config. Remove the `useAgentLoop` conditional in `loop.ts`. Delete the legacy 4-phase fallback code path.
 
-> **Status:** `agent_loop.enabled` toggle removed. Legacy 4-phase fallback deprecated (`runCycle` marked `@deprecated`). `runAgentCycle` is the sole execution path.
+> **Status:** `agent_loop.enabled` toggle removed. Legacy 4-phase fallback deprecated (`runCycle` marked `@deprecated`). `runAgentCycle` is the sole execution path. `AutonomousLoop` creates a proper `OllamaProvider` (implementing `LlmProvider`) for the agent loop, replacing the broken `as unknown as LlmProvider` cast of `AutonomousProvider`.
 
 ### 2. Make the agent loop the entry point for ALL triggers, including iMessage — IMPLEMENTED
 
@@ -313,7 +341,7 @@ The agent loop is the closest module to the vision's target architecture. It is 
 
 **What to do:** Modify the iMessage daemon to emit user triggers via the event bus (or call the agent loop directly) rather than calling `processChatMessage()`. Remove `src/pipeline/process.ts` as a separate entry point.
 
-> **Status:** iMessage routed through trigger system. `user_message` events emitted to EventBus.
+> **Status:** Fully implemented. The iMessage daemon calls `triggerFromMessage()` → `autonomousController.runTriggeredCycle()`. The legacy `processChatMessage()` pipeline, session manager, mode managers, skill registry, task pipeline, and tool orchestrator have been removed from the daemon. `processMessage()` now takes only `(message, autonomousController)`. The voice filter rewrites agent loop responses in Tyrion's personality before `sendMessage()`.
 
 ### 3. Convert pipeline stages into agent tools — IMPLEMENTED
 

@@ -46,7 +46,7 @@ When to trigger:
 
 Checklist:
 - Coding tasks use qwen3-coder-next.
-- General tasks use hermes3:70b.
+- General/reasoning tasks use qwen3.5:122b.
 - Mode-based selection is consistent with `src/coding/modes/`.
 
 ### 3) Provider Specialist (Implementer)
