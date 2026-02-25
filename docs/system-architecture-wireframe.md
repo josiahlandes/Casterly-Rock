@@ -421,7 +421,106 @@ A visual reference for the full system. Each module is numbered for cross-refere
 
 ### Casterly Rock vs. Local-First Agent Software
 
-PLACEHOLDER_FOR_COMPETITIVE_COMPARISON
+The local AI agent landscape includes many projects. Most focus on a single dimension — chat interface, code editing, or task automation. Casterly Rock is designed as a **comprehensive autonomous steward** that combines deep persistent memory, self-improvement, and multi-channel communication on fully local hardware.
+
+#### Positioning Matrix
+
+```
+                        Narrow Scope ◀──────────────────────▶ Broad Scope
+                        (single use-case)                     (general steward)
+
+Cloud-dependent    ┌─────────────────────────────────────────────────────┐
+                   │  AutoGPT          CrewAI           SuperAGI        │
+                   │  (task runner)    (multi-agent)    (framework)     │
+                   │                                                     │
+                   │  Cline            OpenHands                         │
+                   │  (IDE copilot)    (SWE agent)                      │
+                   ├─────────────────────────────────────────────────────┤
+Hybrid             │  Aider            Goose                             │
+(local option)     │  (git+code)       (terminal agent)                 │
+                   │                                                     │
+                   │  Khoj             Fabric                            │
+                   │  (search+chat)    (prompt pipes)                   │
+                   ├─────────────────────────────────────────────────────┤
+Local-first        │  Jan.ai           PrivateGPT       GPT4All         │
+                   │  (chat UI)        (doc Q&A)        (chat UI)       │
+                   │                                                     │
+                   │  LM Studio        AnythingLLM      LocalAI/        │
+                   │  (model runner)   (RAG workspace)  LocalAGI        │
+                   │                                                     │
+                   │  Letta            Open Interpreter                  │
+                   │  (memory agent)   (code executor)                  │
+                   │                                                     │
+                   │                               ★ CASTERLY ROCK ★    │
+                   │                             (autonomous steward)    │
+                   └─────────────────────────────────────────────────────┘
+```
+
+#### Detailed Comparison
+
+| Dimension | Casterly Rock | Open Interpreter | Jan.ai | Aider | PrivateGPT | LM Studio | Letta | AnythingLLM |
+|-----------|--------------|-----------------|--------|-------|------------|-----------|-------|-------------|
+| **Primary Purpose** | Autonomous personal steward | Natural-language code execution | Local chat UI | Git-aware code assistant | Private document Q&A | Model management + chat | Memory-augmented agents | RAG workspace |
+| **Local Inference** | Required (Ollama) | Optional | Required | Optional | Required | Required | Optional | Optional |
+| **Privacy Guarantee** | Architectural (no cloud path) | Depends on provider | Yes | Depends on provider | Yes | Yes | Depends on backend | Depends on config |
+| **Persistent Memory** | 10 subsystems (journal, world model, crystals, constitution, shadows, prompts, traces, execution log, A-MEM, context tiers) | None | Basic chat history | Git diff context | Document embeddings | None | Core memory + archival | Document embeddings |
+| **Self-Improvement** | Dream cycles, prompt evolution, LoRA training, crystal/constitution lifecycle, challenge system | None | None | None | None | None | None | None |
+| **Tool Count** | 96 agent tools | ~10 (code exec focused) | Plugin system | ~15 (git/file) | ~5 (doc retrieval) | None (inference only) | ~20 (memory + tools) | ~10 (RAG + doc) |
+| **Multi-Channel** | CLI + iMessage + Terminal REPL | CLI + web UI | Desktop app | CLI + IDE | Web UI + API | Desktop app | API + web UI | Web UI + API |
+| **iMessage Integration** | Native (SQLite reader + AppleScript sender + approval bridge) | None | None | None | None | None | None | None |
+| **Agent Architecture** | ReAct loop (200 turns, 500K token budget) | Single-pass interpreter | Single-turn chat | Edit-apply loop | RAG pipeline | N/A (no agent) | ReAct with memory | RAG pipeline |
+| **Security Layers** | 5 (input guard, sensitivity detection, output sanitizer, redactor, safe logger) | Approval prompts | Basic sandboxing | Git safety | Document isolation | N/A | Basic sandboxing | Workspace isolation |
+| **Identity System** | Character voice, self-model, personality separation (voice filter) | None | None | None | None | None | Persona in core memory | None |
+| **Hardware Optimization** | Purpose-built for Mac Studio M4 Max 128GB | Generic | Multi-platform | Generic | Multi-platform | GPU-optimized | Generic | Generic |
+
+#### Extended Comparison: Agent Frameworks
+
+| Dimension | Casterly Rock | AutoGPT | CrewAI | Goose | OpenHands | SuperAGI |
+|-----------|--------------|---------|--------|-------|-----------|----------|
+| **Execution Model** | Single agent, 96 tools, persistent identity | Multi-step task decomposition | Multi-agent role collaboration | Terminal-based single agent | SWE-bench-focused agent | Multi-agent orchestration |
+| **Local-Only** | Yes (required) | No (GPT-4 default) | No (cloud LLMs) | Optional (Ollama support) | No (cloud LLMs) | No (cloud LLMs) |
+| **Persistent State** | 10 memory subsystems across sessions | Short-term + long-term memory | Shared state per crew | Session memory | Workspace state | Short-term memory |
+| **Self-Modification** | Prompt evolution, LoRA training, crystal/rule lifecycle | Limited (plugin system) | None | None | None | None |
+| **Trigger System** | 5 event sources (message, file, cron, goal, git) | Goal-driven only | Task-driven only | User-driven only | Task-driven only | Goal-driven only |
+
+#### Key Differentiators
+
+**1. Comprehensive persistent memory (unique)**
+No other local agent maintains 10 interconnected memory subsystems. Most offer chat history or document embeddings. Casterly Rock's journal, world model, crystal store, constitution, shadow store, prompt versions, trace replay, execution log, advanced memory networks, and 4-tier context hierarchy create genuine continuity across sessions — the agent remembers, learns, and evolves.
+
+**2. Self-improvement pipeline (unique)**
+Dream cycles (consolidation, reorganization, self-modeling, prompt evolution, LoRA training, challenge generation) have no equivalent in any competitor. This is the only local agent that can autonomously improve its own system prompt, extract training data from its experience, and fine-tune adapter layers — all on-device.
+
+**3. Privacy by architecture, not configuration**
+While Jan.ai, PrivateGPT, LM Studio, and GPT4All run inference locally, they don't enforce privacy at every layer. Casterly Rock's 5-layer security perimeter (input guard → sensitivity detector → tool output sanitizer → redactor → safe logger) with protected paths and bash safety gates makes data leakage architecturally impossible, not just a configuration choice.
+
+**4. Native iMessage integration (unique)**
+No other agent project offers bidirectional iMessage communication with SQLite polling, AppleScript sending, voice personality filtering, and an approval bridge for destructive operations. This makes Casterly Rock a true personal assistant accessible from any Apple device.
+
+**5. Hardware-optimized economics**
+Purpose-built for Mac Studio M4 Max with 128GB unified memory. The zero-cost-per-token model enables strategies impossible with cloud APIs: redundant verification, shadow execution, prompt evolution populations, parallel reasoning, and aggressive self-correction. Where cloud agents must minimize calls, Casterly Rock maximizes them.
+
+**6. Identity separation (voice filter)**
+The voice filter architecture — neutral reasoning internally, personality applied only at the output boundary — is not found in other agent frameworks. This preserves reasoning quality while maintaining a consistent character voice, something multi-agent frameworks like CrewAI attempt with role prompts but without architectural separation.
+
+**7. 96-tool breadth with safety gates**
+The largest tool surface of any local agent (96 tools across 15 categories) combined with three-tier bash safety gates (BLOCKED/APPROVAL_REQUIRED/SAFE) and tool output sanitization. Competitors either offer fewer tools or fewer safety guarantees.
+
+#### Limitations vs. Competitors
+
+| Area | Competitor Advantage | Casterly Rock Status |
+|------|---------------------|---------------------|
+| Multi-platform | Jan.ai, GPT4All, LM Studio run on Windows/Linux | macOS-only (iMessage dependency) |
+| Web UI | Jan.ai, AnythingLLM, PrivateGPT have polished GUIs | CLI + iMessage (no web dashboard) |
+| Multi-agent | CrewAI, SuperAGI support agent collaboration | Single agent with `delegate` tool |
+| Cloud model access | Aider, Goose, Cline support GPT-4/Claude | Local-only by design (no cloud fallback) |
+| IDE integration | Cline, Aider have VS Code/editor plugins | No IDE plugin (uses file tools directly) |
+| Document RAG | PrivateGPT, AnythingLLM excel at doc Q&A | Semantic recall exists but not primary focus |
+| Community size | Open Interpreter (50K+ stars), AutoGPT (160K+ stars) | Private project |
+
+#### Summary
+
+Casterly Rock occupies a unique position: a **local-first autonomous steward** with deep persistent memory, self-improvement capabilities, and native iMessage integration — features no single competitor offers together. The closest projects in individual dimensions are Letta (memory), Open Interpreter (local execution breadth), and AutoGPT (autonomous goal pursuit), but none combine all three with privacy-by-architecture and zero-cost-per-token economics on dedicated hardware.
 
 ---
 
