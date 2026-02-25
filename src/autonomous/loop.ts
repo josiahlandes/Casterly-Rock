@@ -21,7 +21,11 @@ import type {
 
 // Phase 2: Agent Loop imports
 import { AgentLoop, createAgentLoop } from './agent-loop.js';
-import type { AgentTrigger, AgentLoopConfig, AgentOutcome } from './agent-loop.js';
+import type { AgentTrigger, AgentLoopConfig, AgentOutcome, RuntimeContext } from './agent-loop.js';
+
+// Interface utilities (reused for runtime context injection)
+import { loadBootstrapFiles } from '../interface/bootstrap.js';
+import { loadAddressBook } from '../interface/contacts.js';
 import { buildAgentToolkit } from './agent-tools.js';
 import type { AgentToolkit, AgentState } from './agent-tools.js';
 import { WorldModel } from './world-model.js';
@@ -855,7 +859,21 @@ export class AutonomousLoop {
 
       tracer.log('agent-loop', 'info', `Difficulty: ${difficulty} → maxTurns: ${scaledMaxTurns}, tokenBudget: ${tokenBudget}`);
 
-      // 5. Build and run agent loop (with self-model from Phase 6)
+      // 5. Build runtime context (bootstrap files + contacts)
+      const bootstrapResult = loadBootstrapFiles({
+        files: ['IDENTITY.md', 'USER.md', 'TOOLS.md'],  // NOT SOUL.md — voice filter handles personality
+      });
+      const addressBook = loadAddressBook();
+      const runtimeContext: RuntimeContext = {
+        bootstrapFiles: bootstrapResult.files.map(f => ({ name: f.name, content: f.content })),
+        contacts: addressBook.contacts.map(c => ({ name: c.name, phone: c.phone })),
+      };
+
+      tracer.log('agent-loop', 'info',
+        `Runtime context: ${runtimeContext.bootstrapFiles?.length ?? 0} bootstrap files, ${runtimeContext.contacts?.length ?? 0} contacts`,
+      );
+
+      // 6. Build and run agent loop (with self-model from Phase 6)
       const llmProvider = this.provider as unknown as import('../providers/base.js').LlmProvider;
 
       this.activeAgentLoop = createAgentLoop(
@@ -865,6 +883,7 @@ export class AutonomousLoop {
         agentState,
         this.selfModelSummary,
         this.journal,
+        runtimeContext,
       );
 
       let outcome: AgentOutcome;
@@ -885,13 +904,13 @@ export class AutonomousLoop {
         }
       }
 
-      // 6. Record activity
+      // 7. Record activity
       this.worldModel.addActivity({
         description: `Agent cycle ${cycleId}: ${outcome.stopReason} (${outcome.totalTurns} turns)`,
         source: 'tyrion',
       });
 
-      // 7. Save state (final — includes the activity record above)
+      // 8. Save state (final — includes the activity record above)
       await this.saveState();
 
       // 8. Log outcome

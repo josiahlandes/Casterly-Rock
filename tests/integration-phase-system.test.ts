@@ -276,7 +276,7 @@ describe('Phase 1: Persistent Identity System', () => {
       const minimal = buildMinimalIdentityPrompt();
       expect(typeof minimal).toBe('string');
       expect(minimal.length).toBeGreaterThan(0);
-      expect(minimal).toContain('Tyrion');
+      expect(minimal).toContain('autonomous agent managing the Casterly codebase');
     });
   });
 });

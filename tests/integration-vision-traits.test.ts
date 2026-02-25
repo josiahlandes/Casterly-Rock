@@ -1228,22 +1228,25 @@ describe('Proportional Judgment', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Quietness Trait', () => {
-  it('CHARACTER_PROMPT encodes "report results, not process"', () => {
+  it('voice filter handles personality (not CHARACTER_PROMPT)', () => {
     const source = readFileSync(
-      resolve(PROJECT_ROOT, 'src/autonomous/identity.ts'),
+      resolve(PROJECT_ROOT, 'src/imessage/voice-filter.ts'),
       'utf8',
     );
 
-    expect(source).toContain('Report results, not process');
+    // Personality is now applied by the voice filter, not the system prompt
+    expect(source).toContain('Concise');
+    expect(source).toContain('Get to the point');
   });
 
-  it('CHARACTER_PROMPT encodes "brief and factual"', () => {
+  it('CHARACTER_PROMPT uses neutral agent framing (no persona)', () => {
     const source = readFileSync(
       resolve(PROJECT_ROOT, 'src/autonomous/identity.ts'),
       'utf8',
     );
 
-    expect(source).toContain('brief and factual');
+    expect(source).toContain('autonomous agent managing the Casterly codebase');
+    expect(source).not.toContain('Communicate with taste');
   });
 
   it('CHARACTER_PROMPT encodes self-verification instinct', () => {
@@ -1266,15 +1269,14 @@ describe('Quietness Trait', () => {
     expect(source).toContain('Do not simply report the failure and stop');
   });
 
-  it('CHARACTER_PROMPT encodes dual-model delegation', () => {
+  it('CHARACTER_PROMPT encodes delegation principle', () => {
     const source = readFileSync(
       resolve(PROJECT_ROOT, 'src/autonomous/identity.ts'),
       'utf8',
     );
 
-    expect(source).toContain('hermes3');
-    expect(source).toContain('qwen3-coder-next');
     expect(source).toContain('Delegate deliberately');
+    expect(source).toContain('delegate tool');
   });
 
   it('CHARACTER_PROMPT enforces local-only privacy', () => {
@@ -1293,9 +1295,9 @@ describe('Quietness Trait', () => {
     );
 
     const minimal = buildMinimalIdentityPrompt();
-    expect(minimal).toContain('Tyrion');
+    expect(minimal).toContain('autonomous agent managing the Casterly codebase');
     expect(minimal).toContain('Verify your own work');
-    expect(minimal).toContain('Report results, not process');
+    expect(minimal).toContain('Operating Principles');
   });
 });
 

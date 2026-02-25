@@ -184,6 +184,7 @@ export type {
   AgentLoopConfig,
   AgentTurn,
   AgentOutcome,
+  RuntimeContext,
 } from './agent-loop.js';
 
 // ── Phase 3: Event-Driven Awareness ──────────────────────────────────────────

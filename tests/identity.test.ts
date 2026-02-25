@@ -28,8 +28,7 @@ describe('Identity Prompt', () => {
     it('returns the character prompt without any state', () => {
       const prompt = buildMinimalIdentityPrompt();
 
-      expect(prompt).toContain('You are Tyrion');
-      expect(prompt).toContain('steward of the Casterly codebase');
+      expect(prompt).toContain('autonomous agent managing the Casterly codebase');
       expect(prompt).toContain('Think before acting');
       expect(prompt).toContain('Verify your own work');
     });
@@ -39,7 +38,7 @@ describe('Identity Prompt', () => {
     it('returns character prompt when all sources are null', () => {
       const result = buildIdentityPrompt(null, null, null);
 
-      expect(result.prompt).toContain('You are Tyrion');
+      expect(result.prompt).toContain('autonomous agent managing the Casterly codebase');
       expect(result.sections.character).toBe(true);
       expect(result.sections.worldModel).toBe(false);
       expect(result.sections.goalStack).toBe(false);
@@ -187,7 +186,7 @@ describe('Identity Prompt', () => {
         maxChars: 2000,
       });
 
-      // Character prompt alone is ~1600 chars, so some sections may be dropped
+      // Character prompt alone is ~900 chars, so some sections may be dropped
       expect(result.charCount).toBeLessThanOrEqual(2100); // Some tolerance
     });
 

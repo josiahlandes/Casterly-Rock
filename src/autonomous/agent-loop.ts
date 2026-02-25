@@ -191,20 +191,105 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
   maxResponseTokens: 4096,
 };
 
+// ─── Runtime Context ───────────────────────────────────────────────────────
+
+/**
+ * Runtime context injected into the system prompt at cycle start.
+ * Loaded from `src/interface/` utilities in `loop.ts` and passed through
+ * to the agent loop via `createAgentLoop()`.
+ */
+export interface RuntimeContext {
+  /** User's IANA timezone (e.g. 'America/New_York'). Defaults to system tz. */
+  timezone?: string;
+  /** Bootstrap workspace files (IDENTITY.md, USER.md, TOOLS.md). NOT SOUL.md — voice filter handles personality. */
+  bootstrapFiles?: Array<{ name: string; content: string }>;
+  /** Contacts from the address book. Enables the agent to resolve names to phone numbers. */
+  contacts?: Array<{ name: string; phone: string }>;
+}
+
+// ─── System Prompt Section Builders ────────────────────────────────────────
+
+/**
+ * Current date, time, and timezone so the agent can reason about temporal context.
+ * Pattern derived from src/interface/prompt-builder.ts (lines 151-175).
+ */
+function buildDateTimeSection(timezone?: string): string {
+  const now = new Date();
+  const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const dateStr = now.toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: tz,
+  });
+  const timeStr = now.toLocaleTimeString('en-US', {
+    hour: 'numeric', minute: '2-digit', timeZone: tz,
+  });
+  return `## Current Context\n\n- **Date**: ${dateStr}\n- **Time**: ${timeStr}\n- **Timezone**: ${tz}`;
+}
+
+/**
+ * Workspace bootstrap files (IDENTITY.md, USER.md, TOOLS.md) — identity framing,
+ * user profile, and environment/safety notes. Loaded from ~/.casterly/workspace/.
+ */
+function buildWorkspaceSection(files?: Array<{ name: string; content: string }>): string {
+  if (!files || files.length === 0) return '';
+  const formatted = files.map(f => `### ${f.name}\n\n${f.content}`).join('\n\n');
+  return `## Workspace Context\n\n${formatted}`;
+}
+
+/**
+ * Address book roster so the agent can resolve "text Katie" → phone number.
+ * Pattern derived from src/interface/prompt-builder.ts (lines 126-146).
+ */
+function buildContactsSection(contacts?: Array<{ name: string; phone: string }>): string {
+  if (!contacts || contacts.length === 0) return '';
+  const roster = contacts.map(c => `- **${c.name}**: ${c.phone}`).join('\n');
+  return `## People You Know\n\nYou can message these people using the message_user tool.\n\n${roster}`;
+}
+
+/**
+ * File location guidance so user documents end up in the right place.
+ * Copied from src/interface/prompt-builder.ts (lines 99-105).
+ */
+function buildFileLocationsSection(): string {
+  return `## File Locations
+
+- **User documents** (budgets, schedules, notes, lists, exports, etc.): always write to ~/Documents/Tyrion/
+- **Code and config files**: write to the project repository
+- NEVER create user documents in the repository root — they don't belong in version control`;
+}
+
+// ─── System Prompt Assembly ──────────────────────────────────────────────
+
 /**
  * System prompt that describes the agent's behavioral expectations and
  * tool usage guidelines. This is prepended after the identity prompt.
  */
-function buildSystemPrompt(trigger: AgentTrigger, tools: ToolSchema[]): string {
-  const toolList = tools.map((t) => `- **${t.name}**: ${t.description.split('\n')[0]}`).join('\n');
+function buildSystemPrompt(
+  trigger: AgentTrigger,
+  _tools: ToolSchema[],
+  runtimeContext?: RuntimeContext,
+): string {
+  const sections: string[] = [];
 
+  // Runtime context (always present — date/time)
+  sections.push(buildDateTimeSection(runtimeContext?.timezone));
+
+  // Workspace files (IDENTITY.md, USER.md, TOOLS.md)
+  const workspace = buildWorkspaceSection(runtimeContext?.bootstrapFiles);
+  if (workspace) sections.push(workspace);
+
+  // Contacts roster
+  const contacts = buildContactsSection(runtimeContext?.contacts);
+  if (contacts) sections.push(contacts);
+
+  // File location guidance
+  sections.push(buildFileLocationsSection());
+
+  // Task trigger
   const triggerDescription = describeTrigger(trigger);
+  sections.push(`## Current Task\n\n${triggerDescription}`);
 
-  return `## Current Task
-
-${triggerDescription}
-
-## How to Work
+  // Working guidelines
+  sections.push(`## How to Work
 
 You operate in a reason → act → observe loop. Each turn, you can either:
 1. Call one or more tools to gather information or make changes.
@@ -216,21 +301,33 @@ Guidelines:
 - **Test after changing.** After modifying code, run \`typecheck\` and \`run_tests\` to verify.
 - **File issues for problems you can't fix now.** Use \`file_issue\` to record problems for later.
 - **Update your goals.** Use \`update_goal\` to track progress on the current goal.
-- **Be surgical.** Make small, targeted changes. Don't refactor unrelated code.
 - **Know when to stop.** If you've completed the task or can't make further progress, stop. Don't loop endlessly.
+- **Don't call tools unnecessarily.** If the answer is already in your context, respond directly. Tools have latency — only use them when you need information you don't have or need to make changes.
 
-## Available Tools
+## Error Recovery
 
-${toolList}
+- If a tool call fails, try a different approach. Don't repeat the same failing call.
+- After two failed attempts at the same sub-task, file an issue and move on.
+- If you're stuck on something non-critical, skip it and continue with the rest of the task.
+
+## Memory
+
+When you learn something worth remembering across sessions, silently append it:
+- \`[NOTE] observation\` — for daily context (what happened, what was tried)
+- \`[MEMORY] fact\` — for permanent knowledge (user preferences, project patterns, lessons learned)
+
+Do not announce that you are saving a memory. Just include the tag at the end of your response.
 
 ## Completion
 
-When you are done (task completed, blocked, or no further progress possible), respond with a text message summarizing:
+When you are done (task completed, blocked, or no further progress possible), respond with a summary:
 1. What you accomplished
 2. What issues remain (if any)
 3. What you'd do next (if continuing)
 
-Do NOT call any tools in your final response.`;
+Keep the summary concise — 3-4 sentences for user messages, more detail for autonomous cycles. Do NOT call any tools in your final response.`);
+
+  return sections.join('\n\n');
 }
 
 /**
@@ -275,6 +372,7 @@ export class AgentLoop {
   private readonly state: AgentState;
   private readonly selfModel: SelfModelSummary | null;
   private readonly journal: Journal | null;
+  private readonly runtimeContext: RuntimeContext;
 
   /** Signal to abort the loop (set externally for interrupts) */
   private aborted: boolean = false;
@@ -286,6 +384,7 @@ export class AgentLoop {
     state: AgentState,
     selfModel?: SelfModelSummary | null,
     journal?: Journal | null,
+    runtimeContext?: RuntimeContext,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.provider = provider;
@@ -293,6 +392,7 @@ export class AgentLoop {
     this.state = state;
     this.selfModel = selfModel ?? null;
     this.journal = journal ?? null;
+    this.runtimeContext = runtimeContext ?? {};
   }
 
   /**
@@ -398,7 +498,7 @@ export class AgentLoop {
         tracer.log('agent-loop', 'debug', `Recorded attempt for goal ${trigger.goal.id}`);
       }
 
-      const systemPrompt = buildSystemPrompt(trigger, this.toolkit.schemas);
+      const systemPrompt = buildSystemPrompt(trigger, this.toolkit.schemas, this.runtimeContext);
       const fullSystemPrompt = `${identityPrompt}\n\n${systemPrompt}`;
 
       totalTokensEstimate += estimateTokens(fullSystemPrompt);
@@ -803,6 +903,7 @@ export function createAgentLoop(
   state: AgentState,
   selfModel?: SelfModelSummary | null,
   journal?: Journal | null,
+  runtimeContext?: RuntimeContext,
 ): AgentLoop {
-  return new AgentLoop(config, provider, toolkit, state, selfModel, journal);
+  return new AgentLoop(config, provider, toolkit, state, selfModel, journal, runtimeContext);
 }

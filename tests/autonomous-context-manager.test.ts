@@ -275,8 +275,8 @@ describe('ContextManager — Hot Tier', () => {
   it('builds hot tier from null state (minimal prompt)', () => {
     const prompt = cm.buildHotTier(null, null, null);
 
-    expect(prompt).toContain('Tyrion');
-    expect(prompt).toContain('steward');
+    expect(prompt).toContain('autonomous agent managing the Casterly codebase');
+    expect(prompt).toContain('Operating Principles');
     expect(cm.getHotTierTokens()).toBeGreaterThan(0);
   });
 
@@ -299,7 +299,7 @@ describe('ContextManager — Hot Tier', () => {
 
     const prompt = cm.buildHotTier(wm, gs, il);
 
-    expect(prompt).toContain('Tyrion');
+    expect(prompt).toContain('autonomous agent managing the Casterly codebase');
     // Should include goal and issue sections
     expect(prompt).toContain('Fix the detector');
     expect(prompt).toContain('Flaky regex');
@@ -307,7 +307,7 @@ describe('ContextManager — Hot Tier', () => {
 
   it('getHotTier returns minimal prompt when not built', () => {
     const prompt = cm.getHotTier();
-    expect(prompt).toContain('Tyrion');
+    expect(prompt).toContain('autonomous agent managing the Casterly codebase');
   });
 });
 
