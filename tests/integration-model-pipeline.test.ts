@@ -128,16 +128,16 @@ function runFullPipeline(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Full pipeline for gpt-oss:120b (primary model)
+// Full pipeline for qwen3.5:122b (primary model)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('full pipeline: gpt-oss:120b', () => {
-  const result = runFullPipeline('gpt-oss:120b');
+describe('full pipeline: qwen3.5:122b', () => {
+  const result = runFullPipeline('qwen3.5:122b');
 
   it('resolves the correct profile', () => {
-    expect(result.profile.modelId).toBe('gpt-oss:120b');
-    expect(result.profile.family).toBe('gpt-oss');
-    expect(result.profile.displayName).toBe('GPT-OSS 120B');
+    expect(result.profile.modelId).toBe('qwen3.5:122b');
+    expect(result.profile.family).toBe('qwen3.5');
+    expect(result.profile.displayName).toBe('Qwen 3.5 122B');
   });
 
   it('enriches system prompt with tool routing rules', () => {
@@ -163,7 +163,7 @@ describe('full pipeline: gpt-oss:120b', () => {
     // Any tool not in overrides should pass through unchanged
     const originalSearchDesc = SAMPLE_TOOLS.find((t) => t.name === 'search_files')!.description;
     const pipelineSearch = result.tools.find((t) => t.name === 'search_files')!;
-    // search_files IS in gpt-oss overrides, so it should be enriched
+    // search_files IS in qwen3.5 overrides, so it should be enriched
     expect(pipelineSearch.description.length).toBeGreaterThanOrEqual(originalSearchDesc.length);
   });
 
@@ -176,7 +176,7 @@ describe('full pipeline: gpt-oss:120b', () => {
   it('sets correct generation overrides', () => {
     expect(result.generationOverrides.temperature).toBe(0.6);
     expect(result.generationOverrides.num_predict).toBe(2048);
-    expect(result.generationOverrides.num_ctx).toBe(32768);
+    expect(result.generationOverrides.num_ctx).toBe(40960);
   });
 });
 
@@ -270,10 +270,10 @@ describe('full pipeline: unknown model', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('family-based fallback', () => {
-  it('gpt-oss:240b gets gpt-oss family profile', () => {
-    const result = runFullPipeline('gpt-oss:240b');
-    expect(result.profile.family).toBe('gpt-oss');
-    expect(result.profile.modelId).toBe('gpt-oss:240b');
+  it('qwen3.5:35b gets qwen3.5 family profile', () => {
+    const result = runFullPipeline('qwen3.5:35b');
+    expect(result.profile.family).toBe('qwen3.5');
+    expect(result.profile.modelId).toBe('qwen3.5:35b');
     expect(result.systemPrompt).toContain('Tool routing rules:');
     expect(result.generationOverrides.temperature).toBe(0.6);
   });
@@ -327,7 +327,7 @@ describe('pipeline for all models.yaml entries', () => {
 
 describe('pipeline safety properties', () => {
   it('enrichment is idempotent (running twice gives same result)', () => {
-    const profile = resolveModelProfile('gpt-oss:120b');
+    const profile = resolveModelProfile('qwen3.5:122b');
     const prompt1 = enrichSystemPrompt(BASE_SYSTEM_PROMPT, profile);
     // Enriching the already-enriched prompt with same profile should append again
     // but enriching the base twice with same profile should give same result each time
@@ -337,7 +337,7 @@ describe('pipeline safety properties', () => {
 
   it('original tools array is never mutated', () => {
     const originalDescriptions = SAMPLE_TOOLS.map((t) => t.description);
-    const profile = resolveModelProfile('gpt-oss:120b');
+    const profile = resolveModelProfile('qwen3.5:122b');
 
     // Run enrichment multiple times
     enrichToolDescriptions(SAMPLE_TOOLS, profile);
@@ -351,7 +351,7 @@ describe('pipeline safety properties', () => {
   });
 
   it('response hint application does not affect unrelated text', () => {
-    const profile = resolveModelProfile('gpt-oss:120b');
+    const profile = resolveModelProfile('qwen3.5:122b');
     const normalText = 'This is a perfectly normal response with no quirks.';
     const cleaned = applyResponseHints(normalText, profile);
     expect(cleaned).toBe(normalText);

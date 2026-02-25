@@ -109,8 +109,8 @@ export const DEFAULT_MODE_CONFIG: Required<ModeConfig> = {
   allowOverride: true,
   models: {
     code: 'qwen3-coder-next:latest',
-    architect: 'gpt-oss:120b',
-    ask: 'gpt-oss:120b',
+    architect: 'qwen3.5:122b',
+    ask: 'qwen3.5:122b',
     review: 'qwen3-coder-next:latest',
   },
 };

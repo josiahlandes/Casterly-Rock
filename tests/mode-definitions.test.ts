@@ -102,8 +102,8 @@ describe('ARCHITECT_MODE', () => {
     expect(ARCHITECT_MODE.allowedTools).toContain('grep_files');
   });
 
-  it('prefers gpt-oss:120b', () => {
-    expect(ARCHITECT_MODE.preferredModel).toContain('gpt-oss');
+  it('prefers qwen3.5:122b', () => {
+    expect(ARCHITECT_MODE.preferredModel).toContain('qwen3.5');
   });
 });
 

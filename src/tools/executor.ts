@@ -192,7 +192,7 @@ export async function executeBashToolCall(
   const { timeoutMs = 30000, autoApprove = false, approvalCallback } = options;
 
   // Extract command from tool call input
-  // Normalize: gpt-oss sometimes wraps the command in non-standard ways:
+  // Normalize: some models sometimes wraps the command in non-standard ways:
   //   {raw:{cmd:["bash","-lc","actual command"]}}  — array variant
   //   {raw:{command:"actual command"}}               — nested object variant
   let command = call.input.command;

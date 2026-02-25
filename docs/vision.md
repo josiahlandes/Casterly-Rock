@@ -51,7 +51,7 @@ This means the system can afford patterns that cloud architectures cannot:
 
 ### What 128GB Enables
 
-- **gpt-oss:120b + qwen3-coder-next concurrently** -- two 70B+ parameter models coexisting in memory. No cold starts, no swapping, no choosing between them. The LLM decides which model handles each step at runtime.
+- **qwen3.5:122b + qwen3-coder-next concurrently** -- two 70B+ parameter models coexisting in memory. No cold starts, no swapping, no choosing between them. The LLM decides which model handles each step at runtime.
 - **Headroom for a third lightweight model** (7b-13b) that can serve as a fast tool -- a draft generator, a quick classifier, or a spell-checker for the executive model's reasoning. The 120b model decides when to invoke it.
 - **Large context windows** -- 128K token windows paired with LLM-controlled context management. Quality over quantity: exactly the right 32K tokens of context outperforms 128K tokens of noise, and the model is the one best positioned to judge what's relevant.
 - **On-device embeddings** for semantic memory without competing for memory with the inference models.
@@ -100,7 +100,7 @@ Classification, planning, execution strategy, verification, memory management, a
 
 | Role | Model | Purpose |
 |------|-------|---------|
-| Executive / reasoning | gpt-oss:120b | Strategy, judgment, coordination, verification, general tasks |
+| Executive / reasoning | qwen3.5:122b | Strategy, judgment, coordination, verification, general tasks |
 | Code specialist | qwen3-coder-next | Code generation, refactoring, review, implementation |
 | Fast utility (planned) | 7b-13b TBD | Quick classification, draft generation, spell-checking reasoning |
 

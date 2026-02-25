@@ -45,7 +45,7 @@ describe('Mode Definitions — CODE_MODE', () => {
 
   it('prefers qwen3-coder-next', () => {
     expect(CODE_MODE.preferredModel).toBe('qwen3-coder-next:latest');
-    expect(CODE_MODE.fallbackModel).toBe('gpt-oss:120b');
+    expect(CODE_MODE.fallbackModel).toBe('qwen3.5:122b');
   });
 });
 
@@ -75,8 +75,8 @@ describe('Mode Definitions — ARCHITECT_MODE', () => {
     expect(ARCHITECT_MODE.allowedTools).toContain('grep_files');
   });
 
-  it('prefers gpt-oss:120b', () => {
-    expect(ARCHITECT_MODE.preferredModel).toBe('gpt-oss:120b');
+  it('prefers qwen3.5:122b', () => {
+    expect(ARCHITECT_MODE.preferredModel).toBe('qwen3.5:122b');
   });
 });
 
@@ -183,8 +183,8 @@ describe('DEFAULT_MODE_CONFIG', () => {
 
   it('has model mappings for all modes', () => {
     expect(DEFAULT_MODE_CONFIG.models.code).toBe('qwen3-coder-next:latest');
-    expect(DEFAULT_MODE_CONFIG.models.architect).toBe('gpt-oss:120b');
-    expect(DEFAULT_MODE_CONFIG.models.ask).toBe('gpt-oss:120b');
+    expect(DEFAULT_MODE_CONFIG.models.architect).toBe('qwen3.5:122b');
+    expect(DEFAULT_MODE_CONFIG.models.ask).toBe('qwen3.5:122b');
     expect(DEFAULT_MODE_CONFIG.models.review).toBe('qwen3-coder-next:latest');
   });
 });
@@ -464,7 +464,7 @@ describe('ModeManager — getPreferredModel', () => {
 
   it('returns config model for architect mode', () => {
     const manager = new ModeManager({ defaultMode: 'architect' });
-    expect(manager.getPreferredModel()).toBe('gpt-oss:120b');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
   });
 
   it('uses custom model mapping if provided', () => {

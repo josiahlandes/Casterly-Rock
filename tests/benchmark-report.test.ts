@@ -41,7 +41,7 @@ function makeCaseResult(overrides: Partial<CaseResult> = {}): CaseResult {
 function makeRun(overrides: Partial<BenchmarkRun> = {}): BenchmarkRun {
   return {
     id: 'run-001',
-    modelId: 'gpt-oss:120b',
+    modelId: 'qwen3.5:122b',
     timestamp: Date.now(),
     suiteId: 'default',
     cases: [],
@@ -151,7 +151,7 @@ describe('formatRunAsJson', () => {
     const run = makeRun();
     const json = formatRunAsJson(run);
     const parsed = JSON.parse(json);
-    expect(parsed.modelId).toBe('gpt-oss:120b');
+    expect(parsed.modelId).toBe('qwen3.5:122b');
     expect(parsed.aggregate.overall).toBe(85);
   });
 

@@ -71,7 +71,7 @@ const PROFILE_WITH_OVERRIDES: ModelProfile = {
   generation: {
     temperature: 0.5,
     numPredict: 4096,
-    ollamaOptions: { num_ctx: 32768 },
+    ollamaOptions: { num_ctx: 40960 },
   },
   responseHints: [
     {
@@ -90,18 +90,18 @@ const PROFILE_WITH_OVERRIDES: ModelProfile = {
 // ─── resolveModelProfile ────────────────────────────────────────────────────
 
 describe('resolveModelProfile', () => {
-  it('returns built-in profile for gpt-oss:120b', () => {
-    const profile = resolveModelProfile('gpt-oss:120b');
-    expect(profile.modelId).toBe('gpt-oss:120b');
-    expect(profile.displayName).toBe('GPT-OSS 120B');
-    expect(profile.family).toBe('gpt-oss');
+  it('returns built-in profile for qwen3.5:122b', () => {
+    const profile = resolveModelProfile('qwen3.5:122b');
+    expect(profile.modelId).toBe('qwen3.5:122b');
+    expect(profile.displayName).toBe('Qwen 3.5 122B');
+    expect(profile.family).toBe('qwen3.5');
     expect(profile.systemPromptHint).toBeTruthy();
     expect(profile.toolOverrides).toBeDefined();
     expect(profile.generation?.temperature).toBe(0.6);
   });
 
-  it('gpt-oss profile has routing overrides for all 13 tools', () => {
-    const profile = resolveModelProfile('gpt-oss:120b');
+  it('qwen3.5 profile has routing overrides for all 13 tools', () => {
+    const profile = resolveModelProfile('qwen3.5:122b');
     expect(profile.toolOverrides).toHaveLength(13);
 
     const toolNames = profile.toolOverrides?.map((o) => o.toolName) ?? [];
@@ -126,8 +126,8 @@ describe('resolveModelProfile', () => {
     }
   });
 
-  it('gpt-oss system prompt includes tool routing rules', () => {
-    const profile = resolveModelProfile('gpt-oss:120b');
+  it('qwen3.5 system prompt includes tool routing rules', () => {
+    const profile = resolveModelProfile('qwen3.5:122b');
     expect(profile.systemPromptHint).toContain('Tool routing rules:');
     expect(profile.systemPromptHint).toContain('use the read_file tool');
     expect(profile.systemPromptHint).toContain('grep_files');
@@ -150,10 +150,10 @@ describe('resolveModelProfile', () => {
     expect(profile.generation?.temperature).toBe(0.1);
   });
 
-  it('falls back to family match for unknown gpt-oss variant', () => {
-    const profile = resolveModelProfile('gpt-oss:240b');
-    expect(profile.modelId).toBe('gpt-oss:240b');
-    expect(profile.family).toBe('gpt-oss');
+  it('falls back to family match for unknown qwen3.5 variant', () => {
+    const profile = resolveModelProfile('qwen3.5:35b');
+    expect(profile.modelId).toBe('qwen3.5:35b');
+    expect(profile.family).toBe('qwen3.5');
     expect(profile.systemPromptHint).toBeTruthy();
     expect(profile.generation?.temperature).toBe(0.6);
   });
@@ -196,16 +196,16 @@ profiles:
     const yamlPath = join(tmpDir, 'profiles.yaml');
     writeFileSync(yamlPath, `
 profiles:
-  - modelId: "gpt-oss:120b"
+  - modelId: "qwen3.5:122b"
     displayName: "Custom GPT-OSS"
-    family: "gpt-oss"
+    family: "qwen3.5"
     systemPromptHint: "Custom hint."
     generation:
       temperature: 0.9
 `);
 
     try {
-      const profile = resolveModelProfile('gpt-oss:120b', yamlPath);
+      const profile = resolveModelProfile('qwen3.5:122b', yamlPath);
       expect(profile.displayName).toBe('Custom GPT-OSS');
       expect(profile.systemPromptHint).toBe('Custom hint.');
       expect(profile.generation?.temperature).toBe(0.9);
@@ -329,7 +329,7 @@ describe('getGenerationOverrides', () => {
 
   it('merges ollamaOptions', () => {
     const overrides = getGenerationOverrides(PROFILE_WITH_OVERRIDES);
-    expect(overrides.num_ctx).toBe(32768);
+    expect(overrides.num_ctx).toBe(40960);
   });
 
   it('returns empty object when no generation params', () => {

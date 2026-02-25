@@ -99,8 +99,8 @@ describe('CasterlyError', () => {
   });
 
   it('attaches details', () => {
-    const err = new CasterlyError('E100', { model: 'gpt-oss:120b' });
-    expect(err.details).toEqual({ model: 'gpt-oss:120b' });
+    const err = new CasterlyError('E100', { model: 'qwen3.5:122b' });
+    expect(err.details).toEqual({ model: 'qwen3.5:122b' });
   });
 
   it('preserves original error stack', () => {

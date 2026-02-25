@@ -47,7 +47,7 @@ export interface ModelGenerationParams {
  * Applied as a layer on top of the existing tool/prompt pipeline.
  */
 export interface ModelProfile {
-  /** Model identifier (e.g., 'gpt-oss:120b') */
+  /** Model identifier (e.g., 'qwen3.5:122b') */
   modelId: string;
   /** Human-readable display name */
   displayName: string;
@@ -59,7 +59,7 @@ export interface ModelProfile {
   generation?: ModelGenerationParams | undefined;
   /** Response parsing hints for known model quirks */
   responseHints?: ResponseParsingHint[] | undefined;
-  /** Model family tag for grouping (e.g., 'gpt-oss', 'hermes', 'qwen') */
+  /** Model family tag for grouping (e.g., 'qwen3.5', 'hermes', 'qwen') */
   family?: string | undefined;
   /** Free-form metadata (set by scraper, benchmark results, etc.) */
   metadata?: Record<string, unknown> | undefined;

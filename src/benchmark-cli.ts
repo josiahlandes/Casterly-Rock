@@ -4,9 +4,9 @@
  * Standalone CLI for running model benchmarks against Ollama.
  *
  * Usage:
- *   tsx src/benchmark-cli.ts run --models gpt-oss:120b,qwen3-coder-next:latest [--category tool_use] [--difficulty moderate]
- *   tsx src/benchmark-cli.ts compare --models gpt-oss:120b,qwen3-coder-next:latest
- *   tsx src/benchmark-cli.ts history [--model gpt-oss:120b]
+ *   tsx src/benchmark-cli.ts run --models qwen3.5:122b,qwen3-coder-next:latest [--category tool_use] [--difficulty moderate]
+ *   tsx src/benchmark-cli.ts compare --models qwen3.5:122b,qwen3-coder-next:latest
+ *   tsx src/benchmark-cli.ts history [--model qwen3.5:122b]
  *   tsx src/benchmark-cli.ts list
  */
 

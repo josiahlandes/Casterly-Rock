@@ -52,7 +52,7 @@ export interface AssembledContext {
 }
 
 const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
-  maxContextTokens: 131072,    // gpt-oss:120b context length
+  maxContextTokens: 131072,    // qwen3.5:122b context length
   reserveForResponse: 4096,
   maxHistoryMessages: 50,
 };

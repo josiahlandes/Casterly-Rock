@@ -13,8 +13,8 @@ Replace scattered documentation with a clear hierarchy: one vision doc, one arch
 Sections:
 1. **Mission** — One-paragraph statement: Casterly is a local-first, privacy-first autonomous AI steward running on a Mac Studio M4 Max with 128GB unified memory. All inference is local. No data leaves the machine. Ever.
 2. **Philosophy** — Privacy-by-architecture (not by policy), local-first (not local-fallback), autonomous agency (not a chatbot), journal-driven continuity.
-3. **Hardware as Strategy** — The M4 Max / 128GB isn't a deployment target, it's the strategic advantage. Running gpt-oss:120b locally with headroom. Frame what this enables now and what it unlocks.
-4. **Models** — gpt-oss:120b (primary reasoning, planning, conversation), qwen3-coder-next (code editing). Task-based routing via config. Ollama as sole inference provider.
+3. **Hardware as Strategy** — The M4 Max / 128GB isn't a deployment target, it's the strategic advantage. Running qwen3.5:122b locally with headroom. Frame what this enables now and what it unlocks.
+4. **Models** — qwen3.5:122b (primary reasoning, planning, conversation), qwen3-coder-next (code editing). Task-based routing via config. Ollama as sole inference provider.
 5. **Identity & Personality** — Workspace personality files (SOUL.md, IDENTITY.md, TOOLS.md, USER.md). Casterly has a voice, not just capabilities.
 6. **Invariants** — The non-negotiable rules, consolidated from rulebook.md, CLAUDE.md, and AGENTS.md into one canonical list.
 7. **Roadmap**:

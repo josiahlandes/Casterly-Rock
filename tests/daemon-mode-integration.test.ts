@@ -302,16 +302,16 @@ describe('Preferred model per mode', () => {
     expect(manager.getPreferredModel()).toBe('qwen3-coder-next:latest');
   });
 
-  it('architect mode prefers gpt-oss:120b', () => {
+  it('architect mode prefers qwen3.5:122b', () => {
     const manager = createModeManager();
     manager.switchMode('architect');
-    expect(manager.getPreferredModel()).toBe('gpt-oss:120b');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
   });
 
-  it('ask mode prefers gpt-oss:120b', () => {
+  it('ask mode prefers qwen3.5:122b', () => {
     const manager = createModeManager();
     manager.switchMode('ask');
-    expect(manager.getPreferredModel()).toBe('gpt-oss:120b');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
   });
 
   it('review mode prefers qwen3-coder-next', () => {
@@ -325,7 +325,7 @@ describe('Preferred model per mode', () => {
     expect(manager.getPreferredModel()).toBe('qwen3-coder-next:latest');
 
     manager.autoDetectAndSwitch('plan the architecture');
-    expect(manager.getPreferredModel()).toBe('gpt-oss:120b');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
 
     manager.autoDetectAndSwitch('/code');
     expect(manager.getPreferredModel()).toBe('qwen3-coder-next:latest');

@@ -1,6 +1,6 @@
 # Casterly Implementation Plan
 
-> **NOTE:** This was the original plan. The architecture has evolved to be **fully local** — no cloud routing. gpt-oss:120b on the Mac Studio M4 Max handles all tasks via Ollama. The hybrid cloud/local routing described below was the initial design but was never implemented.
+> **NOTE:** This was the original plan. The architecture has evolved to be **fully local** — no cloud routing. qwen3.5:122b on the Mac Studio M4 Max handles all tasks via Ollama. The hybrid cloud/local routing described below was the initial design but was never implemented.
 
 ## Original Overview (Superseded)
 
@@ -13,7 +13,7 @@
 ## Actual Architecture
 
 A **local-only** AI assistant running on Mac Studio M4 Max via Ollama:
-- **Primary model:** gpt-oss:120b (96/100 benchmark score)
+- **Primary model:** qwen3.5:122b (96/100 benchmark score)
 - **Coding model:** qwen3-coder-next:latest
 - **Interface:** iMessage daemon (polls every 2s) + CLI
 - **All processing local** — no cloud APIs, no data leaves the machine

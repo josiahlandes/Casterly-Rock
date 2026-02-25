@@ -16,17 +16,17 @@ import { DEFAULT_PROFILE } from './types.js';
 // ─── Built-in Profiles ──────────────────────────────────────────────────────
 
 /**
- * gpt-oss profile (family: gpt-oss).
+ * qwen3.5 profile (family: qwen3.5).
  *
- * Optimized for OpenAI Harmony-format models:
- * - Concise tool descriptions (trained on OpenAI function calling)
+ * Primary reasoning model:
+ * - Strong tool calling with native function calling format
  * - System prompt hint to use tools directly
  * - Slightly lower temperature for tool calling consistency
  */
-const GPT_OSS_120B: ModelProfile = {
-  modelId: 'gpt-oss:120b',
-  displayName: 'GPT-OSS 120B',
-  family: 'gpt-oss',
+const QWEN35_122B: ModelProfile = {
+  modelId: 'qwen3.5:122b',
+  displayName: 'Qwen 3.5 122B',
+  family: 'qwen3.5',
   systemPromptHint: [
     'PERSONALITY IS PARAMOUNT: Your SOUL file defines your character. Never reply as a generic assistant. Every response must sound like the person described in your SOUL — the wit, the voice, the attitude. If the SOUL says you are sardonic, BE sardonic. If it says you quote philosophy, quote philosophy. Breaking character is the worst failure mode.',
     '',
@@ -184,14 +184,14 @@ const GPT_OSS_120B: ModelProfile = {
     temperature: 0.6,
     numPredict: 2048,
     ollamaOptions: {
-      num_ctx: 32768,  // gpt-oss supports 131K; use 32K for good context with reasonable speed
+      num_ctx: 40960,  // qwen3.5 supports 256K; use 40K as practical max with 128GB unified memory (81GB model + KV cache)
     },
   },
   responseHints: [
     {
       pattern: '```tool_call\\n[\\s\\S]*?```',
       replacement: '',
-      reason: 'gpt-oss sometimes wraps tool calls in markdown code blocks',
+      reason: 'Some models wrap tool calls in markdown code blocks',
     },
   ],
 };
@@ -227,7 +227,7 @@ const QWEN3_CODER: ModelProfile = {
 
 /** All built-in profiles indexed by model ID */
 const BUILT_IN_PROFILES = new Map<string, ModelProfile>([
-  [GPT_OSS_120B.modelId, GPT_OSS_120B],
+  [QWEN35_122B.modelId, QWEN35_122B],
   [HERMES3_70B.modelId, HERMES3_70B],
   [QWEN3_CODER.modelId, QWEN3_CODER],
 ]);
@@ -295,7 +295,7 @@ function loadProfilesFromYaml(
  * Priority:
  * 1. Custom YAML profiles (user overrides)
  * 2. Built-in profiles (exact match)
- * 3. Family-based fallback (e.g., 'gpt-oss:240b' matches 'gpt-oss' family)
+ * 3. Family-based fallback (e.g., 'qwen3.5:122b' matches 'qwen3.5' family)
  * 4. DEFAULT_PROFILE (no-op)
  */
 export function resolveModelProfile(
@@ -319,8 +319,25 @@ export function resolveModelProfile(
   }
 
   // 3. Family-based fallback: extract family from modelId
-  //    e.g., 'gpt-oss:240b' -> family 'gpt-oss'
-  const familyGuess = modelId.split(':')[0];
+  //    e.g., 'qwen3.5:35b' -> family 'qwen3.5'
+  //    Supports both ':' separator (hermes3:70b) and prefix matching for non-colon models
+  let familyGuess = modelId.split(':')[0];
+  if (familyGuess === modelId) {
+    // No ':' found — try matching against known family prefixes
+    for (const profile of BUILT_IN_PROFILES.values()) {
+      if (profile.family && modelId.startsWith(profile.family)) {
+        familyGuess = profile.family;
+        break;
+      }
+    }
+    // Also check custom profiles
+    for (const profile of customProfiles) {
+      if (profile.family && modelId.startsWith(profile.family)) {
+        familyGuess = profile.family;
+        break;
+      }
+    }
+  }
   if (familyGuess) {
     // Check custom first
     const customFamilyMatch = customProfiles.find((p) => p.family === familyGuess);

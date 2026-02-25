@@ -55,7 +55,7 @@ This is what Claude Code is to Opus, or what Aider is to GPT-4. Tyrion needs the
               ┌───────────────────────────────┐
               │        Model Router           │
               │                               │
-              │  gpt-oss:120b (reasoning)     │
+              │  qwen3.5:122b (reasoning)     │
               │  Qwen3-Coder (implementation) │
               └───────────────────────────────┘
 ```
@@ -518,13 +518,13 @@ The coding interface routes to different models based on task:
 ```typescript
 interface ModelRouter {
   // Planning, architecture decisions
-  architect: 'gpt-oss:120b';
+  architect: 'qwen3.5:122b';
 
   // Code implementation
   code: 'qwen3-coder-next:latest';
 
   // Quick questions, explanations
-  ask: 'gpt-oss:120b';
+  ask: 'qwen3.5:122b';
 
   // Code review
   review: 'qwen3-coder-next:latest';
@@ -537,7 +537,7 @@ interface ModelRouter {
 function routeToModel(mode: Mode, task: string): string {
   switch (mode) {
     case 'architect':
-      return 'gpt-oss:120b';      // Reasoning for planning
+      return 'qwen3.5:122b';      // Reasoning for planning
 
     case 'code':
       return 'qwen3-coder-next';  // Coding specialist
@@ -546,7 +546,7 @@ function routeToModel(mode: Mode, task: string): string {
       // Use coding model for code questions, reasoning for general
       return isCodeQuestion(task)
         ? 'qwen3-coder-next'
-        : 'gpt-oss:120b';
+        : 'qwen3.5:122b';
 
     case 'review':
       return 'qwen3-coder-next';  // Code understanding
@@ -1599,9 +1599,9 @@ coding:
 
   # Model routing
   models:
-    architect: gpt-oss:120b
+    architect: qwen3.5:122b
     code: qwen3-coder-next:latest
-    ask: gpt-oss:120b
+    ask: qwen3.5:122b
     review: qwen3-coder-next:latest
 
   # Session settings

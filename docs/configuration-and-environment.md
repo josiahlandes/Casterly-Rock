@@ -21,7 +21,7 @@ Casterly uses YAML configuration files validated at load time by Zod schemas. Al
 ```yaml
 local:
   provider: ollama
-  model: gpt-oss:120b                   # Primary: reasoning + conversation
+  model: qwen3.5:122b                   # Primary: reasoning + conversation
   codingModel: qwen3-coder-next:latest   # Coding: code gen + review
   baseUrl: http://localhost:11434
   timeoutMs: 120000                      # 2 min (70B models need longer)
@@ -108,7 +108,7 @@ hardware:
   test_time_scaling: true
   adversarial_testing: true
   max_parallel_generations: 4
-  bestofn_judge_model: gpt-oss:120b
+  bestofn_judge_model: qwen3.5:122b
 ```
 
 ## Config Loading
@@ -175,7 +175,7 @@ This is the largest config file, controlling all 7 phases of the autonomous syst
 | `agent_loop.enabled` | `false` | Use ReAct loop instead of legacy pipeline |
 | `agent_loop.max_turns` | `100` | Max reasoning turns per cycle |
 | `agent_loop.max_tokens_per_cycle` | `50000` | Soft token limit |
-| `agent_loop.reasoning_model` | `gpt-oss:120b` | Reasoning/planning model |
+| `agent_loop.reasoning_model` | `qwen3.5:122b` | Reasoning/planning model |
 | `agent_loop.coding_model` | `qwen3-coder-next:latest` | Code generation model |
 | `agent_loop.think_tool_enabled` | `true` | Enable explicit reasoning tool |
 | `agent_loop.delegation_enabled` | `true` | Enable sub-model delegation |
@@ -270,7 +270,7 @@ Defines per-role model assignments and routing:
 | Role | Model | Temperature | Purpose |
 |------|-------|-------------|---------|
 | `coding` | `qwen3-coder-next:latest` | 0.1 | Code gen, refactoring, bug fixes |
-| `primary` | `gpt-oss:120b` | 0.6 | Reasoning, planning, conversation |
+| `primary` | `qwen3.5:122b` | 0.6 | Reasoning, planning, conversation |
 | `autonomous` | `qwen3-coder-next:latest` | 0.2 | Improvement cycles |
 | `specialist` | `tyrion-specialist:latest` | 0.2 | Self-distilled model (Phase 6, disabled) |
 

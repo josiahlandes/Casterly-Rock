@@ -44,7 +44,7 @@ describe('appConfigSchema — valid configs', () => {
     const config = {
       local: {
         provider: 'ollama' as const,
-        model: 'gpt-oss:120b',
+        model: 'qwen3.5:122b',
         baseUrl: 'http://localhost:11434',
       },
       sensitivity: {
@@ -52,7 +52,7 @@ describe('appConfigSchema — valid configs', () => {
       },
     };
     const result = appConfigSchema.parse(config);
-    expect(result.local.model).toBe('gpt-oss:120b');
+    expect(result.local.model).toBe('qwen3.5:122b');
     expect(result.sensitivity.alwaysLocal).toEqual(['credentials']);
   });
 
@@ -60,7 +60,7 @@ describe('appConfigSchema — valid configs', () => {
     const config = {
       local: {
         provider: 'ollama' as const,
-        model: 'gpt-oss:120b',
+        model: 'qwen3.5:122b',
         baseUrl: 'http://localhost:11434',
         timeoutMs: 60000,
         codingModel: 'qwen3-coder-next:latest',

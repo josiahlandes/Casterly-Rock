@@ -39,7 +39,7 @@ Guidelines:
   canBash: true,
   canGit: true,
   preferredModel: 'qwen3-coder-next:latest',
-  fallbackModel: 'gpt-oss:120b',
+  fallbackModel: 'qwen3.5:122b',
 };
 
 /**
@@ -90,7 +90,7 @@ When the plan is approved, switch to CODE mode to implement.`,
   canDelete: false,
   canBash: false,
   canGit: false,
-  preferredModel: 'gpt-oss:120b',
+  preferredModel: 'qwen3.5:122b',
   fallbackModel: 'qwen3-coder-next:latest',
 };
 
@@ -123,7 +123,7 @@ suggest switching to CODE mode.`,
   canDelete: false,
   canBash: false,
   canGit: false,
-  preferredModel: 'gpt-oss:120b',
+  preferredModel: 'qwen3.5:122b',
   fallbackModel: 'qwen3-coder-next:latest',
 };
 
@@ -173,7 +173,7 @@ Suggest specific fixes that can be applied in CODE mode.`,
   canBash: false,
   canGit: false,
   preferredModel: 'qwen3-coder-next:latest',
-  fallbackModel: 'gpt-oss:120b',
+  fallbackModel: 'qwen3.5:122b',
 };
 
 /**

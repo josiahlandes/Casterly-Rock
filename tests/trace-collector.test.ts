@@ -141,10 +141,10 @@ describe('setFinalResponse / setError', () => {
 describe('complete', () => {
   it('sets endTime and generates summary', () => {
     const collector = createTraceCollector('test');
-    collector.addEvent('provider_selected', { provider: 'local', model: 'gpt-oss:120b' });
+    collector.addEvent('provider_selected', { provider: 'local', model: 'qwen3.5:122b' });
     collector.addEvent('llm_response', {
       providerId: 'ollama',
-      model: 'gpt-oss:120b',
+      model: 'qwen3.5:122b',
       textLength: 100,
       toolCalls: 0,
       stopReason: 'end_turn',
@@ -225,10 +225,10 @@ describe('generateSummary', () => {
 
   it('extracts provider info from provider_selected event', () => {
     const collector = createTraceCollector('test');
-    collector.addEvent('provider_selected', { provider: 'local', model: 'gpt-oss:120b' });
+    collector.addEvent('provider_selected', { provider: 'local', model: 'qwen3.5:122b' });
 
     const summary = collector.generateSummary();
-    expect(summary.providerSelected).toEqual({ provider: 'local', model: 'gpt-oss:120b' });
+    expect(summary.providerSelected).toEqual({ provider: 'local', model: 'qwen3.5:122b' });
   });
 
   it('returns null for provider/model when no events', () => {
@@ -298,7 +298,7 @@ describe('formatTrace', () => {
 
   it('includes summary section', () => {
     const collector = createTraceCollector('test');
-    collector.addEvent('llm_response', { providerId: 'ollama', model: 'gpt-oss:120b', textLength: 5, toolCalls: 0, stopReason: 'end_turn' });
+    collector.addEvent('llm_response', { providerId: 'ollama', model: 'qwen3.5:122b', textLength: 5, toolCalls: 0, stopReason: 'end_turn' });
     const trace = collector.complete();
 
     const output = formatTrace(trace);

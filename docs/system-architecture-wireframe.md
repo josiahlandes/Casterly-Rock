@@ -65,7 +65,7 @@ For prose descriptions of each subsystem, see [architecture.md](architecture.md)
 │  │                                                                  │   │
 │  │  ┌────────────────┐   ┌────────────────┐   ┌────────────────┐   │   │
 │  │  │ coding tasks   │   │ general tasks  │   │ autonomous     │   │   │
-│  │  │ → qwen3-coder  │   │ → gpt-oss:120b│   │ → qwen3-coder  │   │   │
+│  │  │ → qwen3-coder  │   │ → qwen3.5:122b│   │ → qwen3-coder  │   │   │
 │  │  └────────────────┘   └────────────────┘   └────────────────┘   │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
@@ -414,7 +414,7 @@ For prose descriptions of each subsystem, see [architecture.md](architecture.md)
 │              │  Validated Config      │                                 │
 │              │                        │                                 │
 │              │  provider: ollama      │                                 │
-│              │  model: gpt-oss:120b   │                                 │
+│              │  model: qwen3.5:122b   │                                 │
 │              │  codingModel: qwen3... │                                 │
 │              │  sensitivity: [...]    │                                 │
 │              │  tools: { enabled, ... }│                                │
@@ -691,7 +691,7 @@ src/
 │  │                                       │                              │
 │  │  Loaded Models (up to 3 concurrent):  │                              │
 │  │  ┌─────────────────────────────────┐  │                              │
-│  │  │  gpt-oss:120b (primary)        │  │  ◀── general reasoning       │
+│  │  │  qwen3.5:122b (primary)        │  │  ◀── general reasoning       │
 │  │  │  96/100 benchmark score        │  │                              │
 │  │  └─────────────────────────────────┘  │                              │
 │  │  ┌─────────────────────────────────┐  │                              │

@@ -110,7 +110,7 @@ agent_loop:
   max_tokens_per_cycle: 50000
 
   # Model used for reasoning / planning / decision-making
-  reasoning_model: gpt-oss:120b
+  reasoning_model: qwen3.5:122b
 
   # Model used for code generation and analysis
   coding_model: qwen3-coder-next:latest
@@ -197,7 +197,7 @@ memory_tiers:
   warm_tier_max_tokens: 10000
 
   # Overall context window size in tokens
-  context_window_tokens: 32768
+  context_window_tokens: 40960
 
   # ─────────────────────────────────────────────────────────────────────────────
   # COOL/COLD STORAGE
@@ -237,7 +237,7 @@ hardware:
   adversarial_attack_temperature: 0.7
 
   # Best-of-N judging model
-  bestofn_judge_model: gpt-oss:120b
+  bestofn_judge_model: qwen3.5:122b
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DREAM CYCLES (Phase 6: quiet-hours strategic consolidation)

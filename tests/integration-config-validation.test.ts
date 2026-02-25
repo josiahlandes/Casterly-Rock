@@ -65,8 +65,8 @@ describe('config/models.yaml', () => {
     }
   });
 
-  it('primary model is gpt-oss:120b', () => {
-    expect(models.primary!.model).toBe('gpt-oss:120b');
+  it('primary model is qwen3.5:122b', () => {
+    expect(models.primary!.model).toBe('qwen3.5:122b');
   });
 
   it('coding model is qwen3-coder-next:latest', () => {
@@ -77,7 +77,7 @@ describe('config/models.yaml', () => {
     const autoModel = models.autonomous!.model as string;
     expect(autoModel).toBeTruthy();
     // Should be either the coding model or primary model
-    expect(['qwen3-coder-next:latest', 'gpt-oss:120b']).toContain(autoModel);
+    expect(['qwen3-coder-next:latest', 'qwen3.5:122b']).toContain(autoModel);
   });
 
   it('all fallbacks reference existing models or null', () => {
@@ -286,7 +286,7 @@ describe('cross-config consistency', () => {
     }
   });
 
-  it('gpt-oss model referenced consistently across all configs', () => {
+  it('qwen3.5 model referenced consistently across all configs', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const autoYaml = loadYaml('config/autonomous.yaml');
     const defaultYaml = loadYaml('config/default.yaml');

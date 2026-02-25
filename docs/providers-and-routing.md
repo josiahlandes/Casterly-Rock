@@ -302,7 +302,7 @@ The provider interface itself is well-designed and aligned with the vision. All 
 
 **Why change:** The vision says the two-model setup is "a basic mixture of experts where the gating function is the LLM itself." The LLM should decide which model handles a subtask at runtime, not a static lookup table. A task classified as "coding" might actually need the reasoning model if it requires architectural judgment.
 
-**What to do:** Remove the `CODING_TASK_TYPES` set and the `forTask()` routing method from `ProviderRegistry`. The `delegate` agent tool already lets the LLM specify which model to use — this is the correct mechanism. The system prompt should describe the models' strengths: "Use qwen3-coder-next for implementation, code generation, and refactoring. Use gpt-oss:120b for planning, analysis, and judgment calls."
+**What to do:** Remove the `CODING_TASK_TYPES` set and the `forTask()` routing method from `ProviderRegistry`. The `delegate` agent tool already lets the LLM specify which model to use — this is the correct mechanism. The system prompt should describe the models' strengths: "Use qwen3-coder-next for implementation, code generation, and refactoring. Use qwen3.5:122b for planning, analysis, and judgment calls."
 
 > **Status:** Hardcoded task-type model routing deprecated. `forTask` returns local for all task types. The LLM decides model routing via the `delegate` tool.
 
