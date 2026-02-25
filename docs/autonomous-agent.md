@@ -68,8 +68,8 @@ Each turn in the loop:
 | Reason | Meaning |
 |--------|---------|
 | `completed` | Agent finished and returned a text summary |
-| `max_turns` | Hit the turn limit (default 100) |
-| `max_tokens` | Estimated token budget exceeded (default 50,000) |
+| `max_turns` | Hit the turn limit (default 200) |
+| `max_tokens` | Estimated token budget exceeded (default 500,000 user/goal; 100,000 background) |
 | `aborted` | External interrupt (e.g. user message arrived during autonomous work) |
 | `error` | Unrecoverable error during a turn |
 
@@ -77,8 +77,8 @@ Each turn in the loop:
 
 | Control | Default | Behavior |
 |---------|---------|----------|
-| `maxTurns` | 100 | Hard limit on reasoning loops per cycle |
-| `maxTokensPerCycle` | 50,000 | Soft limit on total tokens (input + output). Estimated at ~3.5 chars/token |
+| `maxTurns` | 200 | Hard limit on reasoning loops per cycle |
+| `maxTokensPerCycle` | 500,000 | Soft limit on total tokens for user/goal cycles. Background cycles use 100,000. Estimated at ~3.5 chars/token |
 | `maxResponseTokens` | 4,096 | Maximum tokens per individual LLM response |
 | `temperature` | 0.2 | Low temperature for deterministic reasoning |
 
@@ -167,7 +167,7 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 
 | Tool | Description |
 |------|-------------|
-| `delegate` | Send a sub-task to a specific model. `hermes3:70b` for reasoning/planning, `qwen3-coder-next:latest` for code generation. Optionally includes file contents as context. |
+| `delegate` | Send a sub-task to a specific model. `qwen3.5:122b` for reasoning/planning, `qwen3-coder-next:latest` for code generation. Optionally includes file contents as context. |
 
 ### Communication (1)
 
@@ -456,7 +456,7 @@ Retention policy: successful traces kept 7 days, failed traces kept 30 days, tra
 
 > **Source**: `src/autonomous/identity.ts`
 
-The identity prompt is built fresh each cycle from live state. It defines who Tyrion is and provides situational awareness:
+The identity prompt is built fresh each cycle from live state. It provides operational identity and situational awareness. Personality and communication style are **not** included here — they are applied by the voice filter (`src/imessage/voice-filter.ts`) as a post-processing step before message delivery, keeping the reasoning context clean:
 
 ```
 Identity prompt = Self model (who I am)
@@ -468,10 +468,15 @@ Identity prompt = Self model (who I am)
                 + Handoff note (what happened last session)
 ```
 
+The system prompt also injects **runtime context** at cycle start:
+- Current date, time, and timezone
+- Workspace bootstrap files (IDENTITY.md, USER.md, TOOLS.md — not SOUL.md, which the voice filter handles)
+- Contacts roster (for resolving names to phone numbers)
+- File location guidance (user documents → `~/Documents/Tyrion/`)
+
 The self model (`SelfModelSummary`) captures:
-- Name, description, personality traits
-- Behavioral rules and values
-- Current mode (autonomous, interactive, coding)
+- Name, description, behavioral rules
+- Current strengths and weaknesses
 
 ## Context Manager (Tiered Memory)
 
@@ -584,9 +589,10 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 
 ```typescript
 {
-  maxTurns: 100,
-  maxTokensPerCycle: 50_000,
-  reasoningModel: 'hermes3:70b',
+  maxTurns: 200,
+  maxTokensPerCycle: 500_000,
+  maxTokensPerCycleBackground: 100_000,
+  reasoningModel: 'qwen3.5:122b',
   codingModel: 'qwen3-coder-next:latest',
   thinkToolEnabled: true,
   delegationEnabled: true,
@@ -595,6 +601,8 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
   maxResponseTokens: 4096,
 }
 ```
+
+Token budgets are generous because local inference has no cost. User and goal cycles get the full 500K budget; background (scheduled/event) cycles get a moderate 100K budget.
 
 ## Key Files
 
@@ -611,7 +619,8 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
 | `src/autonomous/journal.ts` | Narrative memory (handoff, reflection, etc.) |
 | `src/autonomous/debug.ts` | Structured tracing + redacted logging |
 | `src/autonomous/reasoning/adversarial.ts` | Adversarial test case generation |
-| `src/autonomous/loop.ts` | Legacy loop (superseded by agent-loop.ts) |
+| `src/autonomous/loop.ts` | `AutonomousLoop` — orchestration layer (state persistence, event handling, runtime context injection). Creates a proper `OllamaProvider` for the agent loop. |
+| `src/imessage/voice-filter.ts` | Post-processing personality rewrite — applies Tyrion's voice before message delivery |
 | `src/autonomous/crystal-store.ts` | Crystal store — permanent insights (Vision Tier 1) |
 | `src/autonomous/constitution-store.ts` | Constitution — self-authored rules (Vision Tier 1) |
 | `src/autonomous/trace-replay.ts` | Trace replay — self-debugging (Vision Tier 1) |

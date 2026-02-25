@@ -28,8 +28,8 @@ These docs provide comprehensive coverage of every major subsystem:
 | [Skills & Tools](skills-and-tools.md) | 13 native tools, tool registry, skill packages, tool formatting per LLM, orchestration |
 | [Task Execution](task-execution.md) | Message classification, task planning (DAG decomposition), runner, verifier, context profiles |
 | [Memory & State](memory-and-state.md) | 5 persistent stores: journal, world model, goal stack, issue log, execution log; tiered memory |
-| [Autonomous Agent](autonomous-agent.md) | ReAct loop, 25 agent tools, triggers, budget controls, identity system, context manager |
-| [Providers & Routing](providers-and-routing.md) | Ollama provider, two-model registry, task classifier, pipeline routing, concurrent/best-of-N |
+| [Autonomous Agent](autonomous-agent.md) | ReAct loop, 96 agent tools, triggers, budget controls, identity system, context manager, voice filter |
+| [Providers & Routing](providers-and-routing.md) | Ollama provider, two-model registry, task classifier (as agent tool), voice filter, concurrent/best-of-N |
 | [Configuration & Environment](configuration-and-environment.md) | All 5 config files, every setting documented, Zod schemas, persistent state paths |
 | [Testing & Quality Gates](testing-and-quality-gates.md) | 5-gate pipeline, ~100 test files, Vitest config, autonomous validator, test parser |
 | [Security & Privacy](security-and-privacy.md) | 5 defense layers, input guard, redactor, output sanitizer, command gates, privacy guarantees |
@@ -118,9 +118,9 @@ How the reference docs relate to each other:
        │  Agent          │
        │                 │
        │  ReAct loop,    │
-       │  25 tools,      │
+       │  96 tools,      │
        │  identity,      │
-       │  context mgr    │
+       │  voice filter   │
        └─────────────────┘
 ```
 
@@ -131,7 +131,7 @@ How the reference docs relate to each other:
 3. **[Architecture Overview](architecture.md)** — See the big picture
 4. **[Configuration & Environment](configuration-and-environment.md)** — Understand all settings
 5. **[Skills & Tools](skills-and-tools.md)** — Learn the tool system
-6. **[Task Execution](task-execution.md)** — Follow a message through the pipeline
+6. **[Task Execution](task-execution.md)** — Classification, planning, and verification (as agent tools)
 7. **[Memory & State](memory-and-state.md)** — See how state persists
 8. **[Security & Privacy](security-and-privacy.md)** — Understand all safety layers
 9. **[Testing & Quality Gates](testing-and-quality-gates.md)** — Know how to validate changes

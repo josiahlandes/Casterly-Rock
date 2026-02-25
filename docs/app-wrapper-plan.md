@@ -352,7 +352,7 @@ Hosted at a static URL (GitHub Releases, S3, or similar):
 1. PREREQUISITES
    - macOS 13.0 (Ventura) or later
    - Ollama installed and running (https://ollama.ai)
-   - A model pulled: ollama pull hermes3:70b (or your preferred model)
+   - A model pulled: ollama pull qwen3.5:122b (or your preferred model)
 
 2. INSTALL
    a. Download Casterly-X.Y.Z.dmg from releases page

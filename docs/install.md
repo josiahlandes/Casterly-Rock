@@ -32,7 +32,7 @@ cd casterly
 npm install
 
 # 3. Set up Ollama models
-ollama pull hermes3:70b
+ollama pull qwen3.5:122b
 ollama pull qwen3-coder-next:latest
 
 # 4. Build and install
@@ -66,7 +66,7 @@ This installs:
 2. Pull the required models:
    ```bash
    # Primary model for general tasks
-   ollama pull hermes3:70b
+   ollama pull qwen3.5:122b
 
    # Coding model
    ollama pull qwen3-coder-next:latest
@@ -89,9 +89,9 @@ Edit `config/default.yaml`:
 ```yaml
 local:
   provider: ollama
-  model: hermes3:70b
+  model: qwen3.5:122b
   baseUrl: http://localhost:11434
-  timeoutMs: 300000  # 5 minutes for 70B models
+  timeoutMs: 300000  # 5 minutes for 122B models
 ```
 
 Model routing is configured in `config/models.yaml`:
@@ -105,8 +105,8 @@ models:
 
   primary:
     provider: ollama
-    model: hermes3:70b
-    temperature: 0.7
+    model: qwen3.5:122b
+    temperature: 0.6
 
 hardware:
   platform: mac-studio-m4-max
@@ -273,13 +273,13 @@ source ~/.zshrc
 Pull the required models:
 
 ```bash
-ollama pull hermes3:70b
+ollama pull qwen3.5:122b
 ollama pull qwen3-coder-next:latest
 ```
 
 ### "Out of memory"
 
-With 128GB unified memory, you should be able to run two 70B models simultaneously. If you encounter memory issues:
+With 128GB unified memory, you should be able to run two 70B+ parameter models simultaneously. If you encounter memory issues:
 
 1. Check what models are loaded:
    ```bash

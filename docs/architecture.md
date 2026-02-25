@@ -52,7 +52,7 @@ Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
 | **Coding Interface** | Aider-style repo map, context budgeting, validation, modes | [coding-interface.md](coding-interface.md) |
 | **iMessage** | Daemon polling, SQLite reader, AppleScript sender, tool filter | [imessage.md](imessage.md) |
 | **Memory & State** | Journal, world model, user model, goal stack, issue log, crystals, constitution, traces, prompt store, shadow store | [memory-and-state.md](memory-and-state.md) |
-| **Providers & Routing** | Ollama provider, model registry, task classifier, pipeline routing | [providers-and-routing.md](providers-and-routing.md) |
+| **Providers & Routing** | Ollama provider, model registry, task classifier, voice filter | [providers-and-routing.md](providers-and-routing.md) |
 | **Security & Privacy** | Sensitive data detection, redaction, safe logging, command gates | [security-and-privacy.md](security-and-privacy.md) |
 | **Configuration** | YAML + Zod validation, model routing, data layout | [configuration-and-environment.md](configuration-and-environment.md) |
 | **Testing & Quality Gates** | 5-gate pipeline, trace collection, test cases, benchmarking | [testing-and-quality-gates.md](testing-and-quality-gates.md) |
@@ -61,13 +61,9 @@ Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
 | **Error Codes** | Structured error system (E1xx–E9xx), auto-detection | [error-codes.md](error-codes.md) |
 | **Installation** | Prerequisites, setup, configuration | [install.md](install.md) |
 
-> **NOTE — Vision Reconciliation (System Overview)**
+> **NOTE — Architecture Status**
 >
-> The system overview diagram above is largely aligned with the vision, but needs one change: the diagram implies triggers flow through the agent loop as the single path, which is correct. However, the *implementation* still has a separate pipeline path (`src/pipeline/process.ts`) that bypasses the agent loop entirely for iMessage conversations, routing them through classify → flat tool loop or classify → task manager pipeline. The vision says the agent loop is the *only* execution path. The separate pipeline entry point needs to be retired, with all triggers (including iMessage) entering through the agent loop.
->
-> **What to change:**
-> - Remove `src/pipeline/process.ts` as a separate execution path. Route iMessage messages through `triggerFromMessage()` → agent loop like all other triggers.
-> - The iMessage daemon (`src/imessage/daemon.ts`) should emit user triggers into the event queue rather than calling `processChatMessage()` directly.
+> The system overview diagram above accurately reflects the current implementation. All triggers — including iMessage user messages — flow through the agent loop as the single execution path. The legacy pipeline (`processChatMessage()`, session manager, mode managers, skill registry, task pipeline, tool orchestrator) has been removed from the iMessage daemon. User messages enter via `triggerFromMessage()` → `autonomousController.runTriggeredCycle()` → agent loop. Responses pass through the voice filter (personality rewrite) before delivery.
 
 ## Source Layout
 

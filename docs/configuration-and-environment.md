@@ -140,7 +140,7 @@ This is the largest config file, controlling all 7 phases of the autonomous syst
 | `autonomous.max_cycles_per_day` | `12` | Daily cycle limit |
 | `autonomous.quiet_hours.start` | `06:00` | Quiet hours start (stop working) |
 | `autonomous.quiet_hours.end` | `22:00` | Quiet hours end (start working) |
-| `autonomous.quiet_hours.enabled` | `true` | Enable night-only operation (10pm–6am) |
+| `autonomous.quiet_hours.enabled` | `true` | Quiet hours scheduling preference (soft — LLM prefers consolidation during quiet hours) |
 
 ### Scope Controls
 
@@ -168,13 +168,13 @@ This is the largest config file, controlling all 7 phases of the autonomous syst
 | `autonomous.sandbox_timeout_seconds` | `300` | Sandbox operation timeout |
 | `autonomous.sandbox_memory_mb` | `2048` | Sandbox memory limit |
 
-### Agent Loop (Phase 2)
+### Agent Loop
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `agent_loop.enabled` | `false` | Use ReAct loop instead of legacy pipeline |
-| `agent_loop.max_turns` | `100` | Max reasoning turns per cycle |
-| `agent_loop.max_tokens_per_cycle` | `50000` | Soft token limit |
+| `agent_loop.max_turns` | `200` | Max reasoning turns per cycle (safety ceiling) |
+| `agent_loop.max_tokens_per_cycle` | `500000` | Soft token limit for user/goal cycles. Local inference has no cost — set high to allow deep reflection. |
+| `agent_loop.max_tokens_per_cycle_background` | `100000` | Moderate budget for background (scheduled/event) cycles |
 | `agent_loop.reasoning_model` | `qwen3.5:122b` | Reasoning/planning model |
 | `agent_loop.coding_model` | `qwen3-coder-next:latest` | Code generation model |
 | `agent_loop.think_tool_enabled` | `true` | Enable explicit reasoning tool |
@@ -196,13 +196,13 @@ This is the largest config file, controlling all 7 phases of the autonomous syst
 | `events.cooldown_seconds` | `120` | Min seconds between event-triggered cycles |
 | `events.daily_budget_turns` | `200` | Max agent turns per day from events |
 
-### Memory Tiers (Phase 4)
+### Memory Tiers
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `memory_tiers.hot_tier_max_tokens` | `2000` | Identity prompt budget |
 | `memory_tiers.warm_tier_max_tokens` | `10000` | Working memory budget |
-| `memory_tiers.context_window_tokens` | `32768` | Overall context window |
+| `memory_tiers.context_window_tokens` | `40960` | Overall context window (qwen3.5:122b practical max with 128GB unified memory) |
 | `memory_tiers.store_base_path` | `~/.casterly/memory` | Cool/cold storage path |
 | `memory_tiers.max_cool_entries` | `200` | Max entries before cold promotion |
 | `memory_tiers.cool_retention_days` | `30` | Days before cool → cold |

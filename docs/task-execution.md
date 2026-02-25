@@ -1,9 +1,9 @@
 # Task Execution
 
 > **Source**: `src/tasks/`
-> **Entry point**: `createTaskManager(options).handle(message, history, provider)`
+> **Entry point**: Available as agent tools (`classify`, `plan`, `verify`) in the ReAct agent loop.
 
-When a user message requires action, the task execution pipeline classifies it, decomposes it into a plan, executes the plan as a dependency graph, verifies the result, and logs the outcome for future learning.
+The task execution modules provide classification, planning, execution, and verification capabilities. These are now **optional agent tools** the LLM invokes by judgment, not a mandatory pipeline. The agent loop is the sole execution path — all triggers (including iMessage) flow through it.
 
 ## Pipeline Overview
 
@@ -278,7 +278,7 @@ The system prompt should describe the default workflow ("for complex multi-step 
 
 **What to do:** Remove `TaskManager.handle()` as an entry point. Keep the individual modules (`classifier.ts`, `planner.ts`, `runner.ts`, `verifier.ts`) as implementations behind the new agent tools.
 
-> **Status:** iMessage routed through trigger system. Agent loop is the sole execution path. Controller uses `runAgentCycle` instead of `runCycle`.
+> **Status:** Fully implemented. iMessage daemon calls `triggerFromMessage()` → `autonomousController.runTriggeredCycle()`. The legacy `processChatMessage()` pipeline, session manager, mode managers, skill registry, task pipeline, and tool orchestrator have been removed from the daemon. Agent loop is the sole execution path.
 
 ### 3. Keep the execution log — IMPLEMENTED
 
