@@ -40,6 +40,16 @@ export type { AutonomousController } from './controller.js';
 // Reports
 export { formatDailyReport, formatMorningSummary } from './report.js';
 
+// Status reports (iMessage dashboard)
+export {
+  formatStatusOverview,
+  formatGoalsSummary,
+  formatIssuesSummary,
+  formatHealthReport,
+  formatActivityReport,
+  formatRelativeTime,
+} from './status-report.js';
+
 // Test & coverage parser
 export {
   parseVitestJson,

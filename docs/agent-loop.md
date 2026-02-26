@@ -211,6 +211,26 @@ Key properties:
 - **Backward compatible** — if no `fullToolkit` is provided to `createAgentLoop()`, no filtering occurs
 - **Token savings** — user messages go from ~50KB of tool schemas to ~14KB (schemas + catalog)
 
+### Status Dashboard Commands
+
+The iMessage daemon supports instant status commands that bypass the LLM entirely and return formatted state directly. These are available to all allowed senders (not admin-only).
+
+| Command | Data Source | Description |
+|---------|------------|-------------|
+| `status` | Controller + WorldModel + GoalStack + IssueLog | Compact overview of everything |
+| `goals` | GoalStack.getSummary() | Active + pending + blocked goals |
+| `issues` | IssueLog.getSummary() | Open + investigating issues |
+| `health` | WorldModel.getHealth() | Typecheck/tests/lint status |
+| `activity` | WorldModel.getRecentActivity() + Journal.getRecent() | Last few things that happened |
+
+Implementation:
+- **Formatting**: `src/autonomous/status-report.ts` — 5 pure formatting functions
+- **Routing**: `src/imessage/daemon.ts` — regex match (`/^(status|goals|issues|health|activity)$/i`) intercepts before the agent loop
+- **State access**: `AutonomousLoop` exposes public getters (`goalStackInstance`, `issueLogInstance`, `worldModelInstance`, `journalInstance`)
+- **Controller**: `AutonomousController.getStatusReport(command)` dispatches to the correct formatter
+
+These commands produce plain text (no markdown) with emoji status indicators, optimized for iMessage readability.
+
 ### Path Security
 
 File operations are restricted:

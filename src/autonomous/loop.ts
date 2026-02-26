@@ -168,6 +168,12 @@ export class AutonomousLoop {
   get dreamCycleRunnerInstance(): DreamCycleRunner { return this.dreamCycleRunner; }
   get reasoningScalerInstance(): ReasoningScaler { return this.reasoningScaler; }
 
+  /** Status dashboard getters — expose state for formatted status reports */
+  get goalStackInstance(): GoalStack { return this.goalStack; }
+  get issueLogInstance(): IssueLog { return this.issueLog; }
+  get worldModelInstance(): WorldModel { return this.worldModel; }
+  get journalInstance(): Journal { return this.journal; }
+
   // Phase 2: Agent loop state
   private worldModel: WorldModel;
   private goalStack: GoalStack;

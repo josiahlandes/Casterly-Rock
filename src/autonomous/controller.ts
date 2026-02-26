@@ -20,6 +20,13 @@ import { AutonomousLoop, AbortError } from './loop.js';
 import type { AgentTrigger, AgentOutcome } from './agent-loop.js';
 import type { Reflector } from './reflector.js';
 import { formatDailyReport, formatMorningSummary } from './report.js';
+import {
+  formatStatusOverview,
+  formatGoalsSummary,
+  formatIssuesSummary,
+  formatHealthReport,
+  formatActivityReport,
+} from './status-report.js';
 import type { AutonomousConfig, HandoffState } from './types.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -65,6 +72,8 @@ export interface AutonomousController {
   getHandoff(): Promise<HandoffState | null>;
   /** Run a triggered cycle (e.g., from user message). Bypasses enabled check. */
   runTriggeredCycle(trigger: AgentTrigger): Promise<AgentOutcome>;
+  /** Generate a concise status dashboard for iMessage. */
+  getStatusReport(command: string): string;
   /** Whether autonomous mode is enabled. */
   readonly enabled: boolean;
   /** Whether a cycle is currently executing. */
@@ -337,6 +346,25 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     }
   }
 
+  // ─── getStatusReport ────────────────────────────────────────────────────
+
+  function getStatusReport(command: string): string {
+    switch (command) {
+      case 'status':
+        return formatStatusOverview(loop, getStatus());
+      case 'goals':
+        return formatGoalsSummary(loop);
+      case 'issues':
+        return formatIssuesSummary(loop);
+      case 'health':
+        return formatHealthReport(loop);
+      case 'activity':
+        return formatActivityReport(loop);
+      default:
+        return 'Unknown command. Try: status, goals, issues, health, activity';
+    }
+  }
+
   // ─── controller object ──────────────────────────────────────────────────
 
   return {
@@ -345,6 +373,7 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     interrupt,
     tick,
     getStatus,
+    getStatusReport,
     getDailyReport,
     getMorningSummary,
     writeHandoff,

@@ -59,7 +59,14 @@ async function processMessage(
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
 
-  // Status query — direct reply, no agent loop needed
+  // Status dashboard — instant reply, no agent loop needed
+  const statusReply = handleStatusCommand(message.text, autonomousController);
+  if (statusReply !== null) {
+    sendMessage(sender, statusReply);
+    return;
+  }
+
+  // Legacy "autonomous status" — also instant reply
   if (/^autonomous\s+status$/i.test(message.text.trim())) {
     const autonomousReply = handleAutonomousCommand(message.text, autonomousController);
     if (autonomousReply !== null) {
@@ -97,6 +104,10 @@ async function processMessage(
   }
 }
 
+// ─── Status Command Patterns ─────────────────────────────────────────────────
+
+const STATUS_COMMANDS_RE = /^(status|goals|issues|health|activity)$/i;
+
 // ─── Autonomous Command Patterns ─────────────────────────────────────────────
 
 const AUTONOMOUS_STATUS_RE = /^autonomous\s+status$/i;
@@ -126,6 +137,23 @@ function handleAutonomousCommand(
   }
 
   return null;
+}
+
+/**
+ * Handle instant status dashboard commands.
+ * Returns the reply string if handled, or null if not a status command.
+ * Available to all allowed senders (not admin-only).
+ */
+function handleStatusCommand(
+  text: string,
+  controller?: AutonomousController,
+): string | null {
+  const trimmed = text.trim().toLowerCase();
+  const match = STATUS_COMMANDS_RE.exec(trimmed);
+  if (!match) return null;
+
+  if (!controller) return 'System is not configured.';
+  return controller.getStatusReport(match[1]!);
 }
 
 // ─── Admin Command Patterns ──────────────────────────────────────────────────
@@ -418,6 +446,13 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           addressBook = loadAddressBook();
           allowedSenders = getAllowedPhones(addressBook);
           sendMessage(sender, adminReply);
+          continue;
+        }
+
+        // ─── Status Commands (any allowed sender) ────────────────────
+        const pollStatusReply = handleStatusCommand(message.text, autonomousController);
+        if (pollStatusReply !== null) {
+          sendMessage(sender, pollStatusReply);
           continue;
         }
 
