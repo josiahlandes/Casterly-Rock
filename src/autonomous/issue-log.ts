@@ -207,7 +207,7 @@ function createEmptyIssueLog(): IssueLogData {
 function resolvePath(filePath: string): string {
   if (filePath.startsWith('~')) {
     const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '/tmp';
-    return filePath.replace('~', home);
+    return home + filePath.slice(1);
   }
   return filePath;
 }

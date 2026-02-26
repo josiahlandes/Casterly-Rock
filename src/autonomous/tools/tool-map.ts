@@ -225,8 +225,8 @@ export const TASK_CATEGORY_PRESETS: Record<string, CategoryName[]> = {
   /** Full set for complex multi-file tasks */
   coding_complex: ['core', 'quality', 'git', 'state', 'reasoning', 'memory', 'introspection'],
 
-  /** Conversation / Q&A — just recall and reasoning */
-  conversation: ['core', 'memory', 'reasoning'],
+  /** Conversation / Q&A — recall, reasoning, messaging, and scheduling */
+  conversation: ['core', 'memory', 'reasoning', 'communication', 'scheduling'],
 
   /** Dream cycle — everything dream-related */
   dream_cycle: ['core', 'dream', 'advanced-memory', 'vision-t1', 'vision-t3', 'introspection', 'memory'],

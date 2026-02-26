@@ -30,6 +30,7 @@ import { loadBootstrapFiles } from '../interface/bootstrap.js';
 import { loadAddressBook } from '../interface/contacts.js';
 import { buildAgentToolkit } from './agent-tools.js';
 import type { AgentToolkit, AgentState } from './agent-tools.js';
+import { buildPresetToolkit } from './tools/registry.js';
 import { WorldModel } from './world-model.js';
 import { GoalStack } from './goal-stack.js';
 import { IssueLog } from './issue-log.js';
@@ -842,7 +843,17 @@ export class AutonomousLoop {
         agentState,
       );
 
-      // 4b. Phase 5: Assess difficulty and scale compute
+      // 4b. Select tool preset based on trigger type
+      const presetKey = selectToolPreset(effectiveTrigger);
+      const filteredToolkit = presetKey === 'full'
+        ? this.agentToolkit
+        : buildPresetToolkit(this.agentToolkit, presetKey);
+
+      tracer.log('agent-loop', 'info',
+        `Tool preset: ${presetKey} → ${filteredToolkit.schemas.length}/${this.agentToolkit.schemas.length} tools`,
+      );
+
+      // 4c. Phase 5: Assess difficulty and scale compute
       const triggerDescription = effectiveTrigger.type === 'goal'
         ? effectiveTrigger.goal.description
         : effectiveTrigger.type === 'event'
@@ -891,11 +902,12 @@ export class AutonomousLoop {
       this.activeAgentLoop = createAgentLoop(
         { ...this.agentConfig, maxTurns: scaledMaxTurns, maxTokensPerCycle: tokenBudget, cycleId },
         this.llmProvider,
-        this.agentToolkit,
+        filteredToolkit,
         agentState,
         this.selfModelSummary,
         this.journal,
         runtimeContext,
+        this.agentToolkit,  // full toolkit for request_tools hydration
       );
 
       let outcome: AgentOutcome;
@@ -1158,6 +1170,34 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
         }
       : undefined,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool Preset Selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Select a tool preset based on the trigger type.
+ *
+ * - user messages → conversation preset (~22 tools: core, memory, reasoning,
+ *   communication, scheduling). The model can request_tools to load more.
+ * - scheduled cycles → full preset (all 96 tools for autonomous work)
+ * - goal-driven work → coding_complex preset (~35 tools)
+ * - event-driven work → coding_simple preset (~18 tools)
+ */
+export function selectToolPreset(trigger: AgentTrigger): string {
+  switch (trigger.type) {
+    case 'user':
+      return 'conversation';
+    case 'scheduled':
+      return 'full';
+    case 'goal':
+      return 'coding_complex';
+    case 'event':
+      return 'coding_simple';
+    default:
+      return 'full';
+  }
 }
 
 export async function main(): Promise<void> {

@@ -177,7 +177,39 @@ Tool output is capped at 10,000 characters. See [docs/skills-and-tools.md](skill
 | AUDN consolidation (Mem0) | `audn_enqueue`, `audn_status` |
 | Entropy tier migration (SAGE) | `entropy_score`, `evaluate_tiers` |
 | Git-backed versioning (Letta) | `snapshot_memory`, `list_snapshots`, `diff_snapshots` |
-| Communication | `message_user` (placeholder) |
+| Communication | `message_user` |
+
+### Tool Preset System
+
+Not all 96 tools are sent on every cycle. The agent loop uses **trigger-based preset selection** to start each cycle with only the tools relevant to the task:
+
+| Trigger Type | Preset | Categories | ~Tools |
+|-------------|--------|------------|--------|
+| `user` (iMessage) | `conversation` | core, memory, reasoning, communication, scheduling | ~23 |
+| `scheduled` (background) | `full` | all 14 categories | 96 |
+| `goal` (autonomous work) | `coding_complex` | core, quality, git, state, reasoning, memory, introspection | ~35 |
+| `event` (file change, etc.) | `coding_simple` | core, quality, git, state | ~18 |
+
+Preset selection happens in `loop.ts` via `selectToolPreset(trigger)`, which calls `buildPresetToolkit()` from `src/autonomous/tools/registry.ts`.
+
+#### Dynamic Tool Loading (`request_tools`)
+
+When the toolkit is filtered, a `request_tools` meta-tool is automatically injected. This lets the model load additional tool categories mid-cycle:
+
+```typescript
+// Model calls:
+{ "name": "request_tools", "input": { "categories": ["git", "quality"] } }
+
+// Agent loop hydrates the toolkit via hydrateCategories()
+// Next turn sees the new tools
+```
+
+The system prompt includes an **Available Tool Categories** section showing which categories are not yet loaded, with brief descriptions of each tool. This catalog uses `buildCompactManifest()` (~2KB) so the model knows what it can request.
+
+Key properties:
+- **All 96 executors are always available** — even if a tool's schema isn't sent to the LLM, the executor can still run (for tools loaded mid-cycle)
+- **Backward compatible** — if no `fullToolkit` is provided to `createAgentLoop()`, no filtering occurs
+- **Token savings** — user messages go from ~50KB of tool schemas to ~14KB (schemas + catalog)
 
 ### Path Security
 

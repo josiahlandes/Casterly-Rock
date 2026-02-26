@@ -45,7 +45,7 @@ Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
 
 | Subsystem | Summary | Detail Doc |
 |-----------|---------|------------|
-| **Agent Loop** | ReAct cycle engine — triggers, identity prompt, tool execution, handoff notes, tiered memory | [agent-loop.md](agent-loop.md) |
+| **Agent Loop** | ReAct cycle engine — triggers, identity prompt, tool preset selection, tool execution, handoff notes, tiered memory | [agent-loop.md](agent-loop.md) |
 | **Triggers** | Event sources normalized into uniform Trigger shape | [triggers.md](triggers.md) |
 | **Task Execution** | Classifier, planner, runner, verifier pipeline | [task-execution.md](task-execution.md) |
 | **Skills & Tools** | Tool registry, native executors, bash safety gates, OpenClaw skills | [skills-and-tools.md](skills-and-tools.md) |

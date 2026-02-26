@@ -161,6 +161,8 @@ Bash execution is registered separately.
 
 In addition to the 13 native tools above, the autonomous agent loop has additional tools defined in `src/autonomous/agent-tools.ts`. The agent loop is now the **sole execution path** for all triggers (including iMessage) — there is no separate interactive/pipeline mode.
 
+**Tool Preset Selection**: Not all 96 tools are sent on every cycle. The agent loop selects a preset based on trigger type (e.g., `conversation` for user messages = ~23 tools, `full` for scheduled cycles = all 96). A `request_tools` meta-tool lets the model dynamically load additional categories mid-cycle. See [agent-loop.md](agent-loop.md#tool-preset-system) for details.
+
 See [autonomous-agent.md](autonomous-agent.md) for the full catalog. Key categories:
 
 | Category | Tools |

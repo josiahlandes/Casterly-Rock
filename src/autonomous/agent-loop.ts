@@ -43,6 +43,9 @@ import type { ToolSchema, NativeToolCall, NativeToolResult, ToolResultMessage } 
 import type { Goal } from './goal-stack.js';
 import type { SelfModelSummary } from './identity.js';
 import type { Journal } from './journal.js';
+import type { CategoryName } from './tools/types.js';
+import { hydrateCategories } from './tools/registry.js';
+import { buildCompactManifest, getCategoryTools, getAllCategories } from './tools/tool-map.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -191,6 +194,28 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
   maxResponseTokens: 4096,
 };
 
+// ─── Request Tools Meta-Tool ──────────────────────────────────────────────
+
+/**
+ * Meta-tool that lets the model dynamically load additional tool categories.
+ * Only included when the toolkit is filtered (not full).
+ */
+const REQUEST_TOOLS_SCHEMA: ToolSchema = {
+  name: 'request_tools',
+  description: 'Load additional tool categories into your toolkit. Call this when you need tools that are not currently available (e.g., git, quality, vision). Check the "Available Tool Categories" section in your system prompt for what you can load.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      categories: {
+        type: 'array',
+        items: { type: 'string', description: 'Category name' },
+        description: 'Category names to load (e.g., ["git", "quality"])',
+      },
+    },
+    required: ['categories'],
+  },
+};
+
 // ─── Runtime Context ───────────────────────────────────────────────────────
 
 /**
@@ -257,6 +282,23 @@ function buildFileLocationsSection(): string {
 - NEVER create user documents in the repository root — they don't belong in version control`;
 }
 
+/**
+ * Tool catalog showing unloaded categories so the model knows what it can
+ * request via `request_tools`. Only included when the toolkit is filtered.
+ */
+function buildToolCatalogSection(loadedToolNames: string[]): string {
+  const loadedSet = new Set(loadedToolNames);
+  const unloadedCategories = getAllCategories().filter((cat) => {
+    const catTools = getCategoryTools(cat);
+    return !catTools.every((t) => loadedSet.has(t));
+  });
+
+  if (unloadedCategories.length === 0) return '';
+
+  const manifest = buildCompactManifest(unloadedCategories);
+  return `## Available Tool Categories\n\nYou have ${loadedSet.size} tools loaded. Additional categories can be loaded by calling \`request_tools\`:\n\n${manifest}`;
+}
+
 // ─── System Prompt Assembly ──────────────────────────────────────────────
 
 /**
@@ -265,8 +307,9 @@ function buildFileLocationsSection(): string {
  */
 function buildSystemPrompt(
   trigger: AgentTrigger,
-  _tools: ToolSchema[],
+  tools: ToolSchema[],
   runtimeContext?: RuntimeContext,
+  fullToolCount?: number,
 ): string {
   const sections: string[] = [];
 
@@ -283,6 +326,15 @@ function buildSystemPrompt(
 
   // File location guidance
   sections.push(buildFileLocationsSection());
+
+  // Tool catalog (only when toolkit is filtered — not all tools loaded)
+  const toolCount = tools.length;
+  const totalTools = fullToolCount ?? toolCount;
+  if (toolCount < totalTools) {
+    const toolNames = tools.map((t) => t.name);
+    const catalog = buildToolCatalogSection(toolNames);
+    if (catalog) sections.push(catalog);
+  }
 
   // Task trigger
   const triggerDescription = describeTrigger(trigger);
@@ -368,7 +420,8 @@ function estimateTokens(text: string): number {
 export class AgentLoop {
   private readonly config: AgentLoopConfig;
   private readonly provider: LlmProvider;
-  private readonly toolkit: AgentToolkit;
+  private toolkit: AgentToolkit;
+  private readonly fullToolkit: AgentToolkit;
   private readonly state: AgentState;
   private readonly selfModel: SelfModelSummary | null;
   private readonly journal: Journal | null;
@@ -385,14 +438,26 @@ export class AgentLoop {
     selfModel?: SelfModelSummary | null,
     journal?: Journal | null,
     runtimeContext?: RuntimeContext,
+    fullToolkit?: AgentToolkit,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.provider = provider;
-    this.toolkit = toolkit;
+    this.fullToolkit = fullToolkit ?? toolkit;
     this.state = state;
     this.selfModel = selfModel ?? null;
     this.journal = journal ?? null;
     this.runtimeContext = runtimeContext ?? {};
+
+    // If the toolkit is filtered (fewer tools than full), add request_tools meta-tool
+    if (toolkit.schemas.length < this.fullToolkit.schemas.length) {
+      this.toolkit = {
+        ...toolkit,
+        schemas: [...toolkit.schemas, REQUEST_TOOLS_SCHEMA],
+        toolNames: [...toolkit.toolNames, 'request_tools'],
+      };
+    } else {
+      this.toolkit = toolkit;
+    }
   }
 
   /**
@@ -498,7 +563,10 @@ export class AgentLoop {
         tracer.log('agent-loop', 'debug', `Recorded attempt for goal ${trigger.goal.id}`);
       }
 
-      const systemPrompt = buildSystemPrompt(trigger, this.toolkit.schemas, this.runtimeContext);
+      const systemPrompt = buildSystemPrompt(
+        trigger, this.toolkit.schemas, this.runtimeContext,
+        this.fullToolkit.schemas.length,
+      );
       const fullSystemPrompt = `${identityPrompt}\n\n${systemPrompt}`;
 
       totalTokensEstimate += estimateTokens(fullSystemPrompt);
@@ -622,7 +690,20 @@ export class AgentLoop {
             const result = await tracer.withSpan(
               'agent-loop',
               `tool:${toolCall.name}`,
-              async () => {
+              async (): Promise<NativeToolResult> => {
+                // ── request_tools meta-tool: hydrate additional categories ──
+                if (toolCall.name === 'request_tools') {
+                  const categories = (toolCall.input['categories'] ?? []) as CategoryName[];
+                  const before = this.toolkit.schemas.length;
+                  this.toolkit = hydrateCategories(this.toolkit, this.fullToolkit, categories);
+                  const added = this.toolkit.schemas.length - before;
+                  tracer.log('agent-loop', 'info', `request_tools: hydrated [${categories.join(', ')}] → +${added} tools (${this.toolkit.schemas.length} total)`);
+                  return {
+                    toolCallId: toolCall.id,
+                    success: true,
+                    output: `Loaded categories: ${categories.join(', ')}. Added ${added} tools. You now have ${this.toolkit.schemas.length} tools available.`,
+                  };
+                }
                 return this.toolkit.execute(toolCall);
               },
               { toolCallId: toolCall.id },
@@ -904,6 +985,7 @@ export function createAgentLoop(
   selfModel?: SelfModelSummary | null,
   journal?: Journal | null,
   runtimeContext?: RuntimeContext,
+  fullToolkit?: AgentToolkit,
 ): AgentLoop {
-  return new AgentLoop(config, provider, toolkit, state, selfModel, journal, runtimeContext);
+  return new AgentLoop(config, provider, toolkit, state, selfModel, journal, runtimeContext, fullToolkit);
 }
