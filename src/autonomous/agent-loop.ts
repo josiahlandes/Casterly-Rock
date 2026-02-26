@@ -985,8 +985,17 @@ export class AgentLoop {
           ? _result.output.slice(0, maxChars) + '\n... (truncated)'
           : _result.output;
 
+        // Use a stable key for file operations so repeated reads of the same
+        // file overwrite the warm tier entry instead of creating duplicates.
+        // For read_file: key on the file path so re-reads deduplicate.
+        // For other tools: key on the tool call ID (unique per invocation).
+        const filePath = toolCall.input['path'];
+        const warmTierKey = toolCall.name === 'read_file' && typeof filePath === 'string'
+          ? `${toolCall.name}:${filePath}`
+          : `${toolCall.name}:${toolCall.id}`;
+
         this.state.contextManager.addToWarmTier({
-          key: `${toolCall.name}:${toolCall.id}`,
+          key: warmTierKey,
           kind: 'tool_result',
           content: `[${toolCall.name}] ${content}`,
         });
