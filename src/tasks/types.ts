@@ -23,6 +23,10 @@ export interface ClassificationResult {
   reason: string;
   /** Task category if applicable (e.g. 'calendar', 'file_operation', 'coding') */
   taskType?: string | undefined;
+  /** Whether the message is missing key details and the assistant should ask follow-up questions before proceeding */
+  needsClarification?: boolean | undefined;
+  /** Specific questions to ask the user when needsClarification is true */
+  clarificationQuestions?: string[] | undefined;
 }
 
 // ─── Planning ────────────────────────────────────────────────────────────────

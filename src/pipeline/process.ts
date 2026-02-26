@@ -338,6 +338,61 @@ export async function processChatMessage(
         }
       }
 
+      // ─── Clarification gate ───────────────────────────────────────
+      // If the classifier detected missing key details, ask the user
+      // for clarification instead of proceeding with an incomplete task.
+      if (classification.needsClarification && classification.clarificationQuestions?.length) {
+        safeLogger.info('Task classifier: needs clarification, generating follow-up questions', {
+          taskClass: classification.taskClass,
+          questionCount: classification.clarificationQuestions.length,
+        });
+
+        const questions = classification.clarificationQuestions;
+        const clarificationPrompt = [
+          `The user asked: "${input.text}"`,
+          '',
+          'Before you can give a great answer, you need a few more details. Ask these follow-up questions naturally:',
+          ...questions.map((q, i) => `${i + 1}. ${q}`),
+          '',
+          'Write a short, friendly reply that asks these questions conversationally.',
+          'Do NOT attempt the task yet — just ask for the missing info.',
+          'Do NOT call any tools — respond with text only.',
+        ].join('\n');
+
+        try {
+          const clarificationPass = await provider.generateWithTools(
+            {
+              prompt: clarificationPrompt,
+              systemPrompt: enrichedSystemPrompt,
+              maxTokens: 512,
+              temperature: 0.7,
+            },
+            [], // no tools — text only
+          );
+
+          const clarificationResponse = applyResponseHints(
+            clarificationPass.text.trim() || questions.join('\n'),
+            modelProfile,
+          );
+
+          session.addMessage({ role: 'assistant', content: clarificationResponse });
+
+          return {
+            response: clarificationResponse,
+            iterations: 0,
+            toolCallsMade: [],
+            taskPipelineUsed: false,
+            taskClass: classification.taskClass,
+            modelProfile: modelProfile.modelId,
+            estimatedTokens: assembled.estimatedTokens,
+          };
+        } catch (clarifyError) {
+          const clarifyMsg = clarifyError instanceof Error ? clarifyError.message : String(clarifyError);
+          safeLogger.warn('Clarification pass failed, continuing with task pipeline', { error: clarifyMsg });
+          // Fall through to normal handling
+        }
+      }
+
       if (classification.taskClass === 'conversation') {
         safeLogger.info('Task classifier: conversation, using flat tool loop', {
           confidence: classification.confidence,

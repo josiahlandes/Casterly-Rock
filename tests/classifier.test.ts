@@ -259,3 +259,98 @@ describe('classifyMessage — taskType', () => {
     expect(result.taskType).toBeUndefined();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// classifyMessage — needsClarification
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('classifyMessage — needsClarification', () => {
+  it('includes needsClarification when true', async () => {
+    const provider = createMockProvider(
+      mockResp([classifyCall({
+        taskClass: 'conversation',
+        confidence: 0.8,
+        reason: 'Schedule request missing time constraints',
+        needsClarification: true,
+        clarificationQuestions: [
+          'What time do you usually wake up?',
+          'What time does Josiah get home?',
+        ],
+      })]),
+    );
+
+    const result = await classifyMessage(
+      'Can you make me a schedule for tomorrow?',
+      [],
+      provider,
+    );
+    expect(result.needsClarification).toBe(true);
+    expect(result.clarificationQuestions).toEqual([
+      'What time do you usually wake up?',
+      'What time does Josiah get home?',
+    ]);
+  });
+
+  it('omits needsClarification when not provided', async () => {
+    const provider = createMockProvider(
+      mockResp([classifyCall({
+        taskClass: 'simple_task',
+        confidence: 0.9,
+        reason: 'Clear single action',
+      })]),
+    );
+
+    const result = await classifyMessage('What time is it?', [], provider);
+    expect(result.needsClarification).toBeUndefined();
+    expect(result.clarificationQuestions).toBeUndefined();
+  });
+
+  it('omits needsClarification when false', async () => {
+    const provider = createMockProvider(
+      mockResp([classifyCall({
+        taskClass: 'conversation',
+        confidence: 0.9,
+        reason: 'Enough context to respond',
+        needsClarification: false,
+      })]),
+    );
+
+    const result = await classifyMessage('Hello', [], provider);
+    expect(result.needsClarification).toBeUndefined();
+  });
+
+  it('filters out non-string clarification questions', async () => {
+    const provider = createMockProvider(
+      mockResp([classifyCall({
+        taskClass: 'conversation',
+        confidence: 0.7,
+        reason: 'Missing details',
+        needsClarification: true,
+        clarificationQuestions: ['Valid question?', 42, '', 'Another valid one?'],
+      })]),
+    );
+
+    const result = await classifyMessage('Plan my trip', [], provider);
+    expect(result.needsClarification).toBe(true);
+    expect(result.clarificationQuestions).toEqual([
+      'Valid question?',
+      'Another valid one?',
+    ]);
+  });
+
+  it('omits clarificationQuestions when empty array', async () => {
+    const provider = createMockProvider(
+      mockResp([classifyCall({
+        taskClass: 'conversation',
+        confidence: 0.7,
+        reason: 'Missing details',
+        needsClarification: true,
+        clarificationQuestions: [],
+      })]),
+    );
+
+    const result = await classifyMessage('Do the thing', [], provider);
+    expect(result.needsClarification).toBe(true);
+    expect(result.clarificationQuestions).toBeUndefined();
+  });
+});
