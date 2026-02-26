@@ -126,6 +126,8 @@ describe('Agent Loop — Runtime Context', () => {
       expect(systemPrompt).toContain('File Locations');
       expect(systemPrompt).toContain('Current Task');
       expect(systemPrompt).toContain('How to Work');
+      expect(systemPrompt).toContain('Ask Before Assuming');
+      expect(systemPrompt).toContain('Generative vs Tool-Based Tasks');
       expect(systemPrompt).toContain('Error Recovery');
       expect(systemPrompt).toContain('Memory');
       expect(systemPrompt).toContain('Completion');
@@ -273,6 +275,61 @@ describe('Agent Loop — Runtime Context', () => {
       expect(systemPrompt).toContain('## File Locations');
       expect(systemPrompt).toContain('~/Documents/Tyrion/');
       expect(systemPrompt).toContain('NEVER create user documents in the repository root');
+    });
+  });
+
+  describe('clarification and generative task guidance', () => {
+    it('includes Ask Before Assuming section with follow-up question guidance', async () => {
+      const { provider, getCapturedSystemPrompt } = createCapturingProvider();
+
+      const loop = createAgentLoop(
+        defaultConfig, provider, toolkit, state, null, null,
+        {},
+      );
+      await loop.run(scheduledTrigger);
+
+      const systemPrompt = getCapturedSystemPrompt()!;
+      expect(systemPrompt).toContain('## Ask Before Assuming');
+      expect(systemPrompt).toContain('ask clarifying questions');
+      expect(systemPrompt).toContain('message_user');
+      expect(systemPrompt).toContain('Scheduling requests without time constraints');
+    });
+
+    it('includes Generative vs Tool-Based Tasks section', async () => {
+      const { provider, getCapturedSystemPrompt } = createCapturingProvider();
+
+      const loop = createAgentLoop(
+        defaultConfig, provider, toolkit, state, null, null,
+        {},
+      );
+      await loop.run(scheduledTrigger);
+
+      const systemPrompt = getCapturedSystemPrompt()!;
+      expect(systemPrompt).toContain('## Generative vs Tool-Based Tasks');
+      expect(systemPrompt).toContain('Generative tasks');
+      expect(systemPrompt).toContain('Tool-based tasks');
+      expect(systemPrompt).toContain('Mixed tasks');
+      expect(systemPrompt).toContain('just write the response directly');
+    });
+
+    it('places new sections between How to Work guidelines and Error Recovery', async () => {
+      const { provider, getCapturedSystemPrompt } = createCapturingProvider();
+
+      const loop = createAgentLoop(
+        defaultConfig, provider, toolkit, state, null, null,
+        {},
+      );
+      await loop.run(scheduledTrigger);
+
+      const systemPrompt = getCapturedSystemPrompt()!;
+      const howToWorkIdx = systemPrompt.indexOf('## How to Work');
+      const askBeforeIdx = systemPrompt.indexOf('## Ask Before Assuming');
+      const generativeIdx = systemPrompt.indexOf('## Generative vs Tool-Based Tasks');
+      const errorRecoveryIdx = systemPrompt.indexOf('## Error Recovery');
+
+      expect(howToWorkIdx).toBeLessThan(askBeforeIdx);
+      expect(askBeforeIdx).toBeLessThan(generativeIdx);
+      expect(generativeIdx).toBeLessThan(errorRecoveryIdx);
     });
   });
 

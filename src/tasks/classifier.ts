@@ -30,7 +30,9 @@ const CLASSIFY_TOOL: ToolSchema = {
 Categories:
 - conversation: The user is chatting, asking a question you can answer from knowledge, or making small talk. No tools or actions needed.
 - simple_task: The user wants something done that requires a single tool call (check calendar, read a file, get the time, etc.).
-- complex_task: The user wants something done that requires multiple steps, planning, or coordination (organize files, summarize and email, multi-step workflows).`,
+- complex_task: The user wants something done that requires multiple steps, planning, or coordination (organize files, summarize and email, multi-step workflows).
+
+IMPORTANT — Generative tasks (creating schedules, writing plans, drafting text, brainstorming) are "conversation" — they need the LLM to generate text, NOT to call tools. Only classify as a task when actual tool execution is required.`,
 
   inputSchema: {
     type: 'object',
@@ -52,6 +54,15 @@ Categories:
         type: 'string',
         description: 'If this is a task, what category? e.g. calendar, file_operation, coding, reminder, system_info, communication',
       },
+      needsClarification: {
+        type: 'boolean',
+        description: 'True if the user\'s request is missing key information needed to complete it well. For example: a scheduling request without time constraints, a vague "organize my stuff" without scope, or a request that depends on unknown preferences.',
+      },
+      clarificationQuestions: {
+        type: 'array',
+        items: { type: 'string', description: 'A specific question to ask the user.' },
+        description: 'If needsClarification is true, list 1-3 specific follow-up questions that would help complete the request.',
+      },
     },
     required: ['taskClass', 'confidence', 'reason'],
   },
@@ -63,11 +74,13 @@ Categories:
 const CLASSIFIER_SYSTEM_PROMPT = `You are a message classifier. Your ONLY job is to classify the user's message by calling the classify_message tool.
 
 Rules:
-- "conversation" — The user is chatting, greeting, asking questions you can answer from knowledge, reflecting, or combining conversation with a request. If the message is primarily conversational with an incidental action, choose this.
+- "conversation" — The user is chatting, greeting, asking questions you can answer from knowledge, reflecting, or combining conversation with a request. If the message is primarily conversational with an incidental action, choose this. ALSO use this for generative requests: creating schedules, writing plans, drafting text, brainstorming ideas, giving suggestions — anything where the main output is LLM-generated text rather than tool execution.
 - "simple_task" — The user's ENTIRE message is a direct, unambiguous command for a single action: "What time is it?", "Read /tmp/foo.txt", "Check my calendar today". No opinion, no follow-up, no conversational filler.
-- "complex_task" — The user explicitly wants multiple distinct actions completed, or a workflow requiring coordination.
+- "complex_task" — The user explicitly wants multiple distinct actions completed, or a workflow requiring coordination of real tools (file operations, API calls, multi-step system commands).
 
 IMPORTANT: Default to "conversation" unless the message is clearly and purely a task command. Most messages from real users include conversational context — classify those as "conversation" so the assistant can respond naturally while using tools.
+
+Clarification: Set needsClarification to true when the request is missing key details that would significantly change the output — for example, a scheduling request without time constraints or wake/sleep times, a "plan my trip" without dates or budget, or a task where critical preferences are unknown. Include 1-3 specific follow-up questions. Do NOT flag needsClarification for minor details the assistant can reasonably assume.
 
 You MUST call the classify_message tool. Do not respond with text.`;
 
@@ -110,17 +123,31 @@ function parseClassification(response: GenerateWithToolsResponse): Classificatio
   const confidence = input.confidence as number | undefined;
   const reason = input.reason as string | undefined;
   const taskType = input.taskType as string | undefined;
+  const needsClarification = input.needsClarification as boolean | undefined;
+  const clarificationQuestions = input.clarificationQuestions as string[] | undefined;
 
   if (!taskClass || !['conversation', 'simple_task', 'complex_task'].includes(taskClass)) {
     return null;
   }
 
-  return {
+  const result: ClassificationResult = {
     taskClass: taskClass as TaskClass,
     confidence: typeof confidence === 'number' ? Math.max(0, Math.min(1, confidence)) : 0.5,
     reason: typeof reason === 'string' ? reason : 'No reason provided',
     taskType: typeof taskType === 'string' ? taskType : undefined,
   };
+
+  if (needsClarification === true) {
+    result.needsClarification = true;
+  }
+
+  if (Array.isArray(clarificationQuestions) && clarificationQuestions.length > 0) {
+    result.clarificationQuestions = clarificationQuestions.filter(
+      (q): q is string => typeof q === 'string' && q.length > 0
+    );
+  }
+
+  return result;
 }
 
 /**
