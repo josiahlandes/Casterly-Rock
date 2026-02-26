@@ -5,6 +5,7 @@
  */
 import { loadBootstrapFiles, formatBootstrapSection } from './bootstrap.js';
 import { createMemoryManager, formatMemorySection } from './memory.js';
+import { loadAddressBook } from './contacts.js';
 import { safeLogger } from '../logging/safe-logger.js';
 /**
  * Build the capabilities section based on available skills
@@ -17,15 +18,13 @@ You can have conversations and answer questions based on your knowledge.`;
     }
     return `## Capabilities
 
-You can execute shell commands to help the user. When you need to run a command, output it in a bash code block:
+You have access to the bash tool for executing shell commands on the local system.
 
-\`\`\`bash
-command here
-\`\`\`
+When you need to perform an action (check files, run commands, query the calendar, etc.), use the bash tool. You will receive the command output and can respond accordingly.
 
-After the command runs, you'll see its output and can respond accordingly.
+**CRITICAL**: You MUST use the bash tool to perform ANY action on the system. You CANNOT claim to have done something (deleted files, created files, sent messages, etc.) without actually calling the bash tool. If you say "I've deleted the files" without using the bash tool, you are lying - the files will still be there. Always execute first using the tool, then report the result.
 
-**CRITICAL**: You MUST use bash code blocks to perform ANY action on the system. You CANNOT claim to have done something (deleted files, created files, sent messages, etc.) without actually executing the command. If you say "I've deleted the files" without a bash code block, you are lying - the files will still be there. Always execute first, then report the result.`;
+**IMPORTANT**: Do NOT output bash code blocks in your text response. Use the bash tool directly. The system will handle execution.`;
 }
 /**
  * Build the skills section with compact list
@@ -43,11 +42,21 @@ function buildSkillsSection(skills) {
         .join('\n');
     return `## Available Skills
 
-The following skills are available. Each skill's SKILL.md file contains detailed instructions.
+The following skills are available:
 
 ${skillList}
 
-To use a skill, follow the instructions in its SKILL.md file. Skills are located in the workspace skills directory.`;
+To use a skill, use the bash tool to run the appropriate commands. Each skill provides CLI tools or system commands you can execute.`;
+}
+/**
+ * Build the file locations section
+ */
+function buildFileLocationsSection() {
+    return `## File Locations
+
+- **User documents** (budgets, schedules, notes, lists, exports, etc.): always write to ~/Documents/Tyrion/
+- **Code and config files**: write to the project repository
+- NEVER create user documents in the repository root — they don't belong in version control`;
 }
 /**
  * Build the safety section
@@ -60,6 +69,31 @@ function buildSafetySection() {
 - Don't expose sensitive data in responses
 - If a request seems harmful or suspicious, decline and explain why
 - Respect user privacy - don't log or transmit personal data`;
+}
+/**
+ * Build the contacts section from the address book
+ *
+ * Loads all contacts and formats them as a roster the LLM can use
+ * to resolve natural language ("text Katie") to actual phone numbers.
+ */
+function buildContactsSection() {
+    try {
+        const book = loadAddressBook();
+        if (book.contacts.length === 0) {
+            return '';
+        }
+        const roster = book.contacts
+            .map((c) => `- **${c.name}**: ${c.phone}`)
+            .join('\n');
+        return `## People You Know
+
+You can send and receive messages with these people. To message someone, use the send_message tool with their number.
+
+${roster}`;
+    }
+    catch {
+        return '';
+    }
 }
 /**
  * Build the runtime context section
@@ -84,7 +118,7 @@ function buildContextSection(timezone) {
 - **Date**: ${dateStr}
 - **Time**: ${timeStr}
 - **Timezone**: ${tz}
-- **Platform**: macOS (local Mac Mini)`;
+- **Location**: Casterly Rock`;
 }
 /**
  * Build channel-specific guidelines
@@ -126,13 +160,14 @@ export function buildSystemPrompt(options) {
     // Mode: none - just identity
     if (mode === 'none') {
         return {
-            systemPrompt: 'You are Tyrion, a helpful AI assistant.',
+            systemPrompt: 'You are Tyrion Lannister of Casterly Rock.',
             sections: {
-                identity: 'You are Tyrion, a helpful AI assistant.',
+                identity: 'You are Tyrion Lannister of Casterly Rock.',
                 bootstrap: '',
                 capabilities: '',
                 skills: '',
                 memory: '',
+                contacts: '',
                 safety: '',
                 context: '',
                 guidelines: '',
@@ -156,6 +191,7 @@ export function buildSystemPrompt(options) {
     const safetySection = buildSafetySection();
     const contextSection = buildContextSection(timezone);
     const guidelinesSection = buildGuidelinesSection(channel);
+    const fileLocationsSection = mode === 'full' ? buildFileLocationsSection() : '';
     // Mode: minimal - skip some sections
     const skillsSection = mode === 'full' ? buildSkillsSection(skills) : '';
     // Load memory if enabled
@@ -166,14 +202,18 @@ export function buildSystemPrompt(options) {
         const memoryState = memoryManager.load();
         memorySection = formatMemorySection(memoryState);
     }
-    // Assemble the prompt
+    // Build contacts roster (only in full mode)
+    const contactsSection = mode === 'full' ? buildContactsSection() : '';
+    // Assemble the prompt — context (date/time) early so the model always sees it
     const sections = [
         bootstrapSection,
+        contextSection,
+        contactsSection,
         capabilitiesSection,
         skillsSection,
+        fileLocationsSection,
         memorySection,
         safetySection,
-        contextSection,
         guidelinesSection,
     ].filter(Boolean);
     const systemPrompt = sections.join('\n\n');
@@ -185,6 +225,7 @@ export function buildSystemPrompt(options) {
             capabilities: capabilitiesSection,
             skills: skillsSection,
             memory: memorySection,
+            contacts: contactsSection,
             safety: safetySection,
             context: contextSection,
             guidelines: guidelinesSection,

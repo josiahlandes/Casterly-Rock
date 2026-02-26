@@ -248,39 +248,67 @@ export class OllamaProvider implements LlmProvider {
         },
       };
 
-      const requestBody = JSON.stringify(chatRequest);
-      const response = await fetch(`${this.baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: requestBody,
-        signal: controller.signal,
-      });
+      // Retry loop: some models (e.g. Qwen) occasionally generate malformed
+      // XML tool calls that Ollama's parser rejects with a 400. Retrying with
+      // a small temperature bump usually produces valid output.
+      const MAX_RETRIES = 3;
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        throw new ProviderError(
-          `Ollama request failed with status ${response.status}: ${errorText}`
-        );
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        // Bump temperature slightly on retries to get different output
+        if (attempt > 1) {
+          const baseTemp = request.temperature ?? 0.7;
+          chatRequest.options = {
+            ...chatRequest.options,
+            temperature: Math.min(baseTemp + 0.1 * (attempt - 1), 1.0),
+          };
+        }
+
+        const requestBody = JSON.stringify(chatRequest);
+        const response = await fetch(`${this.baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: requestBody,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => 'Unknown error');
+
+          // Retry on 400 with XML parsing errors — the model generated a
+          // malformed tool call that Ollama's parser couldn't handle.
+          if (response.status === 400 && errorText.includes('XML syntax error') && attempt < MAX_RETRIES) {
+            // eslint-disable-next-line no-console
+            console.warn(`[ollama] XML tool-call parse error on attempt ${attempt}/${MAX_RETRIES}, retrying...`);
+            continue;
+          }
+
+          throw new ProviderError(
+            `Ollama request failed with status ${response.status}: ${errorText}`
+          );
+        }
+
+        const data = await response.json() as OllamaChatResponse;
+
+        if (data.error) {
+          throw new ProviderError(`Ollama error: ${data.error}`);
+        }
+
+        const toolCalls = parseToolCalls(data.message?.tool_calls);
+        const stopReason = getStopReason(data);
+
+        return {
+          text: data.message?.content ?? '',
+          toolCalls,
+          providerId: this.id,
+          model: this.model,
+          stopReason,
+        };
       }
 
-      const data = await response.json() as OllamaChatResponse;
-
-      if (data.error) {
-        throw new ProviderError(`Ollama error: ${data.error}`);
-      }
-
-      const toolCalls = parseToolCalls(data.message?.tool_calls);
-      const stopReason = getStopReason(data);
-
-      return {
-        text: data.message?.content ?? '',
-        toolCalls,
-        providerId: this.id,
-        model: this.model,
-        stopReason,
-      };
+      // Should be unreachable (loop always returns or throws), but TypeScript needs it
+      throw new ProviderError('Ollama request failed: max retries exhausted');
     } catch (error) {
       if (error instanceof ProviderError) {
         throw error;
