@@ -894,7 +894,7 @@ export class AgentLoop {
   private buildInitialPrompt(trigger: AgentTrigger): string {
     switch (trigger.type) {
       case 'scheduled':
-        return 'This is a scheduled autonomous cycle. Review your goal stack and issue log, then work on the highest-priority item. If nothing is urgent, check codebase health or investigate stale issues.';
+        return 'This is a scheduled autonomous cycle. Review your goal stack and issue log, then work on the highest-priority item. If nothing is urgent, check codebase health or investigate stale issues.\n\nIMPORTANT: Do NOT use message_user during scheduled cycles for routine work (cleanup, maintenance, health checks). Only message the user for genuinely urgent issues (security concerns, data loss risk). Scheduled cycles are background work — the user did not ask for updates.';
 
       case 'event':
         return `An event occurred: [${trigger.event.kind}] ${trigger.event.description}\n\nInvestigate and take action as needed.`;

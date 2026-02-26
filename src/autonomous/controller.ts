@@ -104,6 +104,7 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
   let busy = false;
   let abortController: AbortController | null = null;
   let lastCycleEnd = 0;
+  let lastUserCycleEnd = 0;  // Track user cycles separately for cooldown
   let totalCycles = 0;
   let successfulCycles = 0;
   let lastCycleAt: string | null = null;
@@ -177,6 +178,14 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     // Respect the cycle interval
     const timeSinceLast = Date.now() - lastCycleEnd;
     if (lastCycleEnd > 0 && timeSinceLast < intervalMs) return;
+
+    // After a user-triggered cycle, apply a longer cooldown (2x interval)
+    // to prevent scheduled cycles from firing too soon and sending
+    // unsolicited messages that collide with the user's conversation.
+    if (lastUserCycleEnd > 0) {
+      const timeSinceUserCycle = Date.now() - lastUserCycleEnd;
+      if (timeSinceUserCycle < intervalMs * 2) return;
+    }
 
     busy = true;
     abortController = new AbortController();
@@ -266,6 +275,11 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
       busy = false;
       abortController = null;
       lastCycleEnd = Date.now();
+
+      // Track user cycles separately so tick() can apply a longer cooldown
+      if (trigger.type === 'user') {
+        lastUserCycleEnd = Date.now();
+      }
     }
   }
 
