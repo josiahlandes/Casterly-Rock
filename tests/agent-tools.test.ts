@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 
 import {
   buildAgentToolkit,
+  FileReadCache,
   THINK_SCHEMA,
   READ_FILE_SCHEMA,
   EDIT_FILE_SCHEMA,
@@ -237,6 +238,62 @@ describe('AgentToolkit — read_file', () => {
     const result = await toolkit.execute(makeCall('read_file', {}));
     expect(result.success).toBe(false);
     expect(result.error).toContain('path');
+  });
+});
+
+describe('AgentToolkit — read_file caching', () => {
+  it('returns cached content on repeated reads of the same file', async () => {
+    await writeFile(join(tempDir, 'src/cached.ts'), 'original content\n', 'utf8');
+
+    // First read
+    const result1 = await toolkit.execute(makeCall('read_file', { path: 'src/cached.ts' }));
+    expect(result1.success).toBe(true);
+    expect(result1.output).toContain('original content');
+
+    // Modify the file on disk (cache should still return old content)
+    await writeFile(join(tempDir, 'src/cached.ts'), 'modified content\n', 'utf8');
+
+    // Second read should use cache (old content)
+    const result2 = await toolkit.execute(makeCall('read_file', { path: 'src/cached.ts' }));
+    expect(result2.success).toBe(true);
+    expect(result2.output).toContain('original content');
+  });
+
+  it('shows redundancy warning on repeated reads', async () => {
+    await writeFile(join(tempDir, 'src/repeat.ts'), 'some code\n', 'utf8');
+
+    // First read — no warning
+    const result1 = await toolkit.execute(makeCall('read_file', { path: 'src/repeat.ts' }));
+    expect(result1.success).toBe(true);
+    expect(result1.output).not.toContain('NOTE');
+
+    // Second read — warning about redundancy
+    const result2 = await toolkit.execute(makeCall('read_file', { path: 'src/repeat.ts' }));
+    expect(result2.success).toBe(true);
+    expect(result2.output).toContain('already read');
+    expect(result2.output).toContain('cached content');
+  });
+
+  it('cache is invalidated after edit_file modifies the file', async () => {
+    await writeFile(join(tempDir, 'src/invalidate.ts'), 'const x = 1;\n', 'utf8');
+
+    // Read to populate cache
+    const read1 = await toolkit.execute(makeCall('read_file', { path: 'src/invalidate.ts' }));
+    expect(read1.success).toBe(true);
+
+    // Edit the file — should invalidate cache
+    const edit = await toolkit.execute(makeCall('edit_file', {
+      path: 'src/invalidate.ts',
+      old_string: 'const x = 1;',
+      new_string: 'const x = 42;',
+    }));
+    expect(edit.success).toBe(true);
+
+    // Read again — should hit disk (no redundancy warning)
+    const read2 = await toolkit.execute(makeCall('read_file', { path: 'src/invalidate.ts' }));
+    expect(read2.success).toBe(true);
+    expect(read2.output).toContain('const x = 42;');
+    expect(read2.output).not.toContain('already read');
   });
 });
 
@@ -582,5 +639,47 @@ describe('AgentToolkit — output truncation', () => {
     // maxOutputChars is 5000 in our test config
     expect(result.output!.length).toBeLessThanOrEqual(5100); // some overhead for header
     expect(result.output).toContain('truncated');
+  });
+});
+
+describe('FileReadCache', () => {
+  it('returns undefined for uncached paths', () => {
+    const cache = new FileReadCache();
+    expect(cache.get('/foo/bar.ts')).toBeUndefined();
+  });
+
+  it('stores and retrieves content', () => {
+    const cache = new FileReadCache();
+    cache.set('/foo/bar.ts', 'hello world');
+    const entry = cache.get('/foo/bar.ts');
+    expect(entry).toBeDefined();
+    expect(entry!.content).toBe('hello world');
+    expect(entry!.readCount).toBe(1);
+  });
+
+  it('increments readCount on repeated sets', () => {
+    const cache = new FileReadCache();
+    cache.set('/foo/bar.ts', 'content');
+    cache.set('/foo/bar.ts', 'content');
+    cache.set('/foo/bar.ts', 'content');
+    expect(cache.get('/foo/bar.ts')!.readCount).toBe(3);
+  });
+
+  it('invalidates entries', () => {
+    const cache = new FileReadCache();
+    cache.set('/foo/bar.ts', 'content');
+    cache.invalidate('/foo/bar.ts');
+    expect(cache.get('/foo/bar.ts')).toBeUndefined();
+  });
+
+  it('tracks saved reads correctly', () => {
+    const cache = new FileReadCache();
+    // File A read 3 times: 2 saved reads
+    cache.set('/a.ts', 'a');
+    cache.set('/a.ts', 'a');
+    cache.set('/a.ts', 'a');
+    // File B read 1 time: 0 saved reads
+    cache.set('/b.ts', 'b');
+    expect(cache.savedReads).toBe(2);
   });
 });

@@ -2604,6 +2604,64 @@ Provide existing knowledge entries for consistency and duplicate checks.`,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Per-Cycle File Read Cache
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Cached file content from a prior read in the same cycle.
+ * Prevents redundant disk reads when the LLM re-reads the same file.
+ */
+interface FileReadCacheEntry {
+  /** Full file content at the time of the read */
+  content: string;
+  /** Timestamp of the original read (ms) */
+  readAt: number;
+  /** How many times this file has been read in this cycle */
+  readCount: number;
+}
+
+/**
+ * Per-cycle file read cache. Created once per `buildExecutors` call
+ * (i.e., once per agent cycle) and shared across `read_file` and
+ * `edit_file` executors so that:
+ *   1. Repeated reads return cached content instead of hitting disk.
+ *   2. The LLM gets a warning when it re-reads the same file.
+ *   3. `edit_file` can use cached content and invalidates on write.
+ */
+export class FileReadCache {
+  private cache = new Map<string, FileReadCacheEntry>();
+
+  /** Get cached content for a file path, or undefined if not cached. */
+  get(fullPath: string): FileReadCacheEntry | undefined {
+    return this.cache.get(fullPath);
+  }
+
+  /** Store content after a successful disk read. */
+  set(fullPath: string, content: string): void {
+    const existing = this.cache.get(fullPath);
+    this.cache.set(fullPath, {
+      content,
+      readAt: Date.now(),
+      readCount: (existing?.readCount ?? 0) + 1,
+    });
+  }
+
+  /** Invalidate a cache entry after the file is modified (edit_file, create_file). */
+  invalidate(fullPath: string): void {
+    this.cache.delete(fullPath);
+  }
+
+  /** Total number of read operations saved by caching. */
+  get savedReads(): number {
+    let saved = 0;
+    for (const entry of this.cache.values()) {
+      saved += Math.max(0, entry.readCount - 1);
+    }
+    return saved;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Executor Builders
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2619,6 +2677,7 @@ function buildExecutors(
 ): Map<string, (call: NativeToolCall) => Promise<NativeToolResult>> {
   const tracer = getTracer();
   const executors = new Map<string, (call: NativeToolCall) => Promise<NativeToolResult>>();
+  const fileReadCache = new FileReadCache();
 
   // ── think ───────────────────────────────────────────────────────────────
 
@@ -2646,7 +2705,21 @@ function buildExecutors(
           ? filePath
           : `${config.projectRoot}/${filePath}`;
 
-        const content = await readFile(fullPath, 'utf8');
+        // Check the per-cycle cache before hitting disk
+        let content: string;
+        let cacheHit = false;
+        const cached = fileReadCache.get(fullPath);
+
+        if (cached) {
+          content = cached.content;
+          cacheHit = true;
+          // Increment the read count
+          fileReadCache.set(fullPath, content);
+        } else {
+          content = await readFile(fullPath, 'utf8');
+          fileReadCache.set(fullPath, content);
+        }
+
         const lines = content.split('\n');
 
         // Apply offset and max_lines
@@ -2662,11 +2735,19 @@ function buildExecutors(
         );
 
         const header = `File: ${filePath} (${lines.length} lines total, showing ${startLine + 1}-${endLine})`;
-        const output = `${header}\n${'─'.repeat(60)}\n${numberedLines.join('\n')}`;
+
+        // Build redundancy warning for repeated reads
+        let redundancyNote = '';
+        const entry = fileReadCache.get(fullPath);
+        if (cacheHit && entry && entry.readCount > 1) {
+          redundancyNote = `\n⚠ NOTE: This file was already read ${entry.readCount - 1} time(s) this cycle. Using cached content. Consider working with the information you already have instead of re-reading.`;
+        }
+
+        const output = `${header}\n${'─'.repeat(60)}\n${numberedLines.join('\n')}${redundancyNote}`;
 
         tracer.logIO('agent-loop', 'read', filePath, 0, {
           success: true,
-          bytesOrLines: lines.length,
+          bytesOrLines: cacheHit ? 0 : lines.length,
         });
 
         return successResult(call.id, output, config.maxOutputChars);
@@ -2703,7 +2784,16 @@ function buildExecutors(
           ? filePath
           : `${config.projectRoot}/${filePath}`;
 
-        const content = await readFile(fullPath, 'utf8');
+        // Use cached content if available; otherwise read from disk
+        const cached = fileReadCache.get(fullPath);
+        let content: string;
+        if (cached) {
+          content = cached.content;
+        } else {
+          content = await readFile(fullPath, 'utf8');
+          fileReadCache.set(fullPath, content);
+        }
+
         const occurrences = content.split(oldStringResult.value).length - 1;
 
         if (occurrences === 0) {
@@ -2716,6 +2806,9 @@ function buildExecutors(
 
         const newContent = content.replace(oldStringResult.value, newStringResult.value);
         await writeFile(fullPath, newContent, 'utf8');
+
+        // Invalidate the cache since the file changed on disk
+        fileReadCache.invalidate(fullPath);
 
         const linesChanged = newStringResult.value.split('\n').length;
         tracer.logIO('agent-loop', 'edit', filePath, 0, {
