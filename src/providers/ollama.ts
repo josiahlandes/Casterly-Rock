@@ -12,6 +12,8 @@ interface OllamaProviderOptions {
   baseUrl: string;
   model: string;
   timeoutMs?: number;
+  /** Default num_ctx for all requests. If not set, Ollama uses its built-in default (2048). */
+  numCtx?: number;
 }
 
 /**
@@ -149,11 +151,13 @@ export class OllamaProvider implements LlmProvider {
 
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
+  private readonly numCtx: number | undefined;
 
   constructor(options: OllamaProviderOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.model = options.model;
     this.timeoutMs = options.timeoutMs ?? 60_000;
+    this.numCtx = options.numCtx;
   }
 
   async generateWithTools(
@@ -244,6 +248,7 @@ export class OllamaProvider implements LlmProvider {
         options: {
           temperature: request.temperature ?? 0.7,
           num_predict: request.maxTokens ?? 2048,
+          ...(this.numCtx ? { num_ctx: this.numCtx } : {}),
           ...(request.providerOptions ?? {}),
         },
       };

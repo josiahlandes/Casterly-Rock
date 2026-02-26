@@ -262,6 +262,7 @@ export class AutonomousLoop {
       baseUrl: process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434',
       model: config.model,
       timeoutMs: 300_000, // 5 min — local inference can be slow
+      numCtx: 40_960,     // qwen3-coder-next supports 262K; use 40K as practical max with 128GB unified memory
     });
 
     this.git = new GitOperations(projectRoot, config.git);
