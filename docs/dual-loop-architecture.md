@@ -571,11 +571,12 @@ src/
     fast-tools.ts          # Filtered toolkit for FastLoop
     review-prompt.ts       # Prompts for code review
     triage-prompt.ts       # Prompts for message triage
+    context-tiers.ts       # Dynamic num_ctx tier selection (Section 28)
     index.ts               # Public API
 
 config/
   models.yaml              # Updated: add 'fast' model entry
-  autonomous.yaml          # Updated: add 'dual_loop' section
+  autonomous.yaml          # Updated: add 'dual_loop' + 'context_tiers' sections
 ```
 
 ### 8.4 Modified Files (Protected Paths — Requires Explicit Callout)
@@ -742,7 +743,7 @@ If one loop crashes:
 
 ### Phase 1: TaskBoard (Foundation)
 
-**Files:** `src/dual-loop/task-board.ts`, `src/dual-loop/task-board-types.ts`
+**Files:** `src/dual-loop/task-board.ts`, `src/dual-loop/task-board-types.ts`, `src/dual-loop/context-tiers.ts`
 
 1. Define TypeScript types for Task, TaskStatus, TaskArtifact, PlanStep
 2. Implement TaskBoard class with SQLite backend (better-sqlite3)
@@ -750,9 +751,10 @@ If one loop crashes:
 4. Implement ownership protocol (atomic claim via WHERE owner IS NULL)
 5. Implement archive/cleanup for old tasks
 6. Add WAL mode configuration
-7. Write unit tests: concurrent claims, ownership transitions, priority ordering
+7. **Context Tiers foundation** (Section 28): Create `context-tiers.ts` with types, tier selection functions, `resolveNumCtx()`, and Zod validation. Add `providerOptions` field to `AgentLoopConfig`. Add context pressure warning to AgentLoop's turn loop
+8. Write unit tests: concurrent claims, ownership transitions, priority ordering, tier selection for all operation types, config validation
 
-**Testing checkpoint:** `npm run check` passes with TaskBoard fully tested.
+**Testing checkpoint:** `npm run check` passes with TaskBoard and context tier selection fully tested.
 
 ### Phase 2: FastLoop (User-Facing)
 
@@ -764,9 +766,10 @@ If one loop crashes:
 4. Implement direct-answer path (simple questions)
 5. Implement status reporting (read TaskBoard, summarize)
 6. Wire up to EventBus for user_message events
-7. Write unit tests: triage classification, status formatting, heartbeat timing
+7. **Context Tiers integration** (Section 28): Wire `selectFastTier()` into every FastLoop operation. Pass `providerOptions: { num_ctx }` in every `GenerateRequest`. Add `review_large_threshold_lines` config
+8. Write unit tests: triage classification, status formatting, heartbeat timing, correct tier selected for each operation type
 
-**Testing checkpoint:** FastLoop can triage messages and answer simple questions.
+**Testing checkpoint:** FastLoop can triage messages and answer simple questions, using compact/standard/extended tiers appropriately.
 
 ### Phase 3: DeepLoop (Reasoning Engine)
 
@@ -778,9 +781,10 @@ If one loop crashes:
 4. Implement revision handling (read review feedback, fix, resubmit)
 5. Implement preemption checking (check board every N turns for higher-priority tasks)
 6. Wire up to EventBus for system events, goal stack for autonomous work
-7. Write unit tests: task flow state machine, coder dispatch, revision cycle
+7. **Context Tiers integration** (Section 28): Wire `selectDeepTier()` into task claim. Pass `providerOptions` through to AgentLoop config. Add `setContextWindow()` to ContextManager. Wire Coder dispatch through `selectCoderTier()`
+8. Write unit tests: task flow state machine, coder dispatch, revision cycle, tier selection for various task shapes, context pressure flow
 
-**Testing checkpoint:** DeepLoop can plan, implement, and respond to reviews.
+**Testing checkpoint:** DeepLoop can plan, implement, and respond to reviews. Tier-selected `num_ctx` flows through to all Ollama calls.
 
 ### Phase 4: Code Review (FastLoop ↔ DeepLoop)
 
@@ -827,7 +831,7 @@ If one loop crashes:
 | SQLite contention under heavy load | Low | Medium | WAL mode handles this. Both loops do short transactions. Benchmark under stress. |
 | Context fragmentation (user asks about unknown task) | Medium | Low | Rich TaskBoard fields (plan, notes, resolution). FastLoop can relay to DeepLoop. |
 | 27B model quality insufficient for review | Medium | Medium | Review is advisory, not blocking. DeepLoop can override. We can disable review via config. |
-| Memory pressure (112GB of 128GB) | Low | High | Monitor via `ollama ps`. The 122B-MoE only activates 10B params — actual compute pressure is moderate. |
+| Memory pressure (112GB of 128GB) | Low | High | Dynamic context tiers (Section 28) reduce KV cache from ~6 GB to ~2 GB typical. Monitor via `ollama ps`. Enable `OLLAMA_FLASH_ATTENTION=1` for further 2x reduction. |
 | Both loops writing to EventBus | Low | Low | EventBus is already designed for concurrent emitters. No structural change needed. |
 
 ---
@@ -1340,18 +1344,18 @@ On restart, the DeepLoop checks for in-progress tasks:
 
 ### 25.1 Latency Estimates
 
-| Operation | Estimated Latency | Notes |
-|-----------|------------------|-------|
-| FastLoop heartbeat (idle) | 2s | Just a sleep + board check |
-| FastLoop triage (27B) | 1-3s | Short prompt, focused classification |
-| FastLoop direct answer (27B) | 2-5s | Single generation, small model |
-| FastLoop code review (27B) | 5-15s | Depends on diff size |
-| FastLoop voice filter (27B) | 1-3s | Short rewrite |
-| DeepLoop planning (122B) | 10-30s | Complex reasoning, multi-turn |
-| DeepLoop tool call (122B) | 5-15s per turn | Depends on tool + generation |
-| Coder dispatch | 5-20s | Single focused generation |
-| TaskBoard read | <1ms | SQLite synchronous read |
-| TaskBoard write | <1ms | SQLite synchronous write |
+| Operation | Estimated Latency | Context Tier (Section 28) | Notes |
+|-----------|------------------|--------------------------|-------|
+| FastLoop heartbeat (idle) | 2s | — | Just a sleep + board check |
+| FastLoop triage (27B) | 0.5-1.5s | compact (4K) | ~5x faster than fixed 32K due to reduced prefill |
+| FastLoop direct answer (27B) | 1-3s | standard (12K) | Moderate context for question + answer |
+| FastLoop code review (27B) | 3-10s | standard/extended | Small diff=standard, large diff=extended |
+| FastLoop voice filter (27B) | 0.5-1s | compact (4K) | Minimal context, short rewrite |
+| DeepLoop planning (122B) | 10-30s | standard/extended | Set once at task start, no mid-task resize |
+| DeepLoop tool call (122B) | 5-15s per turn | (inherited from task) | Same tier for entire task duration |
+| Coder dispatch | 3-15s | compact/standard | Sized to actual prompt content |
+| TaskBoard read | <1ms | — | SQLite synchronous read |
+| TaskBoard write | <1ms | — | SQLite synchronous write |
 
 ### 25.2 Throughput
 
@@ -1362,10 +1366,14 @@ On restart, the DeepLoop checks for in-progress tasks:
 ### 25.3 Memory Steady State
 
 After all three models are loaded and warm:
-- Ollama RSS: ~112 GB (three models in unified memory)
+- Ollama model weights: ~112 GB (three models in unified memory)
+- Ollama KV caches: ~2-5 GB (depends on active context tiers — see Section 28.6)
+  - Typical (FastLoop compact + DeepLoop standard): ~1.9 GB
+  - Worst case (all loops at extended): ~4.8 GB
+  - With `OLLAMA_FLASH_ATTENTION=1`: roughly half the above
 - Node.js heap: ~200-400 MB (TaskBoard, state stores, conversation history)
 - SQLite WAL: ~1-10 MB (depending on active task count)
-- Total system: ~113 GB (well within 128 GB budget)
+- Total system: ~115-117 GB typical (well within 128 GB budget)
 
 ---
 
@@ -1386,10 +1394,10 @@ TaskBoard:
   Active: 3    Queued: 1    Reviewing: 1    Done today: 7
 
 Models (Ollama):
-  qwen3.5:27b       ● Loaded  (17.1 GB)
-  qwen3.5:122b      ● Loaded  (73.4 GB)
-  qwen3-coder-next  ● Loaded  (22.0 GB)
-  Total: 112.5 GB / 128 GB (87.9%)
+  qwen3.5:27b       ● Loaded  (17.1 GB)  ctx: compact (4K)
+  qwen3.5:122b      ● Loaded  (73.4 GB)  ctx: standard (25K)
+  qwen3-coder-next  ● Loaded  (22.0 GB)  ctx: idle
+  Weights: 112.5 GB  |  KV cache: ~1.9 GB  |  Free: 13.6 GB
 ```
 
 ### 26.2 Logging
@@ -1458,3 +1466,734 @@ The FastLoop applies the voice filter using the 27B. This is a natural fit.
 ### Q5: SQLite dependency → Use better-sqlite3 (resolved in Section 21)
 
 Use `better-sqlite3` with `node:sqlite` as fallback for future Node.js versions.
+
+---
+
+## 28. Dynamic Context Tiers: Per-Request `num_ctx` Sizing
+
+### 28.1 Problem Statement
+
+Today, every Ollama request uses a **fixed `num_ctx`** regardless of the actual prompt size:
+
+```typescript
+// loop.ts:272 — current state
+this.llmProvider = new OllamaProvider({
+  numCtx: 40_960,  // Every request allocates a 40K KV cache
+});
+```
+
+This is wasteful. When the FastLoop sends a 2K-token triage prompt, Ollama still allocates a 40K-token KV cache. That KV cache consumes real memory (proportional to `num_ctx × num_layers × hidden_dim × 2`) and slows down inference (attention computation scales with context length).
+
+With three models sharing 128 GB and weights consuming ~112 GB, the remaining ~16 GB is the **KV cache budget**. Fixed allocation wastes this budget:
+
+| Scenario | Fixed `num_ctx` | KV Cache Allocated | KV Cache Actually Needed |
+|----------|----------------|-------------------|-------------------------|
+| FastLoop triage (2K tokens) | 32,768 | ~1.5 GB | ~0.1 GB |
+| FastLoop code review (10K tokens) | 32,768 | ~1.5 GB | ~0.5 GB |
+| DeepLoop planning (25K tokens) | 40,960 | ~3.0 GB | ~1.8 GB |
+| Coder dispatch (6K tokens) | 32,768 | ~1.5 GB | ~0.3 GB |
+| **Total (all active)** | — | **~7.5 GB** | **~2.7 GB** |
+
+That's **~5 GB of wasted KV cache** in a typical concurrent workload — nearly a third of our 16 GB headroom.
+
+### 28.2 Key Insight: Per-Call Sizing is Free for Most Operations
+
+Ollama accepts `num_ctx` as a per-request option via the `options` field. The question is: what does it cost to change `num_ctx` between requests?
+
+**Within a multi-turn conversation** (same model, accumulating context): Changing `num_ctx` invalidates the KV cache. Ollama must re-process the entire conversation from scratch. For the DeepLoop at turn 30 with 25K accumulated tokens, this costs 15-30 seconds on the 122B. This is unacceptable.
+
+**Between independent calls** (fresh conversation each time): There is no KV cache to preserve. Each request builds its own KV cache from scratch regardless. Changing `num_ctx` costs nothing.
+
+This maps perfectly onto our dual-loop architecture:
+
+| Loop | Call Pattern | KV Cache Reuse? | Dynamic Sizing Cost |
+|------|-------------|----------------|-------------------|
+| **FastLoop** | Independent calls (each triage/review/status is fresh) | No reuse between calls | **Zero** — size freely per-call |
+| **DeepLoop** | Multi-turn ReAct loop (context accumulates over turns) | Reused across turns | **Expensive** — only size at task start |
+| **Coder** | Independent dispatches (scoped prompt each time) | No reuse between dispatches | **Zero** — size freely per-dispatch |
+
+### 28.3 Design: Three-Tier Context Sizing
+
+Instead of continuous dynamic resizing (which incurs KV cache invalidation), use **discrete context tiers** that each loop selects per-operation. Three tiers per model:
+
+```typescript
+/**
+ * Context tier configuration for a single model.
+ *
+ * Each tier represents a pre-defined num_ctx value optimized for
+ * a class of operations. The loop selects the tier based on
+ * the operation type, not token counting (deterministic, no prediction).
+ */
+interface ContextTierConfig {
+  /** Compact: triage, voice filter, simple Q&A, acknowledgments */
+  compact: number;
+
+  /** Standard: code review, detailed status, moderate planning, focused code generation */
+  standard: number;
+
+  /** Extended: cross-module refactors, deep multi-turn reasoning, large diff review */
+  extended: number;
+}
+```
+
+Per-model tier values:
+
+```yaml
+# config/autonomous.yaml — addition to dual_loop section
+dual_loop:
+  context_tiers:
+    # FastLoop (qwen3.5:27b)
+    fast:
+      compact: 4096       # Triage, voice filter, acknowledgment, simple Q&A
+      standard: 12288     # Code review (small-medium), status with rich context
+      extended: 24576     # Large diff review (200+ lines), batched multi-message triage
+
+    # DeepLoop (qwen3.5:122b)
+    deep:
+      compact: 8192       # Quick event handling, simple tool calls
+      standard: 24576     # Standard task planning and multi-step execution
+      extended: 40960     # Cross-module refactors, deep reasoning, resumed parked tasks
+
+    # Coder (qwen3-coder-next)
+    coder:
+      compact: 8192       # Single-file focused code generation
+      standard: 16384     # Multi-file code generation with context
+      extended: 32768     # Large refactors with extensive file context (rare)
+```
+
+### 28.4 Tier Selection Logic
+
+Each loop selects its tier **deterministically** based on the operation type. No token counting, no prediction, no heuristics that can fail silently.
+
+#### 28.4.1 FastLoop Tier Selection
+
+The FastLoop knows what operation it's about to perform before calling the model. The operation type dictates the tier:
+
+```typescript
+type FastOperation =
+  | 'triage'              // Classify incoming user message
+  | 'acknowledge'         // Quick "got it" response
+  | 'voice_filter'        // Rewrite raw text in Tyrion's voice
+  | 'direct_answer'       // Answer a simple question
+  | 'status_report'       // Summarize task board state
+  | 'review_small'        // Review diff < 150 lines
+  | 'review_large'        // Review diff >= 150 lines
+  | 'batched_triage'      // Triage multiple coalesced messages
+  | 'deliver_response';   // Format and deliver DeepLoop's userFacing text
+
+function selectFastTier(operation: FastOperation): keyof ContextTierConfig {
+  switch (operation) {
+    case 'triage':
+    case 'acknowledge':
+    case 'voice_filter':
+    case 'deliver_response':
+      return 'compact';
+
+    case 'direct_answer':
+    case 'status_report':
+    case 'review_small':
+      return 'standard';
+
+    case 'review_large':
+    case 'batched_triage':
+      return 'extended';
+  }
+}
+```
+
+**Why `review_small` vs `review_large`?** The diff size is known before the LLM call (the FastLoop reads the artifacts from the TaskBoard). A 50-line diff plus system prompt fits in 12K. A 300-line diff needs 24K. The line threshold (150 lines) is configurable: `fast.review_large_threshold_lines: 150`.
+
+#### 28.4.2 DeepLoop Tier Selection
+
+The DeepLoop sets `num_ctx` **once at task start** and does not change it during the multi-turn ReAct loop. This avoids KV cache invalidation mid-task.
+
+```typescript
+function selectDeepTier(task: Task): keyof ContextTierConfig {
+  // Resumed parked tasks already had significant context built up.
+  // Use extended to ensure we don't truncate the restored state.
+  if (task.parkedState) {
+    return 'extended';
+  }
+
+  // Tasks with many plan steps or touching many files need more context
+  // for file contents, tool results, and accumulated reasoning.
+  const stepCount = task.planSteps?.length ?? 0;
+  const isMultiFile = stepCount > 3;
+
+  if (isMultiFile) return 'extended';
+  if (stepCount > 1) return 'standard';
+
+  // Single-step tasks or tasks without a plan yet (pre-planning phase)
+  // For pre-planning: the planning turn itself is one LLM call. After
+  // planning, the task is updated with steps and the next claim re-evaluates.
+  return 'standard';  // Default to standard, not compact, for safety margin
+}
+```
+
+**Why default to `standard` instead of `compact`?** The DeepLoop's work is inherently complex. Even "simple" tasks involve reading files, tool calls, and multi-turn reasoning. Starting at `compact` (8K) risks truncation on turn 3-4. The memory savings from compact→standard on the 122B is ~1.2 GB, not worth the truncation risk. Reserve `compact` for genuinely lightweight operations (quick event acknowledgment, checking if the board has work).
+
+**What if the estimate is wrong?** If the DeepLoop's context grows beyond the selected `num_ctx`, Ollama silently truncates the oldest messages. This is bad for coherence. Mitigations:
+
+1. **Buffer rule**: The tier values include ~20% headroom over typical usage (e.g., `standard: 24576` for workloads that typically use ~18-20K).
+2. **Token tracking already exists**: The AgentLoop tracks cumulative token usage via `estimateTokens(text.length / 3.5)`. If tracked usage exceeds 80% of the current tier's capacity, the DeepLoop logs a warning. This is observability, not dynamic resizing — it tells us if the tiers are misconfigured.
+3. **Tier upgrade on retry**: If a task fails with `stopReason: 'max_tokens'` or the stall detector fires, and the task was at `standard`, it can be re-queued at `extended`. This is a per-task retry, not a mid-conversation resize.
+
+#### 28.4.3 Coder Tier Selection
+
+The Coder receives a scoped prompt every time — file contents + plan step + style notes. We know the exact content before calling the model, so we can **measure** instead of estimate:
+
+```typescript
+function selectCoderTier(
+  stepPrompt: string,
+  fileContents: string,
+  preamble: string,
+): keyof ContextTierConfig {
+  const estimatedTokens = Math.ceil(
+    (stepPrompt.length + fileContents.length + preamble.length) / 3.5
+  );
+
+  // Add buffer for response generation (the model needs room to write code)
+  const withBuffer = estimatedTokens + 2000; // ~2K tokens response budget
+
+  if (withBuffer < 6000) return 'compact';
+  if (withBuffer < 14000) return 'standard';
+  return 'extended';
+}
+```
+
+This is the most precise tier selection — it's based on measured content, not operation type heuristics. The 2K response buffer is conservative; adjust via `coder.response_buffer_tokens: 2000`.
+
+### 28.5 Implementation: How `num_ctx` Flows Through the System
+
+The existing codebase already supports per-request `num_ctx` via `providerOptions` in `GenerateRequest` (see `src/providers/base.ts:44`). The `OllamaProvider` spreads `providerOptions` into the `options` field (see `src/providers/ollama.ts:252`). The plumbing is already there.
+
+What's needed:
+
+#### 28.5.1 New File: `src/dual-loop/context-tiers.ts`
+
+```typescript
+/**
+ * Context Tiers — Dynamic num_ctx selection for the dual-loop architecture.
+ *
+ * Each loop selects a context tier (compact/standard/extended) per-operation.
+ * The tier maps to a specific num_ctx value that Ollama uses for KV cache
+ * allocation. This replaces the fixed num_ctx=40960 with operation-aware sizing.
+ *
+ * Invariant: Tier selection is deterministic and based on known-before-call
+ * information (operation type, diff size, prompt content). No runtime prediction.
+ */
+
+export interface ContextTierConfig {
+  compact: number;
+  standard: number;
+  extended: number;
+}
+
+export interface ContextTiersConfig {
+  fast: ContextTierConfig;
+  deep: ContextTierConfig;
+  coder: ContextTierConfig;
+}
+
+export type ContextTier = keyof ContextTierConfig;
+
+// --- Tier selection functions ---
+
+export function selectFastTier(operation: FastOperation): ContextTier { /* ... */ }
+export function selectDeepTier(task: Task): ContextTier { /* ... */ }
+export function selectCoderTier(promptLength: number): ContextTier { /* ... */ }
+
+// --- num_ctx resolution ---
+
+export function resolveNumCtx(
+  tiers: ContextTierConfig,
+  tier: ContextTier,
+): number {
+  return tiers[tier];
+}
+```
+
+#### 28.5.2 Changes to FastLoop (`src/dual-loop/fast-loop.ts`)
+
+Each FastLoop operation selects its tier and passes `num_ctx` via `providerOptions`:
+
+```typescript
+// Inside FastLoop.handleUserMessage():
+async handleUserMessage(event: UserMessageEvent): Promise<void> {
+  const tier = selectFastTier('triage');
+  const numCtx = resolveNumCtx(this.tiers.fast, tier);
+
+  const request: GenerateRequest = {
+    prompt: buildTriagePrompt(event),
+    systemPrompt: TRIAGE_SYSTEM_PROMPT,
+    temperature: 0.3,
+    maxTokens: 1024,
+    providerOptions: { num_ctx: numCtx },
+  };
+
+  const response = await this.provider.generateWithTools(request, this.tools);
+  // ... handle triage result
+}
+```
+
+The same pattern applies to `reviewTask()`, `deliverResponse()`, etc. Each method calls `selectFastTier()` with its operation type.
+
+#### 28.5.3 Changes to DeepLoop (`src/dual-loop/deep-loop.ts`)
+
+The DeepLoop selects a tier once when claiming a task and passes it to the AgentLoop:
+
+```typescript
+// Inside DeepLoop.planAndExecute():
+async planAndExecute(task: Task): Promise<void> {
+  const tier = selectDeepTier(task);
+  const numCtx = resolveNumCtx(this.tiers.deep, tier);
+
+  // The AgentLoop needs to pass num_ctx on every LLM call within the
+  // multi-turn ReAct loop. We inject it via the agent config.
+  const agentLoop = createAgentLoop({
+    ...this.agentConfig,
+    providerOptions: { num_ctx: numCtx },
+  });
+
+  const outcome = await agentLoop.run(trigger);
+  // ...
+}
+```
+
+This requires a small addition to `AgentLoopConfig` — a `providerOptions` field that gets spread into every `GenerateRequest` the loop makes. This is a non-breaking change: existing callers don't pass it and get the provider's default `num_ctx`.
+
+#### 28.5.4 Changes to AgentLoop (`src/autonomous/agent-loop.ts`)
+
+Add `providerOptions` to the config and spread it into each request:
+
+```typescript
+// In AgentLoopConfig (new optional field)
+interface AgentLoopConfig {
+  // ... existing fields ...
+  /** Provider-specific options applied to every request (e.g., { num_ctx: 24576 }) */
+  providerOptions?: Record<string, unknown>;
+}
+
+// In the ReAct loop, when building the GenerateRequest:
+const request: GenerateRequest = {
+  prompt: userPrompt,
+  systemPrompt: systemPrompt,
+  temperature: this.config.temperature ?? 0.2,
+  maxTokens: this.config.maxResponseTokens ?? 4096,
+  previousAssistantMessages: this.previousAssistantMessages,
+  providerOptions: this.config.providerOptions, // <-- new
+};
+```
+
+#### 28.5.5 Changes to OllamaProvider (`src/providers/ollama.ts`)
+
+No changes needed. The provider already merges `providerOptions` into `options`:
+
+```typescript
+// ollama.ts:248-253 — already handles this correctly
+options: {
+  temperature: request.temperature ?? 0.7,
+  num_predict: request.maxTokens ?? 2048,
+  ...(this.numCtx ? { num_ctx: this.numCtx } : {}),
+  ...(request.providerOptions ?? {}),  // <-- per-request num_ctx overrides instance default
+},
+```
+
+Per-request `providerOptions.num_ctx` already overrides the instance-level `this.numCtx`. This is the existing behavior — we just start using it.
+
+#### 28.5.6 Changes to ConcurrentProvider (`src/providers/concurrent.ts`)
+
+No changes needed. The `ConcurrentProvider.generate()` passes the full `GenerateRequest` (including `providerOptions`) through to the underlying provider. The tier-selected `num_ctx` flows through transparently.
+
+### 28.6 Memory Impact
+
+#### 28.6.1 KV Cache Size Estimation
+
+KV cache memory depends on model architecture. For Qwen-family models with grouped-query attention (GQA) and Q8_0 quantized KV:
+
+| Model | KV Cache per 1K Tokens (est.) | Compact | Standard | Extended |
+|-------|------------------------------|---------|----------|----------|
+| qwen3.5:27b | ~45 MB/1K | 0.18 GB | 0.55 GB | 1.11 GB |
+| qwen3.5:122b-a10b | ~70 MB/1K | 0.57 GB | 1.72 GB | 2.87 GB |
+| qwen3-coder-next | ~50 MB/1K | 0.41 GB | 0.82 GB | 1.64 GB |
+
+*Note: These are estimates. Actual values depend on num_kv_heads, head_dim, and quantization. Measure with `ollama ps` after deployment.*
+
+#### 28.6.2 Typical Workload Comparison
+
+**Scenario A: Fixed `num_ctx` (current design)**
+
+All three models at their fixed maximum context:
+```
+27B at 32K:     ~1.47 GB
+122B at 41K:    ~2.87 GB
+Coder at 32K:   ~1.64 GB
+Total KV:       ~5.98 GB
+Free:           128 - 112 - 5.98 = 10.02 GB headroom
+```
+
+**Scenario B: Tiered `num_ctx` (typical mixed workload)**
+
+FastLoop triaging (compact), DeepLoop planning (standard), Coder idle:
+```
+27B at 4K:      ~0.18 GB
+122B at 25K:    ~1.72 GB
+Coder idle:     0 GB
+Total KV:       ~1.90 GB
+Free:           128 - 112 - 1.90 = 14.10 GB headroom
+```
+
+**Scenario C: Tiered `num_ctx` (all loops active, worst case)**
+
+FastLoop reviewing large diff (extended), DeepLoop planning (extended), Coder generating (standard):
+```
+27B at 25K:     ~1.11 GB
+122B at 41K:    ~2.87 GB
+Coder at 16K:   ~0.82 GB
+Total KV:       ~4.80 GB
+Free:           128 - 112 - 4.80 = 11.20 GB headroom
+```
+
+| Metric | Fixed (A) | Typical Tiered (B) | Worst Tiered (C) |
+|--------|-----------|-------------------|------------------|
+| **KV cache total** | 5.98 GB | 1.90 GB | 4.80 GB |
+| **Free headroom** | 10.02 GB | 14.10 GB | 11.20 GB |
+| **vs. Fixed** | baseline | -4.08 GB (68% less) | -1.18 GB (20% less) |
+
+The typical case recovers **~4 GB** of headroom. The worst case is still better than fixed allocation.
+
+### 28.7 Latency Impact (The Bigger Win)
+
+Context length affects inference speed in two ways:
+
+1. **Prompt processing** (prefill): Time to process the input tokens. Scales roughly linearly with token count.
+2. **Per-token generation**: Each output token attends to all preceding tokens. Longer contexts mean slower generation.
+
+Estimated latency impact for the 27B (FastLoop's model):
+
+| Operation | Fixed 32K `num_ctx` | Compact 4K `num_ctx` | Speedup |
+|-----------|--------------------|--------------------|---------|
+| First-token latency | ~2-3s | ~0.3-0.5s | **~5x** |
+| Per-token generation | ~30ms | ~20ms | ~1.5x |
+| Total for 200-token triage response | ~8-9s | ~4-5s | **~2x** |
+
+For the FastLoop's 2-second heartbeat target, the difference between 0.5s and 3s first-token is the difference between **feeling instant** and **feeling slow**. Compact triage at 4K context puts the FastLoop comfortably within its responsiveness target.
+
+The DeepLoop benefits less (it's doing long-running work), but the Coder benefits significantly — compact dispatch at 8K is measurably faster than fixed 32K for small code generation tasks.
+
+### 28.8 Configuration
+
+#### 28.8.1 Full YAML Addition
+
+```yaml
+# Addition to dual_loop section in config/autonomous.yaml
+dual_loop:
+  # ... existing fast/deep/task_board config ...
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # DYNAMIC CONTEXT TIERS
+  # ─────────────────────────────────────────────────────────────────────────
+  # Per-model context window tiers. Each loop selects a tier per-operation
+  # to minimize KV cache memory and maximize inference speed.
+  #
+  # Values are in tokens. Ollama uses num_ctx to allocate the KV cache.
+  # Smaller num_ctx = less memory + faster inference.
+  #
+  # Tier selection is deterministic (based on operation type, not prediction).
+  # See docs/dual-loop-architecture.md Section 28 for full design.
+  context_tiers:
+    fast:
+      compact: 4096
+      standard: 12288
+      extended: 24576
+      # Diffs with more lines than this threshold use 'extended' tier
+      review_large_threshold_lines: 150
+
+    deep:
+      compact: 8192
+      standard: 24576
+      extended: 40960
+      # If tracked tokens exceed this fraction of num_ctx, log a warning
+      context_pressure_warning_threshold: 0.80
+
+    coder:
+      compact: 8192
+      standard: 16384
+      extended: 32768
+      # Tokens reserved for response generation (added to prompt estimate)
+      response_buffer_tokens: 2000
+
+  # Ollama environment recommendation (set in shell or systemd unit):
+  # OLLAMA_FLASH_ATTENTION=1  — reduces KV cache memory ~2x with GQA models
+  # This should be enabled regardless of whether tiers are used.
+```
+
+#### 28.8.2 Zod Validation Schema
+
+```typescript
+const contextTierSchema = z.object({
+  compact: z.number().int().min(1024).max(131072),
+  standard: z.number().int().min(1024).max(131072),
+  extended: z.number().int().min(1024).max(131072),
+}).refine(
+  (t) => t.compact <= t.standard && t.standard <= t.extended,
+  'Tiers must be ordered: compact <= standard <= extended',
+);
+
+const contextTiersConfigSchema = z.object({
+  fast: contextTierSchema.extend({
+    review_large_threshold_lines: z.number().int().min(10).default(150),
+  }),
+  deep: contextTierSchema.extend({
+    context_pressure_warning_threshold: z.number().min(0.5).max(0.99).default(0.80),
+  }),
+  coder: contextTierSchema.extend({
+    response_buffer_tokens: z.number().int().min(500).default(2000),
+  }),
+});
+```
+
+### 28.9 Interaction with Existing Systems
+
+#### 28.9.1 ContextManager (Tiered Memory)
+
+The `ContextManager` in `src/autonomous/context-manager.ts` tracks token usage across hot/warm tiers and has a `contextWindowTokens` config field (currently `32768`). With dynamic tiers, `contextWindowTokens` is no longer a fixed value — it depends on which tier the current operation selected.
+
+**Change required:** The `ContextManager` needs to accept `contextWindowTokens` as a mutable parameter, not a fixed config value. Add a method:
+
+```typescript
+// Addition to ContextManager
+setContextWindow(tokens: number): void {
+  this.config.contextWindowTokens = tokens;
+}
+```
+
+The DeepLoop calls `contextManager.setContextWindow(numCtx)` once when it claims a task (same time it selects the tier). This updates the warm tier's eviction logic to respect the actual allocated context window.
+
+The FastLoop doesn't use the ContextManager (it has no warm tier — each call is independent). No change needed.
+
+#### 28.9.2 AgentLoop Token Tracking
+
+The `AgentLoop` tracks cumulative token usage per cycle via `estimateTokens()`. This tracking is used for budget enforcement (`maxTokensPerCycle`), not for `num_ctx` decisions. No change needed — the tracking continues to work regardless of `num_ctx`.
+
+However, we add **one new check**: if the cumulative token estimate for the current turn's context (system prompt + conversation + tool results) exceeds `contextPressureWarningThreshold × num_ctx`, log a warning:
+
+```typescript
+// In the AgentLoop's main turn loop, after building the prompt:
+const currentContextTokens = estimateTokens(
+  systemPrompt + userPrompt + toolResultsText
+);
+const numCtx = this.config.providerOptions?.num_ctx as number | undefined;
+
+if (numCtx && currentContextTokens > numCtx * pressureThreshold) {
+  tracer.log('agent', 'warn', 'Context pressure high', {
+    estimated: currentContextTokens,
+    numCtx,
+    ratio: (currentContextTokens / numCtx).toFixed(2),
+    tier: this.config.contextTier,  // for debugging
+  });
+}
+```
+
+This is observability, not control flow. It tells us when the tier configuration needs tuning.
+
+#### 28.9.3 ReasoningScaler (bestOfN)
+
+The `ReasoningScaler` uses `ConcurrentProvider.bestOfN()` for hard problems, dispatching multiple Coder generations in parallel. Each generation inherits the `providerOptions` from the `GenerateRequest` — including the tier-selected `num_ctx`. No change needed. All candidates in a bestOfN batch get the same `num_ctx` (appropriate, since they're solving the same problem with the same context).
+
+#### 28.9.4 Voice Filter
+
+The voice filter currently uses the 122B (`voice_filter.model: qwen3.5:122b`). In the dual-loop, it moves to the 27B (Section 18). With dynamic tiers, the voice filter always uses the **compact** tier — it's a short text rewrite (~500 tokens in, ~500 out). This is handled by `selectFastTier('voice_filter')` returning `'compact'`.
+
+#### 28.9.5 Dream Cycles
+
+Dream cycles run inside the DeepLoop as low-priority scheduled tasks. They use the same tier selection as any other DeepLoop task:
+
+- **Consolidation** (reading journal, compressing reflections): `standard` — reads moderate context, produces summaries
+- **Exploration** (code archaeology, pattern detection): `extended` — needs to hold multiple file contents
+- **Self-model rebuild**: `standard` — reads structured state, produces a summary
+
+The dream cycle task's `planSteps` count drives tier selection via the normal `selectDeepTier()` logic.
+
+### 28.10 Edge Cases and Failure Modes
+
+#### 28.10.1 Ollama Ignores `num_ctx` on Warm KV Cache Hit
+
+**Scenario:** The 27B processes a triage at `num_ctx: 4096`. Next request is a code review at `num_ctx: 12288`. Ollama has the 27B's KV cache still warm from the triage.
+
+**Behavior:** When `num_ctx` changes between requests to the same model, Ollama invalidates the warm KV cache and allocates a new one at the requested size. This is expected and correct — the FastLoop doesn't reuse context between calls anyway.
+
+**Risk:** If Ollama silently ignores the new `num_ctx` and reuses the old 4K cache for a 12K prompt, the prompt would be truncated. This would be an Ollama bug, not a design flaw. **Mitigation:** On deployment, verify with `ollama ps` that the loaded model's context changes between requests with different `num_ctx` values. Add a one-time validation test to the integration test suite.
+
+#### 28.10.2 Extended Tier Still Too Small
+
+**Scenario:** A task involves a massive refactor touching 20 files. The DeepLoop's `extended` tier (40960 tokens) isn't enough — the accumulated context exceeds 41K tokens around turn 30.
+
+**Behavior:** Ollama truncates the oldest messages. The AgentLoop's context pressure warning fires. The DeepLoop may produce incoherent output because it's lost early conversation turns.
+
+**Mitigation chain:**
+1. The context pressure warning logs the issue for post-hoc analysis.
+2. The stall detector (Section 23.2) catches if the DeepLoop starts repeating itself due to lost context.
+3. If the task fails, the LoopCoordinator can retry with a **higher max** — but only if we add a fourth tier or allow raw `num_ctx` override. For now, 41K is the hard ceiling on the 122B (same as today's fixed value). This edge case exists regardless of dynamic tiers.
+4. Long-term fix: The ContextManager's warm tier eviction should be more aggressive when context pressure is high — evict stale file contents and tool results to make room for the current turn.
+
+#### 28.10.3 Multiple Concurrent Requests with Different `num_ctx`
+
+**Scenario:** The FastLoop sends a triage at `num_ctx: 4096` to the 27B at the same instant the DeepLoop sends a planning request at `num_ctx: 40960` to the 122B.
+
+**Behavior:** No conflict — they're different models. Ollama allocates independent KV caches per model. The 27B gets a 4K cache, the 122B gets a 41K cache. Total memory is within budget because we sized the tiers with concurrent usage in mind (Section 28.6.2, Scenario C).
+
+**Scenario B:** Two requests to the *same* model with different `num_ctx` (e.g., DeepLoop dispatches to Coder at `num_ctx: 8192`, then immediately dispatches again at `num_ctx: 16384` before the first completes).
+
+**Behavior:** Ollama handles this with its internal request queue (`OLLAMA_NUM_PARALLEL`). Each request gets its own KV cache at its requested size. With `OLLAMA_NUM_PARALLEL=2`, both run concurrently. With `OLLAMA_NUM_PARALLEL=1`, the second queues behind the first.
+
+**Risk:** If `OLLAMA_NUM_PARALLEL > 1`, both KV caches exist simultaneously. Two Coder requests at `extended` (32K each) would allocate ~3.3 GB of KV cache for the Coder alone. This is fine within our budget but worth monitoring.
+
+#### 28.10.4 Config Validation: Tiers Must Be Ordered
+
+**Scenario:** Someone edits `autonomous.yaml` and sets `compact: 16384, standard: 8192` (inverted).
+
+**Mitigation:** The Zod schema enforces `compact <= standard <= extended`. Startup fails fast with a clear error: `"Tiers must be ordered: compact <= standard <= extended"`.
+
+#### 28.10.5 Tier Selection Disagreement Between ContextManager and AgentLoop
+
+**Scenario:** The DeepLoop selects `standard` (24576) for a task. The AgentLoop starts building context. After 5 turns, the warm tier has 8K tokens and the hot tier has 2K tokens. The ContextManager thinks `contextWindowTokens` is 24576. The AgentLoop thinks it can accumulate up to `maxTokensPerCycle` (500K across all turns). These are different ceilings measuring different things.
+
+**Clarification:** There is no disagreement. These track different things:
+- `contextWindowTokens` (ContextManager): How many tokens fit in a *single LLM call* (the prompt + response). Governs warm tier eviction.
+- `maxTokensPerCycle` (AgentLoop): Cumulative budget across *all turns in a cycle*. Governs when to stop the ReAct loop.
+
+Both operate correctly regardless of `num_ctx`. The tier system only affects `contextWindowTokens` (the ContextManager's window). `maxTokensPerCycle` is unchanged.
+
+#### 28.10.6 OLLAMA_FLASH_ATTENTION Interaction
+
+**Scenario:** `OLLAMA_FLASH_ATTENTION=1` is set (recommended). This uses Flash Attention, which reduces KV cache memory by ~2x for models with GQA.
+
+**Impact on tiers:** Flash Attention makes all tier values cheaper in memory terms. The tier values don't change (they're in tokens, not bytes), but the actual memory consumed per tier is halved. This effectively doubles our headroom. All the memory estimates in Section 28.6 should be halved if Flash Attention is enabled.
+
+**Recommendation:** Always enable `OLLAMA_FLASH_ATTENTION=1`. Add it to the deployment checklist and verify in the health check.
+
+#### 28.10.7 Tier Selection for Unknown/New Operations
+
+**Scenario:** A new FastLoop operation is added (e.g., `'summarize_journal'`) but the developer forgets to add it to `selectFastTier()`.
+
+**Mitigation:** TypeScript's exhaustive switch pattern. The `FastOperation` type is a union, and the switch statement covers all cases. Adding a new operation without updating the switch causes a compile-time error (via the `default: never` pattern):
+
+```typescript
+function selectFastTier(operation: FastOperation): ContextTier {
+  switch (operation) {
+    case 'triage': return 'compact';
+    // ... other cases ...
+    default: {
+      const _exhaustive: never = operation;
+      return 'standard'; // Fallback at runtime, error at compile time
+    }
+  }
+}
+```
+
+### 28.11 Observability and Tuning
+
+#### 28.11.1 Logging
+
+Every LLM call logs the selected tier and `num_ctx`:
+
+```
+[fast-loop] [debug] Tier: compact (num_ctx=4096) for operation=triage
+[deep-loop] [debug] Tier: standard (num_ctx=24576) for task=task-m3k8a
+[deep-loop] [warn]  Context pressure: 0.83 of num_ctx=24576 (estimated 20398 tokens)
+[coder]     [debug] Tier: compact (num_ctx=8192) for step="Add JWT validation"
+```
+
+#### 28.11.2 Metrics for Tuning
+
+| Metric | How to Measure | What It Tells You |
+|--------|---------------|------------------|
+| **Tier distribution** | Count calls per tier per model | If `extended` is used >50% of the time, the `standard` value may be too low |
+| **Context pressure rate** | % of turns above 80% threshold | If >10% of turns hit pressure, bump tier values or improve warm tier eviction |
+| **Truncation events** | Ollama logs when context is truncated | Direct evidence that a tier is too small |
+| **FastLoop latency by tier** | Time from request to first token | Validates that compact tier actually delivers the expected speedup |
+| **Memory usage by tier** | `ollama ps` KV cache size | Ground truth for the memory estimates in Section 28.6 |
+
+#### 28.11.3 Tuning Guidance
+
+After deployment, observe for 1-2 weeks, then tune:
+
+1. **If FastLoop feels sluggish on triage**: Verify it's using `compact`. If yes, the model may need a smaller context or the prompt is too long. Check prompt token count.
+2. **If DeepLoop context pressure warnings are frequent**: Bump `standard` from 24576 to 28672, or improve warm tier eviction to be more aggressive on stale entries.
+3. **If Coder generates truncated code**: The `response_buffer_tokens` may be too low for the types of code being generated. Increase to 3000-4000.
+4. **If memory usage is consistently low**: You can afford to raise tier values or add more headroom to `standard`.
+
+### 28.12 Implementation Order
+
+This feature integrates into the existing Phase 2 (FastLoop) and Phase 3 (DeepLoop) of the dual-loop implementation. It is NOT a separate phase — it's woven into the loop implementations.
+
+#### Step 1: Foundation (during Phase 1 — TaskBoard)
+- Add `context_tiers` to `config/autonomous.yaml`
+- Add Zod validation for the new config section
+- Create `src/dual-loop/context-tiers.ts` with types, tier selection functions, and `resolveNumCtx()`
+- Add `providerOptions` field to `AgentLoopConfig`
+- Add context pressure warning to `AgentLoop`'s turn loop
+- Write unit tests: tier selection for all operation types, config validation, pressure warning
+
+#### Step 2: Integration (during Phase 2 — FastLoop)
+- Wire `selectFastTier()` into every FastLoop operation
+- Pass `providerOptions: { num_ctx }` in every FastLoop `GenerateRequest`
+- Add `review_large_threshold_lines` to FastLoop config
+- Write unit tests: verify correct tier selected for each operation type
+
+#### Step 3: Integration (during Phase 3 — DeepLoop)
+- Wire `selectDeepTier()` into `planAndExecute()` and task claim
+- Pass `providerOptions` through to `AgentLoop` config
+- Add `setContextWindow()` to `ContextManager`
+- Wire Coder dispatch through `selectCoderTier()`
+- Write unit tests: tier selection for various task shapes, context pressure flow
+
+#### Step 4: Validation (during Phase 5 — LoopCoordinator)
+- Add tier metrics to the health dashboard (Section 26.1)
+- Add tier logging to the observability system (Section 26.2)
+- Write integration test: verify `ollama ps` shows expected KV cache sizes for different tier selections
+- Benchmark: measure FastLoop triage latency at compact vs extended tier
+- Document the `OLLAMA_FLASH_ATTENTION=1` recommendation
+
+### 28.13 Invariant Compliance
+
+| # | Invariant | Compliant? | Notes |
+|---|-----------|-----------|-------|
+| 1 | All inference local via Ollama | Yes | `num_ctx` is an Ollama option. No cloud involvement. |
+| 2 | Providers behind stable LlmProvider | Yes | `providerOptions` is an existing field in `GenerateRequest`. No interface change. |
+| 3 | Security centralized in src/security/ | Yes | No security changes. |
+| 4 | Logging through safe-logger | Yes | Tier logging uses existing `getTracer()`. No raw user content logged. |
+| 5 | Config validated at startup | Yes | Zod schema validates tier ordering and ranges. |
+| 6 | Model selection task-based | Yes | Tier selection is operation-based, extending the same principle. |
+| 7 | Agent loop shared execution path | Yes | Both loops use the same `AgentLoop` class, same `providerOptions` mechanism. |
+| 8 | Journal append-only | Yes | No journal changes. |
+| 9 | Delegation transparent | Yes | Tier selection is logged and auditable. |
+
+### 28.14 Why Not Continuous Dynamic Resizing?
+
+For completeness, here's why the **naive version** (grow `num_ctx` mid-conversation when tokens approach the limit) was rejected:
+
+1. **KV cache invalidation**: Changing `num_ctx` mid-conversation forces Ollama to discard the KV cache and re-process the entire conversation from scratch. At turn 30 with 25K tokens on the 122B, this costs 15-30 seconds of pure re-processing.
+
+2. **Compounding cost**: Each resize pays more than the last (more tokens to re-process). If you resize at 8K, 16K, and 32K, you re-process 8K + 16K + 32K = 56K tokens total — nearly double the actual content.
+
+3. **Prediction is unreliable**: Estimating future token usage requires knowing how many more turns the task will take and how much context each turn adds. This is inherently unpredictable.
+
+4. **The cost of being wrong (small)**: If you start too small and need to grow, you pay the re-processing tax. The tiers avoid this by starting at the right size.
+
+5. **The cost of being wrong (large)**: If you start too large, you waste memory and speed. But this is the *current* behavior (fixed 40K), so it's strictly no worse than today.
+
+The three-tier approach gives 80% of the benefit (right-sized for most operations) with none of the cost (no mid-conversation resizes). The remaining 20% (perfectly sized for every operation) isn't worth the complexity and latency penalty of continuous resizing.
+
+### 28.15 Future Extensions (Not for Initial Implementation)
+
+These ideas are noted for potential future work but are explicitly **out of scope** for the initial implementation:
+
+1. **Shared context memory pool**: Instead of fixed per-model tiers, a global KV memory budget that the LoopCoordinator allocates dynamically across models based on current workload. Complex coordination for modest benefit — defer until tiers prove insufficient.
+
+2. **Adaptive tier learning**: Track which operations actually need which tier sizes over time and auto-adjust the tier values. Requires sufficient data (weeks of operation logs). Run manually first: review the metrics in Section 28.11.2, then adjust YAML values.
+
+3. **Mid-conversation tier upgrade with context replay**: If the DeepLoop hits context pressure, pause the ReAct loop, serialize the essential context (plan + key findings), resize to `extended`, and replay the serialized context as a fresh prompt. This is a softer version of the rejected continuous resizing — it only happens on detected pressure, and it uses a curated summary instead of replaying the full conversation. Feasible but complex. Defer until context pressure warnings prove to be a real operational problem.
+
+4. **Per-turn `num_ctx` within the DeepLoop**: Instead of one tier per task, adjust per-turn. Early turns (reading files) need more context; later turns (running tests) need less. Requires deep integration with the ReAct loop and incurs KV cache invalidation on every tier change. Not worth the complexity.
