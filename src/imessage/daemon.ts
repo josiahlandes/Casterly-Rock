@@ -82,16 +82,24 @@ async function processMessage(
     const trigger = triggerFromMessage(message.text, senderLabel);
     const outcome = await autonomousController.runTriggeredCycle(trigger);
 
-    const response = outcome.summary || 'Done.';
-    const voiced = await voiceFilter.apply(response);
-    const result = sendMessage(sender, voiced);
-    if (result.success) {
-      safeLogger.info('Agent loop response sent', {
-        turns: outcome.totalTurns,
+    // When summary is empty the response is being delivered
+    // asynchronously (e.g. dual-loop FastLoop via deliverFn).
+    const response = outcome.summary;
+    if (response) {
+      const voiced = await voiceFilter.apply(response);
+      const result = sendMessage(sender, voiced);
+      if (result.success) {
+        safeLogger.info('Agent loop response sent', {
+          turns: outcome.totalTurns,
+          stopReason: outcome.stopReason,
+        });
+      } else {
+        safeLogger.error('Failed to send agent loop response', { error: result.error });
+      }
+    } else {
+      safeLogger.info('Agent cycle completed (response delivered async)', {
         stopReason: outcome.stopReason,
       });
-    } else {
-      safeLogger.error('Failed to send agent loop response', { error: result.error });
     }
   } catch (error) {
     const casterlyError = wrapError(error);
@@ -303,33 +311,100 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
   // ── Autonomous controller ──────────────────────────────────────────────
   // Attempt to load autonomous config and create the controller.
+  // If dual_loop.enabled is true in autonomous.yaml, create a DualLoopController
+  // instead of the standard AutonomousController.
   // If the autonomous module is not configured, the controller stays undefined
   // and autonomous commands will respond with "not configured".
   let autonomousController: AutonomousController | undefined;
 
+  // Read raw YAML for the dual_loop.enabled flag
+  let dualLoopEnabled = false;
   try {
-    const autonomousConfig = await loadAutonomousConfig(autonomousConfigPath);
-    const autonomousProvider = await createAutonomousProvider(autonomousConfig);
-    const autonomousLoop = new AutonomousLoop(
-      autonomousConfig,
-      process.cwd(),
-      autonomousProvider,
-      {
-        approvalBridge,
-        approvalRecipient: allowedSenders?.[0],
-      },
-      autonomousConfig.agentLoop,
-    );
+    const rawAutoYaml = yaml.parse(await readFile(autonomousConfigPath, 'utf-8')) as Record<string, unknown>;
+    const dualLoopSection = rawAutoYaml['dual_loop'] as Record<string, unknown> | undefined;
+    dualLoopEnabled = dualLoopSection?.['enabled'] === true;
+  } catch {
+    // If config can't be read, fall through to standard path
+  }
 
-    autonomousController = createAutonomousController({
-      loop: autonomousLoop,
-      cycleIntervalMinutes: autonomousConfig.cycleIntervalMinutes,
-    });
+  try {
+    if (dualLoopEnabled) {
+      // ── Dual-loop mode ──────────────────────────────────────────────
+      const { createDualLoopController } = await import('../dual-loop/index.js');
+      const { OllamaProvider } = await import('../providers/ollama.js');
+      const { ConcurrentProvider } = await import('../providers/concurrent.js');
+      const { EventBus } = await import('../autonomous/events.js');
+      const { GoalStack } = await import('../autonomous/goal-stack.js');
 
-    safeLogger.info('Autonomous controller initialized', {
-      model: autonomousConfig.model,
-      interval: autonomousConfig.cycleIntervalMinutes,
-    });
+      const baseUrl = process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434';
+
+      const fastProvider = new OllamaProvider({
+        baseUrl,
+        model: 'qwen3:27b',
+        timeoutMs: 30_000,
+      });
+      const deepProvider = new OllamaProvider({
+        baseUrl,
+        model: 'qwen3.5:122b',
+        timeoutMs: 300_000,
+        numCtx: 40_960,
+      });
+      const coderProvider = new OllamaProvider({
+        baseUrl,
+        model: 'qwen3-coder-next:latest',
+        timeoutMs: 300_000,
+      });
+
+      const concurrentProvider = new ConcurrentProvider(
+        new Map([
+          ['qwen3.5:122b', deepProvider],
+          ['qwen3-coder-next:latest', coderProvider],
+          ['qwen3:27b', fastProvider],
+        ]),
+      );
+
+      const eventBus = new EventBus({ maxQueueSize: 100, logEvents: true });
+      const goalStack = new GoalStack();
+
+      autonomousController = createDualLoopController({
+        fastProvider,
+        deepProvider,
+        concurrentProvider,
+        eventBus,
+        goalStack,
+        voiceFilter,
+        sendMessageFn: sendMessage,
+      });
+
+      safeLogger.info('Dual-loop controller initialized', {
+        fastModel: 'qwen3:27b',
+        deepModel: 'qwen3.5:122b',
+      });
+    } else {
+      // ── Standard single-loop mode ───────────────────────────────────
+      const autonomousConfig = await loadAutonomousConfig(autonomousConfigPath);
+      const autonomousProvider = await createAutonomousProvider(autonomousConfig);
+      const autonomousLoop = new AutonomousLoop(
+        autonomousConfig,
+        process.cwd(),
+        autonomousProvider,
+        {
+          approvalBridge,
+          approvalRecipient: allowedSenders?.[0],
+        },
+        autonomousConfig.agentLoop,
+      );
+
+      autonomousController = createAutonomousController({
+        loop: autonomousLoop,
+        cycleIntervalMinutes: autonomousConfig.cycleIntervalMinutes,
+      });
+
+      safeLogger.info('Autonomous controller initialized', {
+        model: autonomousConfig.model,
+        interval: autonomousConfig.cycleIntervalMinutes,
+      });
+    }
 
     // Schedule daily 8am morning summary if not already present
     const reportJobId = 'daily-autonomous-report';

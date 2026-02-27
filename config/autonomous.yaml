@@ -133,6 +133,63 @@ agent_loop:
   max_response_tokens: 4096
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# DUAL-LOOP ARCHITECTURE (Three-model concurrent system)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dual_loop:
+  # When enabled, the dual-loop coordinator replaces the single agent loop
+  # as the primary execution path for user messages. The agent loop is still
+  # used internally by the DeepLoop for ReAct execution.
+  enabled: false   # Set to true to activate dual-loop mode
+
+  # FastLoop settings (27B model — triage, review, delivery)
+  fast:
+    heartbeat_ms: 2000
+    triage_timeout_ms: 10000
+    max_conversation_tokens: 10000
+    review_enabled: true
+    message_coalesce_ms: 3000
+
+  # DeepLoop settings (122B model — planning, execution)
+  deep:
+    model: qwen3.5:122b
+    coder_model: qwen3-coder-next:latest
+    max_turns_per_task: 50
+    max_revision_rounds: 3
+    preempt_check_interval_turns: 5
+    idle_sleep_ms: 10000
+
+  # TaskBoard persistence
+  task_board:
+    path: ~/.casterly/taskboard.json
+    archive_after_days: 7
+    max_active_tasks: 10
+
+  # Context tier configuration (num_ctx per operation type)
+  context_tiers:
+    fast:
+      compact: 4096
+      standard: 12288
+      extended: 24576
+      review_large_threshold_lines: 150
+    deep:
+      compact: 8192
+      standard: 24576
+      extended: 40960
+      context_pressure_warning_threshold: 0.80
+    coder:
+      compact: 8192
+      standard: 16384
+      extended: 32768
+      response_buffer_tokens: 2000
+
+  # Coordinator settings
+  max_restart_attempts: 3
+  restart_delay_ms: 5000
+  save_interval_ms: 30000
+  archive_interval_ms: 3600000
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # EVENTS (Phase 3: Event-Driven Awareness)
 # ═══════════════════════════════════════════════════════════════════════════════
 

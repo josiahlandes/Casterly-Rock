@@ -353,6 +353,98 @@ describe('createAutonomousController', () => {
     expect(status.nextCycleIn).not.toBe('disabled');
   });
 
+  // ── runTriggeredCycle ───────────────────────────────────────────────
+
+  it('runTriggeredCycle() runs a cycle with the provided trigger', async () => {
+    const trigger = { type: 'user' as const, message: 'Make me a schedule', sender: 'test-user' };
+    const outcome = await controller.runTriggeredCycle(trigger);
+
+    expect(mockLoop.loop.runAgentCycle).toHaveBeenCalledWith(trigger);
+    expect(outcome).toBeDefined();
+  });
+
+  it('runTriggeredCycle() interrupts a busy background cycle', async () => {
+    let resolveRunCycle!: () => void;
+    const blockingLoop = createMockLoop(
+      () => new Promise<void>((resolve) => { resolveRunCycle = resolve; })
+    );
+    const ctrl = createAutonomousController({
+      loop: blockingLoop.loop,
+      cycleIntervalMinutes: 0,
+    });
+
+    ctrl.start();
+
+    // Start a background tick (blocks in runCycle)
+    const tickPromise = ctrl.tick();
+
+    // Now trigger a user cycle — should interrupt the background cycle
+    const trigger = { type: 'user' as const, message: 'Do something', sender: 'test' };
+
+    // The blockingLoop.loop.runAgentCycle now returns a resolved promise for runTriggeredCycle
+    blockingLoop.loop.runAgentCycle = vi.fn().mockResolvedValue({
+      trigger,
+      success: true,
+      stopReason: 'completed',
+      summary: 'Done',
+      turns: [],
+      totalTurns: 1,
+      totalTokensEstimate: 100,
+      durationMs: 100,
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      filesModified: [],
+      issuesFiled: [],
+      goalsUpdated: [],
+    });
+
+    const outcome = await ctrl.runTriggeredCycle(trigger);
+    expect(outcome.success).toBe(true);
+
+    // Clean up
+    resolveRunCycle();
+    await tickPromise;
+  });
+
+  // ── user cycle cooldown ─────────────────────────────────────────────
+
+  it('tick() applies longer cooldown after a user-triggered cycle', async () => {
+    // Use a 1-minute interval for testing
+    const shortLoop = createMockLoop();
+    const ctrl = createAutonomousController({
+      loop: shortLoop.loop,
+      cycleIntervalMinutes: 1, // 60 seconds = 60_000 ms
+    });
+
+    ctrl.start();
+
+    // Run a user-triggered cycle
+    const trigger = { type: 'user' as const, message: 'Hello', sender: 'test' };
+    shortLoop.loop.runAgentCycle = vi.fn().mockResolvedValue({
+      trigger,
+      success: true,
+      stopReason: 'completed',
+      summary: 'Done',
+      turns: [],
+      totalTurns: 1,
+      totalTokensEstimate: 100,
+      durationMs: 100,
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      filesModified: [],
+      issuesFiled: [],
+      goalsUpdated: [],
+    });
+    await ctrl.runTriggeredCycle(trigger);
+
+    // Reset the mock to track scheduled calls separately
+    shortLoop.loop.runAgentCycle = vi.fn().mockResolvedValue(undefined);
+
+    // Immediately tick — should be blocked by the user cooldown (2x interval)
+    await ctrl.tick();
+    expect(shortLoop.loop.runAgentCycle).not.toHaveBeenCalled();
+  });
+
   // ── getDailyReport ──────────────────────────────────────────────────
 
   it('getDailyReport() uses reflector and returns formatted text', async () => {
