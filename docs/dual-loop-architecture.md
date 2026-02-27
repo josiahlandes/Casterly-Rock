@@ -1,12 +1,12 @@
 # Dual-Loop Architecture: Three-Model Concurrent System
 
-## Status: IMPLEMENTED — All 5 passes complete
+## Status: IMPLEMENTED — All 8 passes complete
 
 ---
 
 ## Implementation Progress
 
-Five passes, each building on the last. Track completion here.
+Eight passes, each building on the last. Track completion here.
 
 | Pass | Scope | Status |
 |------|-------|--------|
@@ -14,22 +14,27 @@ Five passes, each building on the last. Track completion here.
 | **2. Foundation** | TaskBoard (JSON-backed), context-tiers, DebugSubsystem registration | **Done** — `tsc --noEmit` clean |
 | **3. Loops** | FastLoop event loop, DeepLoop plan-and-execute, triage, review, fast-tools | **Done** — `tsc --noEmit` clean |
 | **4. Integration** | Coordinator lifecycle + health, config YAML entries, message routing, save timers | **Done** — `tsc --noEmit` clean |
-| **5. Hardening** | 79 tests (4 test files), config fix, quality gates green | **Done** — guardrails + lint + typecheck pass |
+| **5. Hardening** | 80 tests (4 test files), config fix, quality gates green | **Done** — guardrails + lint + typecheck pass |
+| **6. Audit fixes** | Fix stale review fields bug, remove dead code, clean stale TODOs | **Done** — 80 tests pass |
+| **7. Bootstrap** | DualLoopController, DeepLoop events/goals, daemon conditional branch | **Done** — `tsc --noEmit` clean |
+| **8. Bootstrap hardening** | 40 new tests (2 test files), quality gates green | **Done** — 120 tests pass |
 
 ### Files Created
 
 ```
 src/dual-loop/
-  [x] task-board-types.ts     — Task, TaskStatus, PlanStep, TaskArtifact types
-  [x] task-board.ts           — TaskBoard class (JSON-backed, GoalStack pattern)
-  [x] context-tiers.ts        — ContextTierConfig types + tier selection functions
-  [x] fast-loop.ts            — FastLoop class
-  [x] deep-loop.ts            — DeepLoop class
-  [x] coordinator.ts          — LoopCoordinator (starts/stops both loops)
-  [x] fast-tools.ts           — Filtered toolkit for FastLoop
-  [x] triage-prompt.ts        — Prompts for message triage
-  [x] review-prompt.ts        — Prompts for code review
-  [x] index.ts                — Public API re-exports
+  [x] task-board-types.ts         — Task, TaskStatus, PlanStep, TaskArtifact types
+  [x] task-board.ts               — TaskBoard class (JSON-backed, GoalStack pattern)
+  [x] context-tiers.ts            — ContextTierConfig types + tier selection functions
+  [x] fast-loop.ts                — FastLoop class
+  [x] deep-loop.ts                — DeepLoop class (+ event/goal idle check)
+  [x] coordinator.ts              — LoopCoordinator (starts/stops both loops)
+  [x] fast-tools.ts               — Filtered toolkit for FastLoop
+  [x] triage-prompt.ts            — Prompts for message triage
+  [x] review-prompt.ts            — Prompts for code review
+  [x] dual-loop-controller.ts     — DualLoopController (AutonomousController adapter)
+  [x] deep-loop-events.ts         — Event/goal → task conversion for DeepLoop idle
+  [x] index.ts                    — Public API re-exports
 ```
 
 ---
