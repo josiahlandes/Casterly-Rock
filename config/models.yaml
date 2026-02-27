@@ -67,7 +67,7 @@ routing:
 
   # Dual-loop tasks
   triage: fast
-  review: fast
+  code_review: fast
   acknowledge: fast
 
 # Hardware constraints (Phase 5: maximization)
