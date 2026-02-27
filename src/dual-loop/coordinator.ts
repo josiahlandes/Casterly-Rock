@@ -195,10 +195,19 @@ export class LoopCoordinator {
 
     tracer.log('coordinator', 'info', 'Both loops launched');
 
-    // Wait for either to exit
-    await Promise.race([fastPromise, deepPromise]);
+    // Wait for both loops to finish (each handles its own restarts).
+    // allSettled ensures a crashed loop doesn't orphan the surviving one.
+    const results = await Promise.allSettled([fastPromise, deepPromise]);
 
-    tracer.log('coordinator', 'info', 'LoopCoordinator exiting (a loop stopped)');
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        tracer.log('coordinator', 'error', 'Loop exited with unhandled error', {
+          error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+        });
+      }
+    }
+
+    tracer.log('coordinator', 'info', 'LoopCoordinator exiting (both loops stopped)');
   }
 
   /**

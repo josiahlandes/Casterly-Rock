@@ -82,16 +82,24 @@ async function processMessage(
     const trigger = triggerFromMessage(message.text, senderLabel);
     const outcome = await autonomousController.runTriggeredCycle(trigger);
 
-    const response = outcome.summary || 'Done.';
-    const voiced = await voiceFilter.apply(response);
-    const result = sendMessage(sender, voiced);
-    if (result.success) {
-      safeLogger.info('Agent loop response sent', {
-        turns: outcome.totalTurns,
+    // When summary is empty the response is being delivered
+    // asynchronously (e.g. dual-loop FastLoop via deliverFn).
+    const response = outcome.summary;
+    if (response) {
+      const voiced = await voiceFilter.apply(response);
+      const result = sendMessage(sender, voiced);
+      if (result.success) {
+        safeLogger.info('Agent loop response sent', {
+          turns: outcome.totalTurns,
+          stopReason: outcome.stopReason,
+        });
+      } else {
+        safeLogger.error('Failed to send agent loop response', { error: result.error });
+      }
+    } else {
+      safeLogger.info('Agent cycle completed (response delivered async)', {
         stopReason: outcome.stopReason,
       });
-    } else {
-      safeLogger.error('Failed to send agent loop response', { error: result.error });
     }
   } catch (error) {
     const casterlyError = wrapError(error);

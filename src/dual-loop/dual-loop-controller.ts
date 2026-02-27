@@ -194,13 +194,14 @@ export function createDualLoopController(
       successfulCycles++;
       lastCycleAt = new Date().toISOString();
 
-      // Return a synthetic outcome. The real response is delivered
-      // asynchronously by the FastLoop via deliverFn.
+      // Return a synthetic outcome with an empty summary. The real
+      // response is delivered asynchronously by the FastLoop via
+      // deliverFn — the daemon skips sending when summary is empty.
       return {
         trigger,
         success: true,
         stopReason: 'completed',
-        summary: 'Message routed to dual-loop FastLoop for triage.',
+        summary: '',
         turns: [],
         totalTurns: 0,
         totalTokensEstimate: 0,

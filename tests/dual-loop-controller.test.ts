@@ -118,7 +118,8 @@ describe('DualLoopController', () => {
 
       expect(outcome.success).toBe(true);
       expect(outcome.stopReason).toBe('completed');
-      expect(outcome.summary).toContain('FastLoop');
+      // User trigger summary is empty — real response delivered async via FastLoop
+      expect(outcome.summary).toBe('');
       expect(outcome.trigger.type).toBe('user');
     });
 
