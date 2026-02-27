@@ -15,9 +15,10 @@
 import type { LlmProvider } from '../providers/base.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
+import { getTracer } from '../autonomous/debug.js';
 import { TaskBoard, createTaskBoard } from './task-board.js';
 import { FastLoop, createFastLoop } from './fast-loop.js';
-import type { FastLoopConfig } from './fast-loop.js';
+import type { FastLoopConfig, DeliverFn } from './fast-loop.js';
 import { DeepLoop, createDeepLoop } from './deep-loop.js';
 import type { DeepLoopConfig } from './deep-loop.js';
 import type { ContextTiersConfig } from './context-tiers.js';
@@ -33,14 +34,17 @@ import type { TaskBoardConfig } from './task-board-types.js';
 export interface LoopHealth {
   running: boolean;
   lastHeartbeat?: string | undefined;
-  currentTask?: string | undefined;    // Task ID if working
+  currentTask?: string | undefined;
   errorCount: number;
+  restartCount: number;
 }
 
 /**
  * Combined health status for the coordinator dashboard.
  */
 export interface CoordinatorHealth {
+  running: boolean;
+  upSince?: string | undefined;
   fast: LoopHealth;
   deep: LoopHealth;
   taskBoard: {
@@ -67,6 +71,10 @@ export interface CoordinatorConfig {
   maxRestartAttempts: number;
   /** Delay between restart attempts (ms) */
   restartDelayMs: number;
+  /** How often to save TaskBoard state (ms) */
+  saveIntervalMs: number;
+  /** How often to archive old tasks (ms) */
+  archiveIntervalMs: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,6 +92,8 @@ const DEFAULT_CONFIG: CoordinatorConfig = {
   },
   maxRestartAttempts: 3,
   restartDelayMs: 5000,
+  saveIntervalMs: 30_000,      // Save TaskBoard every 30 seconds
+  archiveIntervalMs: 3_600_000, // Archive old tasks every hour
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,7 +105,13 @@ export class LoopCoordinator {
   private readonly taskBoard: TaskBoard;
   private readonly fastLoop: FastLoop;
   private readonly deepLoop: DeepLoop;
+  private readonly eventBus: EventBus;
   private running: boolean = false;
+  private startedAt: string | null = null;
+  private fastHealth: LoopHealth = { running: false, errorCount: 0, restartCount: 0 };
+  private deepHealth: LoopHealth = { running: false, errorCount: 0, restartCount: 0 };
+  private saveTimer: ReturnType<typeof setInterval> | null = null;
+  private archiveTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     fastProvider: LlmProvider,
@@ -105,6 +121,7 @@ export class LoopCoordinator {
     config?: Partial<CoordinatorConfig>,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.eventBus = eventBus;
 
     this.taskBoard = createTaskBoard(this.config.taskBoard);
 
@@ -135,30 +152,99 @@ export class LoopCoordinator {
 
   /**
    * Start both loops concurrently.
-   * Returns when either loop exits (crash or stop).
+   *
+   * 1. Load TaskBoard from disk
+   * 2. Start periodic save and archive timers
+   * 3. Launch both loops as concurrent coroutines
+   * 4. Wait for any loop to exit (crash or stop)
    */
   async start(): Promise<void> {
+    const tracer = getTracer();
     this.running = true;
+    this.startedAt = new Date().toISOString();
+
+    tracer.log('coordinator', 'info', 'LoopCoordinator starting');
+
+    // 1. Load TaskBoard state from disk
     this.taskBoard.init();
+    await this.taskBoard.load();
+    tracer.log('coordinator', 'info', 'TaskBoard loaded');
 
-    // TODO(pass-4): Health monitoring, restart logic, logging
+    // 2. Start periodic save timer (persist dirty state to disk)
+    this.saveTimer = setInterval(() => {
+      if (this.taskBoard.isDirty()) {
+        void this.taskBoard.save().catch((err) => {
+          tracer.log('coordinator', 'error', 'TaskBoard save failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    }, this.config.saveIntervalMs);
 
-    // Both loops launched as concurrent promises
+    // 3. Start periodic archive timer (clean up old tasks)
+    this.archiveTimer = setInterval(() => {
+      const archived = this.taskBoard.archiveOld();
+      if (archived > 0) {
+        tracer.log('coordinator', 'info', `Archived ${archived} old tasks`);
+      }
+    }, this.config.archiveIntervalMs);
+
+    // 4. Launch both loops
     const fastPromise = this.runWithRestart('fast', () => this.fastLoop.run());
     const deepPromise = this.runWithRestart('deep', () => this.deepLoop.run());
 
+    tracer.log('coordinator', 'info', 'Both loops launched');
+
     // Wait for either to exit
     await Promise.race([fastPromise, deepPromise]);
+
+    tracer.log('coordinator', 'info', 'LoopCoordinator exiting (a loop stopped)');
   }
 
   /**
-   * Stop both loops gracefully.
+   * Stop both loops gracefully and persist state.
    */
   async stop(): Promise<void> {
+    const tracer = getTracer();
+    tracer.log('coordinator', 'info', 'LoopCoordinator stopping');
+
     this.running = false;
     this.fastLoop.stop();
     this.deepLoop.stop();
+
+    // Clear timers
+    if (this.saveTimer) {
+      clearInterval(this.saveTimer);
+      this.saveTimer = null;
+    }
+    if (this.archiveTimer) {
+      clearInterval(this.archiveTimer);
+      this.archiveTimer = null;
+    }
+
+    // Final save
+    await this.taskBoard.save();
     this.taskBoard.close();
+
+    tracer.log('coordinator', 'info', 'LoopCoordinator stopped');
+  }
+
+  // ── Message Routing ─────────────────────────────────────────────────────
+
+  /**
+   * Route a user message into the dual-loop system.
+   * This is the primary external interface — called by the iMessage daemon
+   * or CLI when a user message arrives.
+   */
+  handleUserMessage(message: string, sender: string): void {
+    this.fastLoop.enqueueMessage(message, sender);
+  }
+
+  /**
+   * Set the delivery function for sending responses back to users.
+   */
+  setDeliverFn(fn: DeliverFn): void {
+    this.fastLoop.setDeliverFn(fn);
   }
 
   // ── Health ──────────────────────────────────────────────────────────────
@@ -167,25 +253,43 @@ export class LoopCoordinator {
    * Get the health status of both loops and the task board.
    */
   getHealth(): CoordinatorHealth {
-    // TODO(pass-4): Populate from actual loop state
     const currentTask = this.deepLoop.getCurrentTask();
+    const counts = this.taskBoard.getStatusCounts();
+
     return {
+      running: this.running,
+      upSince: this.startedAt ?? undefined,
       fast: {
+        ...this.fastHealth,
         running: this.fastLoop.isRunning(),
-        errorCount: 0,
       },
       deep: {
+        ...this.deepHealth,
         running: this.deepLoop.isRunning(),
         currentTask: currentTask?.id,
-        errorCount: 0,
       },
       taskBoard: {
-        active: 0,
-        queued: 0,
-        reviewing: 0,
-        doneToday: 0,
+        active: this.taskBoard.getActive().length,
+        queued: counts['queued'] ?? 0,
+        reviewing: counts['reviewing'] ?? 0,
+        doneToday: this.taskBoard.getCompletedToday(),
       },
     };
+  }
+
+  /**
+   * Get a human-readable health summary for status reporting.
+   */
+  getHealthSummary(): string {
+    const h = this.getHealth();
+    const lines: string[] = [];
+
+    lines.push(`Coordinator: ${h.running ? 'running' : 'stopped'}${h.upSince ? ` (since ${h.upSince})` : ''}`);
+    lines.push(`FastLoop: ${h.fast.running ? 'running' : 'stopped'} (${h.fast.errorCount} errors, ${h.fast.restartCount} restarts)`);
+    lines.push(`DeepLoop: ${h.deep.running ? 'running' : 'stopped'}${h.deep.currentTask ? ` [working on ${h.deep.currentTask}]` : ''} (${h.deep.errorCount} errors, ${h.deep.restartCount} restarts)`);
+    lines.push(`TaskBoard: ${h.taskBoard.active} active, ${h.taskBoard.queued} queued, ${h.taskBoard.reviewing} reviewing, ${h.taskBoard.doneToday} done today`);
+
+    return lines.join('\n');
   }
 
   // ── Accessors ───────────────────────────────────────────────────────────
@@ -211,20 +315,37 @@ export class LoopCoordinator {
     name: 'fast' | 'deep',
     fn: () => Promise<void>,
   ): Promise<void> {
+    const tracer = getTracer();
+    const health = name === 'fast' ? this.fastHealth : this.deepHealth;
     let attempts = 0;
 
     while (this.running && attempts < this.config.maxRestartAttempts) {
       try {
         await fn();
         // Normal exit — don't restart
+        tracer.log('coordinator', 'info', `${name} loop exited normally`);
         return;
       } catch (error) {
         attempts++;
-        // TODO(pass-4): Log error, health update, notify
+        health.errorCount++;
+        health.restartCount++;
+
+        tracer.log('coordinator', 'error', `${name} loop crashed (attempt ${attempts}/${this.config.maxRestartAttempts})`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+
         if (this.running && attempts < this.config.maxRestartAttempts) {
+          tracer.log('coordinator', 'info', `Restarting ${name} loop in ${this.config.restartDelayMs}ms`);
           await this.sleep(this.config.restartDelayMs);
         }
       }
+    }
+
+    if (attempts >= this.config.maxRestartAttempts) {
+      tracer.log('coordinator', 'error', `${name} loop exhausted restart attempts`, {
+        maxAttempts: this.config.maxRestartAttempts,
+        totalErrors: health.errorCount,
+      });
     }
   }
 

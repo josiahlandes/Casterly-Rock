@@ -32,6 +32,15 @@ models:
     keep_alive: -1    # Never unload (Phase 5: always-hot)
     fallback: qwen3.5:122b
 
+  # Fast model: triage, review, acknowledgment (dual-loop FastLoop)
+  fast:
+    provider: ollama
+    model: qwen3:27b
+    context_length: 24576   # Extended tier max
+    temperature: 0.1  # Low for triage accuracy
+    keep_alive: -1    # Never unload — always-hot for <2s responses
+    fallback: qwen3.5:122b
+
   # Future: specialist model from self-distillation (Phase 6)
   specialist:
     provider: ollama
@@ -55,6 +64,11 @@ routing:
   implement: coding
   validate: coding
   reflect: primary
+
+  # Dual-loop tasks
+  triage: fast
+  review: fast
+  acknowledge: fast
 
 # Hardware constraints (Phase 5: maximization)
 hardware:
