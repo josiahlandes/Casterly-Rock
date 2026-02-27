@@ -8,14 +8,15 @@
  * daemon calls tick() every poll interval, which calls runAgentCycle() once when
  * the cycle interval has elapsed and the loop is enabled.
  *
- * Handoff: when the work window closes (6am) or a cycle completes with
- * pending branches, a handoff file is written to persist overnight state.
- * The 8am morning summary reads this handoff to report pending work.
+ * Handoff: when a cycle completes with pending branches, a handoff file is
+ * written to persist state. The 8am morning summary reads this handoff to
+ * report pending work.
  */
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { safeLogger } from '../logging/safe-logger.js';
+import { safeWriteFile } from '../persistence/safe-write.js';
 import { AutonomousLoop, AbortError } from './loop.js';
 import type { AgentTrigger, AgentOutcome } from './agent-loop.js';
 import type { Reflector } from './reflector.js';
@@ -27,7 +28,7 @@ import {
   formatHealthReport,
   formatActivityReport,
 } from './status-report.js';
-import type { AutonomousConfig, HandoffState } from './types.js';
+import type { HandoffState } from './types.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -108,7 +109,6 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
   let totalCycles = 0;
   let successfulCycles = 0;
   let lastCycleAt: string | null = null;
-  let wasInWorkWindow = false;
 
   // Access the reflector through the loop's public getter
   const reflector: Reflector = loop.reflectorInstance;
@@ -119,7 +119,6 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
   function start(): void {
     if (enabled) return;
     enabled = true;
-    wasInWorkWindow = isInWorkWindow(loop.configInstance);
     safeLogger.info('Autonomous mode enabled');
   }
 
@@ -158,21 +157,6 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
 
   async function tick(): Promise<void> {
     if (!enabled) return;
-
-    // Detect work-window transition (night → day) and write handoff
-    const inWorkWindow = isInWorkWindow(loop.configInstance);
-    if (wasInWorkWindow && !inWorkWindow) {
-      safeLogger.info('Work window closed — writing handoff');
-      try {
-        await writeHandoff();
-      } catch (error) {
-        safeLogger.error('Failed to write handoff on window close', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-    wasInWorkWindow = inWorkWindow;
-
     if (busy) return;
 
     // Respect the cycle interval
@@ -344,8 +328,7 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
       },
     };
 
-    await fs.mkdir(path.dirname(HANDOFF_PATH), { recursive: true });
-    await fs.writeFile(HANDOFF_PATH, JSON.stringify(handoff, null, 2), 'utf-8');
+    await safeWriteFile(HANDOFF_PATH, JSON.stringify(handoff, null, 2), 'utf-8');
     safeLogger.info('Handoff file written', { pendingBranches: pending.length });
   }
 
@@ -401,20 +384,6 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Check if the current time is within quiet hours.
- * Returns true always — quiet hours are a scheduling preference, not
- * a hard gate. The LLM receives quiet hours info via the system prompt
- * and prefers consolidation work during those times.
- *
- * The function is kept for backward compatibility (callers that check
- * work window transitions for handoff writing). It now returns true
- * unconditionally — the loop always works. See docs/vision.md.
- */
-export function isInWorkWindow(_config: AutonomousConfig): boolean {
-  return true;
-}
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.round(ms / 1000);

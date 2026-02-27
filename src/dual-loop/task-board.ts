@@ -15,8 +15,8 @@
  * See docs/dual-loop-architecture.md Section 4.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { safeWriteFile } from '../persistence/safe-write.js';
 import { randomUUID } from 'node:crypto';
 import { getTracer } from '../autonomous/debug.js';
 
@@ -158,14 +158,11 @@ export class TaskBoard {
       }
 
       const resolvedPath = resolvePath(this.config.dbPath);
-      const dir = dirname(resolvedPath);
-
-      await mkdir(dir, { recursive: true });
 
       const content = JSON.stringify(this.data, null, 2);
       const startMs = Date.now();
 
-      await writeFile(resolvedPath, content, 'utf8');
+      await safeWriteFile(resolvedPath, content, 'utf8');
       this.dirty = false;
 
       tracer.logIO('task-board', 'write', resolvedPath, Date.now() - startMs, {

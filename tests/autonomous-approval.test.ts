@@ -2,12 +2,11 @@
  * Autonomous Pending-Review & Handoff Tests
  *
  * Verifies the night-only autonomous system:
- * 1. Config parsing for approval_required + quiet hours
+ * 1. Config parsing for approval_required
  * 2. AutonomousLoop accepts LoopOptions, exposes pendingBranchList
  * 3. pending_review is a valid CycleOutcome
  * 4. Fail-safe: no bridge — loop still constructs (bridge unused in pending-review flow)
- * 5. isInWorkWindow helper
- * 6. formatMorningSummary with handoff state
+ * 5. formatMorningSummary with handoff state
  */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
@@ -16,7 +15,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { AutonomousLoop, loadConfig } from '../src/autonomous/loop.js';
-import { isInWorkWindow } from '../src/autonomous/controller.js';
 import { formatMorningSummary } from '../src/autonomous/report.js';
 import type { ApprovalBridge } from '../src/approval/index.js';
 import type { ApprovalRequest } from '../src/approval/types.js';
@@ -294,35 +292,6 @@ describe('CycleOutcome — pending_review', () => {
     // In approval_required mode, validated branches get outcome=pending_review
     // rather than outcome=success, because they haven't been merged yet
     expect(config.git.integrationMode).toBe('approval_required');
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// isInWorkWindow helper
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('isInWorkWindow', () => {
-  it('returns true when quiet hours are disabled', () => {
-    const config = makeMinimalConfig();
-    // No quietHours set
-    expect(isInWorkWindow(config)).toBe(true);
-  });
-
-  it('returns true when quiet hours enabled but explicitly disabled', () => {
-    const config = makeMinimalConfig({
-      quietHours: { start: '06:00', end: '22:00', enabled: false },
-    });
-    expect(isInWorkWindow(config)).toBe(true);
-  });
-
-  it('returns correct value based on current time', () => {
-    // We can't mock Date easily without vitest fake timers,
-    // but we can at least verify the function doesn't throw
-    const config = makeMinimalConfig({
-      quietHours: { start: '06:00', end: '22:00', enabled: true },
-    });
-    const result = isInWorkWindow(config);
-    expect(typeof result).toBe('boolean');
   });
 });
 

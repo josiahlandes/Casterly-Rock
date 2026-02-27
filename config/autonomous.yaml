@@ -24,13 +24,8 @@ autonomous:
   # Maximum cycles per day (to manage costs and avoid runaway)
   max_cycles_per_day: 12
 
-  # Quiet hours — scheduling preference, not a hard gate.
-  # The LLM prefers consolidation work during quiet hours but the
-  # system never refuses to run cycles. See docs/vision.md.
-  quiet_hours:
-    enabled: true
-    start: "06:00"   # 6 AM — quiet starts (prefer consolidation)
-    end: "22:00"     # 10 PM — quiet ends (normal priority work)
+  # The loop always runs — no quiet-hours gate. See docs/vision.md.
+  # Consolidation preferences are communicated via the system prompt.
 
   # ─────────────────────────────────────────────────────────────────────────────
   # SCOPE
@@ -106,6 +101,10 @@ agent_loop:
 
   # Maximum reasoning turns per cycle (safety ceiling)
   max_turns: 200
+
+  # Tighter turn ceiling for background (scheduled/event) cycles.
+  # A background cycle hitting 40 turns on 100K tokens is likely stuck.
+  max_turns_background: 40
 
   # Soft limit on estimated tokens per cycle (input + output)
   # Local inference has no cost — set high to allow deep reflection.
@@ -232,8 +231,8 @@ events:
   issue_watcher:
     enabled: true
     # How often to check for stale issues (milliseconds)
-    # Default: 6 hours (21600000)
-    check_interval_ms: 21600000
+    # 24 hours — sufficient for a 7-day staleness threshold
+    check_interval_ms: 86400000
     # Days without activity before an issue is considered stale
     stale_days: 7
 

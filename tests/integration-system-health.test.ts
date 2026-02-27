@@ -70,7 +70,6 @@ describe('autonomous module exports', () => {
   it('exports controller', async () => {
     const controller = await import('../src/autonomous/controller.js');
     expect(controller.createAutonomousController).toBeDefined();
-    expect(controller.isInWorkWindow).toBeDefined();
   });
 
   it('exports world model (Phase 1)', async () => {
@@ -412,28 +411,3 @@ describe('project structure', () => {
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Controller work window logic
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('controller work window', () => {
-  it('isInWorkWindow function exists and returns boolean', async () => {
-    const { isInWorkWindow } = await import('../src/autonomous/controller.js');
-    const result = isInWorkWindow({ quietHours: { start: '06:00', end: '22:00', enabled: true } } as any);
-    expect(typeof result).toBe('boolean');
-  });
-
-  it('work window respects quiet hours boundaries', async () => {
-    const { isInWorkWindow } = await import('../src/autonomous/controller.js');
-
-    // Quiet hours: 6am-10pm (work window is 10pm-6am)
-    // A time at 2am should be IN work window
-    // A time at 2pm should be OUT of work window (in quiet hours)
-    const quietHours = { quietHours: { start: '06:00', end: '22:00', enabled: true } } as any;
-
-    // We can't control the current time in this test, but we can verify
-    // the function handles the config correctly
-    const result = isInWorkWindow(quietHours);
-    expect(typeof result).toBe('boolean');
-  });
-});
