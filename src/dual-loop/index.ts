@@ -95,3 +95,24 @@ export {
   executeFastTool,
 } from './fast-tools.js';
 export type { FastToolContext, FastTool } from './fast-tools.js';
+
+// ── Dual-Loop Controller ─────────────────────────────────────────────────────
+
+export { createDualLoopController } from './dual-loop-controller.js';
+export type { DualLoopControllerOptions } from './dual-loop-controller.js';
+
+// ── Deep Loop Events & Goals ─────────────────────────────────────────────────
+
+export {
+  drainEventsToTasks,
+  checkGoalStack,
+  runIdleCheck,
+  describeEvent,
+  eventToOrigin,
+  goalToTaskDescription,
+  DEFAULT_EVENT_CONFIG,
+} from './deep-loop-events.js';
+export type {
+  DeepLoopEventConfig,
+  IdleCheckResult,
+} from './deep-loop-events.js';
