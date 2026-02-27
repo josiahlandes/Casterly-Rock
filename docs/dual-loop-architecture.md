@@ -1,6 +1,36 @@
 # Dual-Loop Architecture: Three-Model Concurrent System
 
-## Status: PLAN — Awaiting Review
+## Status: IMPLEMENTING — Pass 1 of 5
+
+---
+
+## Implementation Progress
+
+Five passes, each building on the last. Track completion here.
+
+| Pass | Scope | Status |
+|------|-------|--------|
+| **1. Scaffold** | All files created with types, interfaces, class skeletons, exports. No logic. | **Done** — `tsc --noEmit` clean |
+| **2. Foundation** | TaskBoard (SQLite), context-tiers (selection logic), core type refinements | Not Started |
+| **3. Loops** | FastLoop event loop, DeepLoop ReAct wrapper, triage, Coder dispatch | Not Started |
+| **4. Integration** | LoopCoordinator, code review flow, config changes, cross-module wiring | Not Started |
+| **5. Hardening** | Edge cases, error handling, stall detection, graceful degradation, tests, `npm run check` | Not Started |
+
+### Files Created
+
+```
+src/dual-loop/
+  [x] task-board-types.ts     — Task, TaskStatus, PlanStep, TaskArtifact types
+  [x] task-board.ts           — TaskBoard class (SQLite-backed)
+  [x] context-tiers.ts        — ContextTierConfig types + tier selection functions
+  [x] fast-loop.ts            — FastLoop class
+  [x] deep-loop.ts            — DeepLoop class
+  [x] coordinator.ts          — LoopCoordinator (starts/stops both loops)
+  [x] fast-tools.ts           — Filtered toolkit for FastLoop
+  [x] triage-prompt.ts        — Prompts for message triage
+  [x] review-prompt.ts        — Prompts for code review
+  [x] index.ts                — Public API re-exports
+```
 
 ---
 
