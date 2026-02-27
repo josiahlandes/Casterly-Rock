@@ -52,7 +52,7 @@ export {
 // ── Fast Loop ─────────────────────────────────────────────────────────────────
 
 export { FastLoop, createFastLoop } from './fast-loop.js';
-export type { FastLoopConfig } from './fast-loop.js';
+export type { FastLoopConfig, DeliverFn } from './fast-loop.js';
 
 // ── Deep Loop ─────────────────────────────────────────────────────────────────
 

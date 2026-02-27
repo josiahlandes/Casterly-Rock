@@ -1,6 +1,6 @@
 # Dual-Loop Architecture: Three-Model Concurrent System
 
-## Status: IMPLEMENTING — Pass 2 of 5 complete
+## Status: IMPLEMENTING — Pass 3 of 5 complete
 
 ---
 
@@ -12,7 +12,7 @@ Five passes, each building on the last. Track completion here.
 |------|-------|--------|
 | **1. Scaffold** | All files created with types, interfaces, class skeletons, exports. No logic. | **Done** — `tsc --noEmit` clean |
 | **2. Foundation** | TaskBoard (JSON-backed), context-tiers, DebugSubsystem registration | **Done** — `tsc --noEmit` clean |
-| **3. Loops** | FastLoop event loop, DeepLoop ReAct wrapper, triage, Coder dispatch | Not Started |
+| **3. Loops** | FastLoop event loop, DeepLoop plan-and-execute, triage, review, fast-tools | **Done** — `tsc --noEmit` clean |
 | **4. Integration** | LoopCoordinator, code review flow, config changes, cross-module wiring | Not Started |
 | **5. Hardening** | Edge cases, error handling, stall detection, graceful degradation, tests, `npm run check` | Not Started |
 
