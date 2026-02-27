@@ -17,11 +17,14 @@
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
+import type { GoalStack } from '../autonomous/goal-stack.js';
 import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
 import type { Task, TaskArtifact, PlanStep } from './task-board-types.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
 import { selectDeepTier, selectCoderTier, resolveNumCtx, buildProviderOptions } from './context-tiers.js';
+import { runIdleCheck } from './deep-loop-events.js';
+import type { DeepLoopEventConfig } from './deep-loop-events.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -117,6 +120,8 @@ export class DeepLoop {
   private readonly concurrentProvider: ConcurrentProvider;
   private readonly taskBoard: TaskBoard;
   private readonly eventBus: EventBus;
+  private goalStack: GoalStack | null = null;
+  private eventConfig: DeepLoopEventConfig | undefined;
   private running: boolean = false;
   private currentTask: Task | null = null;
   private revisionCounts: Map<string, number> = new Map();
@@ -169,7 +174,18 @@ export class DeepLoop {
           continue;
         }
 
-        // 3. Nothing to do — idle
+        // 3. Check for events and goals during idle
+        const idleResult = runIdleCheck(
+          this.eventBus,
+          this.goalStack,
+          this.taskBoard,
+          this.eventConfig,
+        );
+        if (idleResult.tasksCreated > 0) {
+          continue; // New tasks were created — loop back to claim them
+        }
+
+        // 4. Nothing to do — idle
         await this.sleep(this.config.idleSleepMs);
       } catch (error) {
         tracer.log('deep-loop', 'error', 'DeepLoop work cycle error', {
@@ -193,6 +209,15 @@ export class DeepLoop {
    */
   stop(): void {
     this.running = false;
+  }
+
+  /**
+   * Set the GoalStack for idle-time goal work. Optional — if not set,
+   * the DeepLoop only processes events during idle, not goals.
+   */
+  setGoalStack(goalStack: GoalStack, config?: DeepLoopEventConfig): void {
+    this.goalStack = goalStack;
+    this.eventConfig = config;
   }
 
   /** Whether the loop is currently running */

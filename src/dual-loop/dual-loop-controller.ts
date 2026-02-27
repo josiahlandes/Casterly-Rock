@@ -31,7 +31,7 @@ import type {
 import type { AgentTrigger, AgentOutcome } from '../autonomous/agent-loop.js';
 import type { VoiceFilter } from '../imessage/voice-filter.js';
 import type { HandoffState } from '../autonomous/types.js';
-import { LoopCoordinator, createLoopCoordinator } from './coordinator.js';
+import { createLoopCoordinator } from './coordinator.js';
 import type { CoordinatorConfig } from './coordinator.js';
 import type { DeliverFn } from './fast-loop.js';
 
@@ -102,56 +102,127 @@ export function createDualLoopController(
     options.coordinatorConfig,
   );
 
-  // Wire up response delivery: FastLoop → voice filter → iMessage
+  // Wire the GoalStack into DeepLoop for idle-time goal work
+  coordinator.getDeepLoop().setGoalStack(options.goalStack);
+
+  // Wire response delivery: FastLoop → voice filter → iMessage
   const deliverFn: DeliverFn = async (sender: string, text: string) => {
-    // TODO(pass-2): apply voice filter and send via iMessage
-    void sender;
-    void text;
+    try {
+      const voiced = await options.voiceFilter.apply(text);
+      options.sendMessageFn(sender, voiced);
+    } catch (error) {
+      safeLogger.error('Dual-loop delivery failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Fall back to unvoiced delivery
+      options.sendMessageFn(sender, text);
+    }
   };
   coordinator.setDeliverFn(deliverFn);
 
-  // ── AutonomousController interface ───────────────────────────────────────
+  // ── start ──────────────────────────────────────────────────────────────
 
   function start(): void {
-    // TODO(pass-2): start coordinator, launch loops
     if (enabled) return;
     enabled = true;
+    busy = true;
+
+    // Launch the coordinator as a long-running background task.
+    // Unlike the standard controller (which waits for tick()), the
+    // dual-loop coordinator runs both loops continuously.
+    coordinatorPromise = coordinator.start().then(() => {
+      tracer.log('coordinator', 'info', 'Coordinator exited');
+      busy = false;
+    }).catch((error: unknown) => {
+      tracer.log('coordinator', 'error', 'Coordinator crashed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      busy = false;
+    });
+
+    safeLogger.info('Dual-loop controller started (coordinator launched)');
   }
 
-  function stop(): void {
-    // TODO(pass-2): stop coordinator gracefully
+  // ── stop ───────────────────────────────────────────────────────────────
+
+  async function stop(): Promise<void> {
     if (!enabled) return;
     enabled = false;
+
+    await coordinator.stop();
+    if (coordinatorPromise) {
+      await coordinatorPromise;
+      coordinatorPromise = null;
+    }
+
+    safeLogger.info('Dual-loop controller stopped');
   }
+
+  // ── interrupt ──────────────────────────────────────────────────────────
+  // The dual-loop doesn't need interrupt in the same way — the FastLoop
+  // is always responsive. But we honour the interface for preemption.
 
   async function interrupt(): Promise<void> {
-    // TODO(pass-2): stop coordinator for preemption
+    if (!busy) return;
+    tracer.log('coordinator', 'info', 'Dual-loop interrupt requested');
+    // The coordinator handles preemption via TaskBoard priority —
+    // new high-priority tasks naturally preempt low-priority ones.
   }
+
+  // ── tick ────────────────────────────────────────────────────────────────
+  // No-op for the dual-loop. The coordinator runs continuously; it does
+  // not need the daemon to tick it forward.
 
   async function tick(): Promise<void> {
-    // TODO(pass-2): no-op for dual-loop (coordinator runs continuously)
+    // Intentionally empty — the coordinator's own heartbeat and idle
+    // timers handle all scheduling.
   }
 
-  function getStatus(): AutonomousStatus {
-    // TODO(pass-2): derive from coordinator health
-    return {
-      enabled,
-      busy,
-      totalCycles,
-      successfulCycles,
-      lastCycleAt,
-      nextCycleIn: enabled ? 'continuous' : 'disabled',
-    };
-  }
+  // ── runTriggeredCycle ──────────────────────────────────────────────────
+  // The daemon calls this when a user message arrives. In the dual-loop
+  // model, we route it to the FastLoop for instant triage rather than
+  // running a full AgentLoop cycle.
 
   async function runTriggeredCycle(trigger: AgentTrigger): Promise<AgentOutcome> {
-    // TODO(pass-2): route user messages to FastLoop, return synthetic outcome
     const startedAt = new Date().toISOString();
+    totalCycles++;
+
+    if (trigger.type === 'user') {
+      // Route to FastLoop — this returns immediately (enqueue, no await)
+      coordinator.handleUserMessage(trigger.message, trigger.sender);
+
+      successfulCycles++;
+      lastCycleAt = new Date().toISOString();
+
+      // Return a synthetic outcome. The real response is delivered
+      // asynchronously by the FastLoop via deliverFn.
+      return {
+        trigger,
+        success: true,
+        stopReason: 'completed',
+        summary: 'Message routed to dual-loop FastLoop for triage.',
+        turns: [],
+        totalTurns: 0,
+        totalTokensEstimate: 0,
+        durationMs: 0,
+        startedAt,
+        endedAt: new Date().toISOString(),
+        filesModified: [],
+        issuesFiled: [],
+        goalsUpdated: [],
+      };
+    }
+
+    // Non-user triggers (events, goals, scheduled) are handled by
+    // the DeepLoop's idle check automatically.
+    successfulCycles++;
+    lastCycleAt = new Date().toISOString();
+
     return {
       trigger,
       success: true,
       stopReason: 'completed',
-      summary: 'Routed to dual-loop.',
+      summary: 'Trigger handled by dual-loop coordinator.',
       turns: [],
       totalTurns: 0,
       totalTokensEstimate: 0,
@@ -164,24 +235,100 @@ export function createDualLoopController(
     };
   }
 
-  function getStatusReport(command: string): string {
-    // TODO(pass-2): format from coordinator health + task board
-    return `Dual-loop mode: ${enabled ? 'active' : 'inactive'}`;
+  // ── getStatus ──────────────────────────────────────────────────────────
+
+  function getStatus(): AutonomousStatus {
+    return {
+      enabled,
+      busy,
+      totalCycles,
+      successfulCycles,
+      lastCycleAt,
+      nextCycleIn: enabled ? 'continuous' : 'disabled',
+    };
   }
+
+  // ── getStatusReport ────────────────────────────────────────────────────
+
+  function getStatusReport(command: string): string {
+    const health = coordinator.getHealth();
+
+    switch (command) {
+      case 'status':
+        return [
+          `Dual-loop: ${health.running ? 'active' : 'inactive'}`,
+          `FastLoop: ${health.fast.running ? 'running' : 'stopped'} (${health.fast.errorCount} errors)`,
+          `DeepLoop: ${health.deep.running ? 'running' : 'stopped'}${health.deep.currentTask ? ` [${health.deep.currentTask}]` : ''}`,
+          `Tasks: ${health.taskBoard.active} active, ${health.taskBoard.queued} queued, ${health.taskBoard.doneToday} done today`,
+          `Cycles: ${totalCycles} total, ${successfulCycles} succeeded`,
+        ].join('\n');
+      case 'health':
+        return coordinator.getHealthSummary();
+      case 'activity':
+        return coordinator.getTaskBoard().getSummaryText();
+      default:
+        return `Dual-loop mode: ${enabled ? 'active' : 'inactive'}. Commands: status, health, activity`;
+    }
+  }
+
+  // ── getDailyReport ────────────────────────────────────────────────────
 
   async function getDailyReport(): Promise<string> {
-    // TODO(pass-2): generate from task board history
-    return 'Dual-loop daily report not yet implemented.';
+    const health = coordinator.getHealth();
+    const taskBoard = coordinator.getTaskBoard();
+    return [
+      '--- Dual-Loop Daily Report ---',
+      `Tasks completed today: ${health.taskBoard.doneToday}`,
+      `Active tasks: ${health.taskBoard.active}`,
+      `Cycles processed: ${totalCycles}`,
+      `FastLoop errors: ${health.fast.errorCount}`,
+      `DeepLoop errors: ${health.deep.errorCount}`,
+      '',
+      taskBoard.getSummaryText(),
+    ].join('\n');
   }
+
+  // ── getMorningSummary ──────────────────────────────────────────────────
 
   async function getMorningSummary(): Promise<string> {
-    // TODO(pass-2): generate from task board + handoff
-    return 'Dual-loop morning summary not yet implemented.';
+    const handoff = await getHandoff();
+    const health = coordinator.getHealth();
+
+    const parts: string[] = ['Good morning. Dual-loop summary:'];
+    parts.push(`Tasks completed: ${health.taskBoard.doneToday}`);
+    parts.push(`Active tasks: ${health.taskBoard.active}`);
+
+    if (handoff) {
+      parts.push(`Pending branches: ${handoff.pendingBranches.length}`);
+      if (handoff.nightSummary.cyclesCompleted > 0) {
+        parts.push(`Overnight cycles: ${handoff.nightSummary.cyclesCompleted}`);
+      }
+    }
+
+    return parts.join('\n');
   }
 
+  // ── writeHandoff ──────────────────────────────────────────────────────
+
   async function writeHandoff(): Promise<void> {
-    // TODO(pass-2): persist task board state as handoff
+    const handoff: HandoffState = {
+      timestamp: new Date().toISOString(),
+      pendingBranches: [],
+      lastCycleId: lastCycleAt,
+      nightSummary: {
+        cyclesCompleted: totalCycles,
+        hypothesesAttempted: 0,
+        hypothesesValidated: 0,
+        tokenUsage: { input: 0, output: 0 },
+      },
+    };
+
+    await fs.mkdir(path.dirname(HANDOFF_PATH), { recursive: true });
+    await fs.writeFile(HANDOFF_PATH, JSON.stringify(handoff, null, 2), 'utf-8');
+    safeLogger.info('Dual-loop handoff written');
   }
+
+  // ── getHandoff ─────────────────────────────────────────────────────────
 
   async function getHandoff(): Promise<HandoffState | null> {
     try {

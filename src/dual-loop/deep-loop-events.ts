@@ -63,30 +63,88 @@ export const DEFAULT_EVENT_CONFIG: DeepLoopEventConfig = {
 /**
  * Drain events from the EventBus and create tasks for each.
  * Returns the number of tasks created.
+ *
+ * User message events are skipped — those are handled by the FastLoop
+ * directly. Scheduled events are also skipped (they are handled by the
+ * coordinator's tick cycle).
  */
 export function drainEventsToTasks(
   eventBus: EventBus,
   taskBoard: TaskBoard,
   config: DeepLoopEventConfig = DEFAULT_EVENT_CONFIG,
 ): number {
-  // TODO(pass-2): drain events, convert to tasks
-  return 0;
+  const tracer = getTracer();
+  const events = eventBus.drain();
+
+  if (events.length === 0) return 0;
+
+  let created = 0;
+  const limit = Math.min(events.length, config.maxEventsPerCheck);
+
+  for (let i = 0; i < limit; i++) {
+    const event = events[i]!;
+
+    // Skip events the dual-loop handles elsewhere
+    if (event.type === 'user_message' || event.type === 'scheduled') {
+      continue;
+    }
+
+    const description = describeEvent(event);
+    taskBoard.create({
+      origin: eventToOrigin(event),
+      priority: config.eventTaskPriority,
+      originalMessage: description,
+      triageNotes: `Auto-created from ${event.type} event. ${description}`,
+      classification: 'complex',
+    });
+    created++;
+
+    tracer.log('deep-loop', 'debug', `Event → task: ${event.type}`, {
+      description,
+    });
+  }
+
+  if (created > 0) {
+    tracer.log('deep-loop', 'info', `Created ${created} tasks from ${events.length} events`);
+  }
+
+  return created;
 }
 
 /**
  * Describe a SystemEvent in human-readable form for the task's originalMessage.
  */
 export function describeEvent(event: SystemEvent): string {
-  // TODO(pass-2): format event as task description
-  return `Event: ${event.type}`;
+  switch (event.type) {
+    case 'file_changed':
+      return `${event.paths.length} files ${event.changeKind}: ${event.paths.slice(0, 3).join(', ')}${event.paths.length > 3 ? '...' : ''}`;
+    case 'test_failed':
+      return `Test failure: ${event.testName}`;
+    case 'git_push':
+      return `Push to ${event.branch}: ${event.commits.length} commits`;
+    case 'build_error':
+      return `Build error: ${event.error.slice(0, 200)}`;
+    case 'issue_stale':
+      return `Issue ${event.issueId} stale for ${event.daysSinceActivity} days`;
+    case 'user_message':
+      return `Message from ${event.sender}`;
+    case 'scheduled':
+      return event.reason;
+  }
 }
 
 /**
  * Map a SystemEvent type to a TaskOrigin.
  */
 export function eventToOrigin(event: SystemEvent): TaskOrigin {
-  // TODO(pass-2): map event types
-  return 'event';
+  switch (event.type) {
+    case 'user_message':
+      return 'user';
+    case 'scheduled':
+      return 'scheduled';
+    default:
+      return 'event';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,22 +154,58 @@ export function eventToOrigin(event: SystemEvent): TaskOrigin {
 /**
  * Check the GoalStack for the next available goal and create a task for it.
  * Returns the task ID if a goal was picked up, or null if no goals available.
+ *
+ * Only creates a task if there are no existing queued goal-origin tasks
+ * on the board (prevents piling up goal tasks when DeepLoop is already busy).
  */
 export function checkGoalStack(
-  goalStack: GoalStack,
+  goalStack: GoalStack | null,
   taskBoard: TaskBoard,
   config: DeepLoopEventConfig = DEFAULT_EVENT_CONFIG,
 ): string | null {
-  // TODO(pass-2): get next goal, create task
-  return null;
+  if (!goalStack) return null;
+  const tracer = getTracer();
+
+  // Don't pile up goal tasks if one is already queued
+  const active = taskBoard.getActive();
+  const hasGoalTask = active.some((t) => t.origin === 'goal');
+  if (hasGoalTask) return null;
+
+  const goal = goalStack.getNextGoal();
+  if (!goal) return null;
+
+  const description = goalToTaskDescription(goal);
+  const taskId = taskBoard.create({
+    origin: 'goal',
+    priority: config.goalTaskPriority,
+    originalMessage: description,
+    triageNotes: `Goal ${goal.id}: ${goal.description}. Attempts: ${goal.attempts}. Notes: ${goal.notes}`,
+    classification: 'complex',
+  });
+
+  // Mark the goal as in-progress in the stack
+  goalStack.recordAttempt(goal.id, 'Picked up by dual-loop DeepLoop');
+
+  tracer.log('deep-loop', 'info', `Goal → task: ${goal.id}`, {
+    goalDescription: goal.description,
+    taskId,
+  });
+
+  return taskId;
 }
 
 /**
- * Convert a Goal to task creation options.
+ * Convert a Goal to a human-readable task description.
  */
 export function goalToTaskDescription(goal: Goal): string {
-  // TODO(pass-2): format goal as task description
-  return `Goal: ${goal.description}`;
+  const parts = [`Goal: ${goal.description}`];
+  if (goal.relatedFiles.length > 0) {
+    parts.push(`Related files: ${goal.relatedFiles.join(', ')}`);
+  }
+  if (goal.tags.length > 0) {
+    parts.push(`Tags: ${goal.tags.join(', ')}`);
+  }
+  return parts.join('\n');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,19 +213,37 @@ export function goalToTaskDescription(goal: Goal): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Run the full idle check: drain events, then check goals.
+ * Run the full idle check: drain events first, then check goals.
+ * Events take priority over goals because they represent external
+ * changes that may need immediate attention.
+ *
  * Called by DeepLoop when there are no queued or revision tasks.
  */
 export function runIdleCheck(
   eventBus: EventBus,
-  goalStack: GoalStack,
+  goalStack: GoalStack | null,
   taskBoard: TaskBoard,
-  config: DeepLoopEventConfig = DEFAULT_EVENT_CONFIG,
+  config?: DeepLoopEventConfig,
 ): IdleCheckResult {
-  // TODO(pass-2): implement full idle check
+  const effectiveConfig = config ?? DEFAULT_EVENT_CONFIG;
+  // 1. Drain events — these represent external changes
+  const eventsCreated = drainEventsToTasks(eventBus, taskBoard, effectiveConfig);
+
+  // 2. If events generated tasks, don't also start a goal (let events process first)
+  if (eventsCreated > 0) {
+    return {
+      tasksCreated: eventsCreated,
+      eventsProcessed: eventsCreated,
+      goalStarted: false,
+    };
+  }
+
+  // 3. No events — check the goal stack
+  const goalTaskId = checkGoalStack(goalStack, taskBoard, effectiveConfig);
+
   return {
-    tasksCreated: 0,
+    tasksCreated: goalTaskId ? 1 : 0,
     eventsProcessed: 0,
-    goalStarted: false,
+    goalStarted: goalTaskId !== null,
   };
 }
