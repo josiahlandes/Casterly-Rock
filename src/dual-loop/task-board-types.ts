@@ -179,7 +179,7 @@ export interface UpdateTaskFields {
  * Configuration for the TaskBoard.
  */
 export interface TaskBoardConfig {
-  /** Path to the SQLite database file */
+  /** Path to the JSON persistence file */
   dbPath: string;
   /** Days after which completed tasks are archived */
   archiveAfterDays: number;

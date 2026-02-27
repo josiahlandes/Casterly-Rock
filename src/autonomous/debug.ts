@@ -46,7 +46,11 @@ export type DebugSubsystem =
   | 'state-diff'
   | 'trigger'
   | 'session'
-  | 'embedding';
+  | 'embedding'
+  | 'task-board'
+  | 'fast-loop'
+  | 'deep-loop'
+  | 'coordinator';
 
 export type DebugLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 

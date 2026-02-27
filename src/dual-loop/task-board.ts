@@ -1,17 +1,24 @@
 /**
- * Task Board — SQLite-backed shared state between FastLoop and DeepLoop.
+ * Task Board — In-memory shared state between FastLoop and DeepLoop.
  *
  * The TaskBoard is the sole communication channel between the two loops.
- * Both loops read and write tasks through atomic SQLite operations.
- * WAL mode enables concurrent reads/writes without blocking.
+ * Both loops read and write tasks through synchronous in-memory operations.
+ * State is persisted to a JSON file via load()/save().
  *
- * Ownership protocol:
- *   - Tasks are claimed via atomic UPDATE ... WHERE owner IS NULL.
- *   - Only one loop can own a task at a time.
- *   - No locks, no mutexes — just SQL atomicity.
+ * Since both loops run as async coroutines in the same Node.js process,
+ * the event loop serializes all JS execution — no locks or mutexes needed.
+ * Ownership claims are safe because no two synchronous code paths can
+ * interleave within a single claim operation.
+ *
+ * Persistence pattern matches GoalStack/IssueLog: dirty-flag + explicit save().
  *
  * See docs/dual-loop-architecture.md Section 4.
  */
+
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { getTracer } from '../autonomous/debug.js';
 
 import type {
   Task,
@@ -20,17 +27,45 @@ import type {
   CreateTaskOptions,
   UpdateTaskFields,
   TaskBoardConfig,
+  PlanStep,
+  TaskArtifact,
+  ParkedState,
 } from './task-board-types.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Persisted Data Shape
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface TaskBoardData {
+  version: number;
+  tasks: Task[];
+}
+
+function createEmptyData(): TaskBoardData {
+  return { version: 1, tasks: [] };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Default Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: TaskBoardConfig = {
-  dbPath: '~/.casterly/taskboard.db',
+  dbPath: '~/.casterly/taskboard.json',
   archiveAfterDays: 7,
   maxActiveTasks: 10,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Path Resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+function resolvePath(filePath: string): string {
+  if (filePath.startsWith('~')) {
+    const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '/tmp';
+    return filePath.replace('~', home);
+  }
+  return filePath;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TaskBoard
@@ -38,118 +73,391 @@ const DEFAULT_CONFIG: TaskBoardConfig = {
 
 export class TaskBoard {
   private readonly config: TaskBoardConfig;
-  // TODO(pass-2): private db: BetterSqlite3.Database
+  private data: TaskBoardData;
+  private dirty: boolean = false;
+  /** Set of task IDs whose userFacing response has been delivered */
+  private readonly delivered: Set<string> = new Set();
 
   constructor(config?: Partial<TaskBoardConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.data = createEmptyData();
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
 
-  /** Initialize the database (create tables, enable WAL mode) */
+  /** Initialize the board (no-op for in-memory; call load() to hydrate from disk) */
   init(): void {
-    // TODO(pass-2): Create tables, indexes, WAL mode
+    // No-op — load() handles hydration.
   }
 
-  /** Close the database connection */
+  /** Close the board (no-op for in-memory; call save() to persist first) */
   close(): void {
-    // TODO(pass-2): Close db
+    // No-op.
+  }
+
+  // ── Persistence ─────────────────────────────────────────────────────────
+
+  /**
+   * Load tasks from disk. If the file doesn't exist, starts empty.
+   */
+  async load(): Promise<void> {
+    const tracer = getTracer();
+    await tracer.withSpan('task-board', 'load', async (span) => {
+      const resolvedPath = resolvePath(this.config.dbPath);
+      tracer.log('task-board', 'debug', `Loading task board from ${resolvedPath}`);
+
+      const startMs = Date.now();
+      try {
+        const raw = await readFile(resolvedPath, 'utf8');
+        const parsed = JSON.parse(raw) as unknown;
+
+        if (parsed && typeof parsed === 'object' && 'version' in parsed) {
+          this.data = parsed as TaskBoardData;
+          this.dirty = false;
+
+          tracer.logIO('task-board', 'read', resolvedPath, Date.now() - startMs, {
+            success: true,
+            bytesOrLines: raw.length,
+          });
+          tracer.log('task-board', 'info', 'Task board loaded', {
+            totalTasks: this.data.tasks.length,
+            active: this.getActive().length,
+          });
+        } else {
+          tracer.log('task-board', 'warn', 'Task board file has unexpected structure, starting fresh');
+          this.data = createEmptyData();
+          this.dirty = true;
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          tracer.log('task-board', 'info', 'No existing task board found, initializing fresh');
+          this.data = createEmptyData();
+          this.dirty = true;
+        } else {
+          tracer.log('task-board', 'error', 'Failed to load task board', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          this.data = createEmptyData();
+          this.dirty = true;
+          span.status = 'failure';
+          span.error = err instanceof Error ? err.message : String(err);
+        }
+      }
+    });
+  }
+
+  /**
+   * Save tasks to disk. Only writes if changes have been made.
+   */
+  async save(): Promise<void> {
+    const tracer = getTracer();
+    await tracer.withSpan('task-board', 'save', async () => {
+      if (!this.dirty) {
+        tracer.log('task-board', 'debug', 'Task board unchanged, skipping save');
+        return;
+      }
+
+      const resolvedPath = resolvePath(this.config.dbPath);
+      const dir = dirname(resolvedPath);
+
+      await mkdir(dir, { recursive: true });
+
+      const content = JSON.stringify(this.data, null, 2);
+      const startMs = Date.now();
+
+      await writeFile(resolvedPath, content, 'utf8');
+      this.dirty = false;
+
+      tracer.logIO('task-board', 'write', resolvedPath, Date.now() - startMs, {
+        success: true,
+        bytesOrLines: content.length,
+      });
+      tracer.log('task-board', 'info', 'Task board saved', {
+        totalTasks: this.data.tasks.length,
+      });
+    });
+  }
+
+  /** Whether unsaved changes exist */
+  isDirty(): boolean {
+    return this.dirty;
   }
 
   // ── CRUD ────────────────────────────────────────────────────────────────
 
   /** Create a new task and return its ID */
   create(options: CreateTaskOptions): string {
-    void options;
-    // TODO(pass-2): INSERT into tasks table
-    return '';
+    const tracer = getTracer();
+    const now = new Date().toISOString();
+    const id = `task-${randomUUID().slice(0, 8)}`;
+
+    const task: Task = {
+      id,
+      createdAt: now,
+      updatedAt: now,
+      status: options.status ?? 'queued',
+      owner: null,
+      origin: options.origin,
+      priority: options.priority,
+      sender: options.sender,
+      originalMessage: options.originalMessage,
+      classification: options.classification,
+      triageNotes: options.triageNotes,
+      userFacing: options.userFacing,
+    };
+
+    this.data.tasks.push(task);
+    this.dirty = true;
+
+    tracer.log('task-board', 'info', `Task created: ${id}`, {
+      origin: options.origin,
+      priority: options.priority,
+      status: task.status,
+    });
+
+    return id;
   }
 
   /** Get a task by ID */
   get(id: string): Task | null {
-    void id;
-    // TODO(pass-2): SELECT by id
-    return null;
+    return this.data.tasks.find((t) => t.id === id) ?? null;
   }
 
   /** Update fields on a task */
   update(id: string, fields: UpdateTaskFields): boolean {
-    void id; void fields;
-    // TODO(pass-2): UPDATE with field merge
-    return false;
+    const tracer = getTracer();
+    const task = this.data.tasks.find((t) => t.id === id);
+
+    if (!task) {
+      tracer.log('task-board', 'warn', `Task not found for update: ${id}`);
+      return false;
+    }
+
+    // Merge defined fields onto the task
+    if (fields.status !== undefined) task.status = fields.status;
+    if (fields.owner !== undefined) task.owner = fields.owner;
+    if (fields.classification !== undefined) task.classification = fields.classification;
+    if (fields.triageNotes !== undefined) task.triageNotes = fields.triageNotes;
+    if (fields.plan !== undefined) task.plan = fields.plan;
+    if (fields.planSteps !== undefined) task.planSteps = fields.planSteps;
+    if (fields.artifacts !== undefined) task.artifacts = fields.artifacts;
+    if (fields.implementationNotes !== undefined) task.implementationNotes = fields.implementationNotes;
+    if (fields.reviewResult !== undefined) task.reviewResult = fields.reviewResult;
+    if (fields.reviewNotes !== undefined) task.reviewNotes = fields.reviewNotes;
+    if (fields.reviewFeedback !== undefined) task.reviewFeedback = fields.reviewFeedback;
+    if (fields.parkedState !== undefined) task.parkedState = fields.parkedState;
+    if (fields.resolvedAt !== undefined) task.resolvedAt = fields.resolvedAt;
+    if (fields.resolution !== undefined) task.resolution = fields.resolution;
+    if (fields.userFacing !== undefined) task.userFacing = fields.userFacing;
+    if (fields.priority !== undefined) task.priority = fields.priority;
+
+    task.updatedAt = new Date().toISOString();
+    this.dirty = true;
+
+    tracer.log('task-board', 'debug', `Task updated: ${id}`, {
+      fields: Object.keys(fields),
+    });
+
+    return true;
   }
 
   // ── Ownership Protocol ──────────────────────────────────────────────────
 
   /**
-   * Atomically claim the next available task matching the given statuses.
+   * Claim the next available task matching the given statuses.
    * Returns the claimed task, or null if nothing is available.
    *
-   * Uses: UPDATE SET owner=? WHERE owner IS NULL AND status IN (?) ORDER BY priority, createdAt
+   * Since JS is single-threaded, this is inherently atomic —
+   * no two callers can interleave within this synchronous method.
    */
   claimNext(owner: NonNullable<TaskOwner>, statuses: TaskStatus[]): Task | null {
-    void owner; void statuses;
-    // TODO(pass-2): Atomic claim
-    return null;
+    const tracer = getTracer();
+    const statusSet = new Set(statuses);
+
+    // Find the highest-priority unclaimed task matching the requested statuses
+    const candidates = this.data.tasks
+      .filter((t) => t.owner === null && statusSet.has(t.status))
+      .sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        return a.createdAt.localeCompare(b.createdAt);
+      });
+
+    const task = candidates[0];
+    if (!task) return null;
+
+    task.owner = owner;
+    task.updatedAt = new Date().toISOString();
+    this.dirty = true;
+
+    tracer.log('task-board', 'info', `Task claimed: ${task.id} by ${owner}`, {
+      status: task.status,
+      priority: task.priority,
+    });
+
+    return task;
   }
 
   /**
    * Release ownership of a task (set owner to null).
    */
   release(id: string): boolean {
-    void id;
-    // TODO(pass-2): UPDATE SET owner=NULL
-    return false;
+    const tracer = getTracer();
+    const task = this.data.tasks.find((t) => t.id === id);
+
+    if (!task) {
+      tracer.log('task-board', 'warn', `Task not found for release: ${id}`);
+      return false;
+    }
+
+    const oldOwner = task.owner;
+    task.owner = null;
+    task.updatedAt = new Date().toISOString();
+    this.dirty = true;
+
+    tracer.log('task-board', 'debug', `Task released: ${id} (was ${oldOwner})`);
+    return true;
   }
 
   // ── Queries ─────────────────────────────────────────────────────────────
 
-  /** Get the next task in 'reviewing' status (for FastLoop) */
+  /** Get the next task in 'reviewing' status (unclaimed, for FastLoop) */
   getNextReviewable(): Task | null {
-    // TODO(pass-2): SELECT WHERE status='reviewing' AND owner IS NULL ORDER BY priority, createdAt
-    return null;
+    return this.data.tasks
+      .filter((t) => t.status === 'reviewing' && t.owner === null)
+      .sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        return a.createdAt.localeCompare(b.createdAt);
+      })[0] ?? null;
   }
 
-  /** Get completed tasks with a userFacing response ready for delivery */
+  /** Get the next completed task with a userFacing response ready for delivery */
   getCompletedWithResponse(): Task | null {
-    // TODO(pass-2): SELECT WHERE status='done' AND userFacing IS NOT NULL AND delivered IS NULL
-    return null;
+    return this.data.tasks.find(
+      (t) => t.status === 'done' && t.userFacing && !this.delivered.has(t.id),
+    ) ?? null;
   }
 
-  /** Get a task with higher priority than the given threshold (for preemption checks) */
+  /** Mark a task's response as delivered */
+  markDelivered(id: string): void {
+    this.delivered.add(id);
+  }
+
+  /** Get a queued, unclaimed task with higher priority (lower number) than the threshold */
   getHigherPriorityTask(currentPriority: number): Task | null {
-    void currentPriority;
-    // TODO(pass-2): SELECT WHERE priority < ? AND status='queued' AND owner IS NULL
-    return null;
+    return this.data.tasks
+      .filter((t) => t.priority < currentPriority && t.status === 'queued' && t.owner === null)
+      .sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        return a.createdAt.localeCompare(b.createdAt);
+      })[0] ?? null;
   }
 
-  /** Get all active (non-archived) tasks */
+  /** Get all active (non-done, non-failed) tasks */
   getActive(): Task[] {
-    // TODO(pass-2): SELECT WHERE status NOT IN ('done', 'failed') OR updatedAt > archive threshold
-    return [];
+    return this.data.tasks.filter(
+      (t) => t.status !== 'done' && t.status !== 'failed' && t.status !== 'answered_directly',
+    );
   }
 
-  /** Get count of active tasks by status */
-  getStatusCounts(): Record<TaskStatus, number> {
-    // TODO(pass-2): SELECT status, COUNT(*) GROUP BY status
-    return {} as Record<TaskStatus, number>;
+  /** Get count of tasks by status */
+  getStatusCounts(): Partial<Record<TaskStatus, number>> {
+    const counts: Partial<Record<TaskStatus, number>> = {};
+    for (const task of this.data.tasks) {
+      counts[task.status] = (counts[task.status] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /** Get count of tasks completed today */
+  getCompletedToday(): number {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStr = todayStart.toISOString();
+
+    return this.data.tasks.filter(
+      (t) => (t.status === 'done' || t.status === 'answered_directly') && t.updatedAt >= todayStr,
+    ).length;
+  }
+
+  /** Build a compact text summary of the board for triage context */
+  getSummaryText(): string {
+    const active = this.getActive();
+    if (active.length === 0) return '(no active tasks)';
+
+    const lines: string[] = [];
+    for (const task of active.slice(0, 5)) {
+      const ownerTag = task.owner ? ` [${task.owner}]` : '';
+      lines.push(`- [${task.id}] P${task.priority} ${task.status}${ownerTag}: ${task.originalMessage?.slice(0, 60) ?? '(no message)'}`);
+    }
+    if (active.length > 5) {
+      lines.push(`  ... and ${active.length - 5} more`);
+    }
+    return lines.join('\n');
   }
 
   // ── Parking (Preemption) ────────────────────────────────────────────────
 
-  /** Park a task (preserve state for later resumption) */
-  parkTask(id: string, parkedState: { parkedAtTurn: number; reason: string; contextSnapshot?: string }): boolean {
-    void id; void parkedState;
-    // TODO(pass-2): UPDATE SET status='queued', parkedState=?, owner=NULL
-    return false;
+  /** Park a task: preserve state, re-queue it, release ownership */
+  parkTask(id: string, parkedState: ParkedState): boolean {
+    const tracer = getTracer();
+    const task = this.data.tasks.find((t) => t.id === id);
+
+    if (!task) {
+      tracer.log('task-board', 'warn', `Task not found for parking: ${id}`);
+      return false;
+    }
+
+    task.parkedState = parkedState;
+    task.status = 'queued';
+    task.owner = null;
+    task.updatedAt = new Date().toISOString();
+    this.dirty = true;
+
+    tracer.log('task-board', 'info', `Task parked: ${id}`, {
+      reason: parkedState.reason,
+      atTurn: parkedState.parkedAtTurn,
+    });
+
+    return true;
   }
 
   // ── Maintenance ─────────────────────────────────────────────────────────
 
-  /** Archive old completed/failed tasks */
+  /** Remove old completed/failed tasks beyond archiveAfterDays */
   archiveOld(): number {
-    // TODO(pass-2): Move tasks older than archiveAfterDays to archive table
-    return 0;
+    const tracer = getTracer();
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - this.config.archiveAfterDays);
+    const cutoffStr = cutoff.toISOString();
+
+    const before = this.data.tasks.length;
+    this.data.tasks = this.data.tasks.filter((t) => {
+      // Keep active tasks unconditionally
+      if (t.status !== 'done' && t.status !== 'failed' && t.status !== 'answered_directly') {
+        return true;
+      }
+      // Keep recent completed tasks
+      return t.updatedAt >= cutoffStr;
+    });
+
+    const removed = before - this.data.tasks.length;
+    if (removed > 0) {
+      this.dirty = true;
+      tracer.log('task-board', 'info', `Archived ${removed} old tasks`);
+    }
+    return removed;
+  }
+
+  // ── Testing / Debug ─────────────────────────────────────────────────────
+
+  /** Get the raw data (for testing and debugging) */
+  getData(): TaskBoardData {
+    return structuredClone(this.data);
+  }
+
+  /** Get all tasks (for testing and debugging) */
+  getAllTasks(): Task[] {
+    return [...this.data.tasks];
   }
 }
 
