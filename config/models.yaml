@@ -35,7 +35,7 @@ models:
   # Fast model: triage, review, acknowledgment (dual-loop FastLoop)
   fast:
     provider: ollama
-    model: qwen3:27b
+    model: qwen3.5:27b
     context_length: 24576   # Extended tier max
     temperature: 0.1  # Low for triage accuracy
     keep_alive: -1    # Never unload — always-hot for <2s responses
@@ -81,4 +81,4 @@ hardware:
 ollama:
   base_url: http://localhost:11434
   timeout_ms: 300000  # 5 minutes for long generations
-  keep_alive: 5m      # Keep model loaded
+  keep_alive: -1       # Never unload — all three models stay hot

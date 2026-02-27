@@ -139,7 +139,7 @@ dual_loop:
   # When enabled, the dual-loop coordinator replaces the single agent loop
   # as the primary execution path for user messages. The agent loop is still
   # used internally by the DeepLoop for ReAct execution.
-  enabled: false   # Set to true to activate dual-loop mode
+  enabled: true    # Dual-loop mode active
 
   # FastLoop settings (27B model — triage, review, delivery)
   fast:
