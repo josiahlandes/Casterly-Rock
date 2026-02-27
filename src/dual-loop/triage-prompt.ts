@@ -58,7 +58,6 @@ export function buildTriagePrompt(params: {
   sender: string;
   taskBoardSummary: string;
 }): string {
-  // TODO(pass-3): Include task board summary context, sender info
   return `[From: ${params.sender}]\n${params.message}\n\n---\nActive tasks:\n${params.taskBoardSummary}`;
 }
 
@@ -66,7 +65,6 @@ export function buildTriagePrompt(params: {
  * Parse the triage response from the LLM. Falls back to 'complex' on parse failure.
  */
 export function parseTriageResponse(text: string): TriageResult {
-  // TODO(pass-3): Robust JSON parsing with fallback
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>;
     return {

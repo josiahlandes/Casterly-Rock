@@ -110,6 +110,36 @@ describe('TaskBoard', () => {
       expect(after >= before).toBe(true);
       expect(board.get(id)!.status).toBe('planning');
     });
+
+    it('clears fields when explicitly set to undefined', () => {
+      const board = makeBoard();
+      const id = board.create(makeTask());
+
+      // Set review fields
+      board.update(id, {
+        reviewResult: 'changes_requested',
+        reviewNotes: 'Fix the SQL injection',
+        reviewFeedback: 'Line 47 is unsafe',
+      });
+
+      const before = board.get(id)!;
+      expect(before.reviewResult).toBe('changes_requested');
+      expect(before.reviewNotes).toBe('Fix the SQL injection');
+
+      // Clear review fields by passing undefined (revision cycle)
+      board.update(id, {
+        status: 'reviewing',
+        reviewResult: undefined,
+        reviewNotes: undefined,
+        reviewFeedback: undefined,
+      });
+
+      const after = board.get(id)!;
+      expect(after.status).toBe('reviewing');
+      expect(after.reviewResult).toBeUndefined();
+      expect(after.reviewNotes).toBeUndefined();
+      expect(after.reviewFeedback).toBeUndefined();
+    });
   });
 
   describe('ownership protocol', () => {

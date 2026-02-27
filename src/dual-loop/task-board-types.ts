@@ -44,7 +44,7 @@ export type TaskOwner = 'fast' | 'deep' | null;
 /**
  * Classification assigned by the FastLoop during triage.
  */
-export type TaskClassification = 'simple' | 'complex' | 'conversational' | 'notification';
+export type TaskClassification = 'simple' | 'complex' | 'conversational';
 
 /**
  * Review outcome written by the FastLoop.
@@ -147,9 +147,9 @@ export interface CreateTaskOptions {
   originalMessage?: string | undefined;
   classification?: TaskClassification | undefined;
   triageNotes?: string | undefined;
-  /** Pre-set userFacing for notification tasks that skip the DeepLoop */
+  /** Pre-set userFacing for tasks answered directly by FastLoop */
   userFacing?: string | undefined;
-  /** Pre-set status (e.g., 'done' for notification tasks) */
+  /** Pre-set status (e.g., 'answered_directly' for simple/conversational) */
   status?: TaskStatus | undefined;
 }
 

@@ -240,9 +240,9 @@ export function buildFastToolSchemas(): ToolSchema[] {
 
 /**
  * Build the full fast toolkit (schemas + executors).
+ * Context is passed per-call via executeFastTool, not captured at build time.
  */
-export function buildFastToolkit(context: FastToolContext): FastTool[] {
-  void context; // context is captured per-call, not at build time
+export function buildFastToolkit(): FastTool[] {
   return [
     { schema: TASK_BOARD_SUMMARY_SCHEMA, execute: executeTaskBoardSummary },
     { schema: CREATE_TASK_SCHEMA, execute: executeCreateTask },

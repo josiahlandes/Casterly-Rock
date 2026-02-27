@@ -233,23 +233,25 @@ export class TaskBoard {
       return false;
     }
 
-    // Merge defined fields onto the task
-    if (fields.status !== undefined) task.status = fields.status;
-    if (fields.owner !== undefined) task.owner = fields.owner;
-    if (fields.classification !== undefined) task.classification = fields.classification;
-    if (fields.triageNotes !== undefined) task.triageNotes = fields.triageNotes;
-    if (fields.plan !== undefined) task.plan = fields.plan;
-    if (fields.planSteps !== undefined) task.planSteps = fields.planSteps;
-    if (fields.artifacts !== undefined) task.artifacts = fields.artifacts;
-    if (fields.implementationNotes !== undefined) task.implementationNotes = fields.implementationNotes;
-    if (fields.reviewResult !== undefined) task.reviewResult = fields.reviewResult;
-    if (fields.reviewNotes !== undefined) task.reviewNotes = fields.reviewNotes;
-    if (fields.reviewFeedback !== undefined) task.reviewFeedback = fields.reviewFeedback;
-    if (fields.parkedState !== undefined) task.parkedState = fields.parkedState;
-    if (fields.resolvedAt !== undefined) task.resolvedAt = fields.resolvedAt;
-    if (fields.resolution !== undefined) task.resolution = fields.resolution;
-    if (fields.userFacing !== undefined) task.userFacing = fields.userFacing;
-    if (fields.priority !== undefined) task.priority = fields.priority;
+    // Merge provided fields onto the task.
+    // Uses 'in' instead of '!== undefined' so that explicitly passing
+    // undefined clears the field (e.g., clearing reviewResult on revision).
+    if ('status' in fields) task.status = fields.status!;
+    if ('owner' in fields) task.owner = fields.owner!;
+    if ('classification' in fields) task.classification = fields.classification;
+    if ('triageNotes' in fields) task.triageNotes = fields.triageNotes;
+    if ('plan' in fields) task.plan = fields.plan;
+    if ('planSteps' in fields) task.planSteps = fields.planSteps;
+    if ('artifacts' in fields) task.artifacts = fields.artifacts;
+    if ('implementationNotes' in fields) task.implementationNotes = fields.implementationNotes;
+    if ('reviewResult' in fields) task.reviewResult = fields.reviewResult;
+    if ('reviewNotes' in fields) task.reviewNotes = fields.reviewNotes;
+    if ('reviewFeedback' in fields) task.reviewFeedback = fields.reviewFeedback;
+    if ('parkedState' in fields) task.parkedState = fields.parkedState;
+    if ('resolvedAt' in fields) task.resolvedAt = fields.resolvedAt;
+    if ('resolution' in fields) task.resolution = fields.resolution;
+    if ('userFacing' in fields) task.userFacing = fields.userFacing;
+    if ('priority' in fields) task.priority = fields.priority!;
 
     task.updatedAt = new Date().toISOString();
     this.dirty = true;

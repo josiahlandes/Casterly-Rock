@@ -56,7 +56,7 @@ describe('Fast Tools', () => {
 
   describe('buildFastToolkit', () => {
     it('returns 6 tools with schemas and executors', () => {
-      const tools = buildFastToolkit(makeContext());
+      const tools = buildFastToolkit();
       expect(tools).toHaveLength(6);
       for (const tool of tools) {
         expect(tool.schema).toBeDefined();
@@ -71,7 +71,7 @@ describe('Fast Tools', () => {
 
     beforeEach(() => {
       ctx = makeContext();
-      tools = buildFastToolkit(ctx);
+      tools = buildFastToolkit();
     });
 
     it('task_board_summary returns empty board summary', async () => {

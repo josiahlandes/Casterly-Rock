@@ -91,7 +91,6 @@ export function countDiffLines(artifacts: TaskArtifact[]): number {
  * Parse the review response from the LLM. Falls back to 'approved' on parse failure.
  */
 export function parseReviewResponse(text: string): ReviewOutcome {
-  // TODO(pass-3): Robust JSON parsing with fallback
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>;
     return {
