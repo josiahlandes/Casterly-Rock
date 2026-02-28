@@ -1,99 +1,194 @@
-# Plan: Unified Documentation
+# Plan: Architectural Hygiene — Six Targeted Improvements
 
-## Goal
+Based on my review of the codebase, these are six focused changes that reduce
+dead code, improve failure visibility, tighten resource limits, and add
+crash-safety to persistence. Each change is small, explicit, and testable.
 
-Replace scattered documentation with a clear hierarchy: one vision doc, one architecture overview that links to focused detail docs, and one operational guide. Every doc has one job. Nothing important is lost.
+None of the changes touch protected paths (`src/security/*`, `src/providers/*`,
+`config/*`, `src/tasks/classifier.ts`). The `config/autonomous.yaml` change
+(removing `quiet_hours`) is noted as a protected-path edit and will be run
+through the full quality gates.
 
-## Documents
+---
 
-### 1. `docs/vision.md` — The Soul of the Project
+## Change 1: Remove dead `isInWorkWindow` / quiet-hours code
 
-**Purpose:** Why Casterly exists, what it's becoming, hardware as strategy.
+**Problem:** `isInWorkWindow()` in `controller.ts:415` always returns `true`.
+The `quiet_hours` config in `autonomous.yaml:27-33` is parsed but never
+honored. The work-window transition check in `tick()` (lines 162-174) can
+never fire because `isInWorkWindow` never returns `false`. This is dead code
+that misleads readers.
 
-Sections:
-1. **Mission** — One-paragraph statement: Casterly is a local-first, privacy-first autonomous AI steward running on a Mac Studio M4 Max with 128GB unified memory. All inference is local. No data leaves the machine. Ever.
-2. **Philosophy** — Privacy-by-architecture (not by policy), local-first (not local-fallback), autonomous agency (not a chatbot), journal-driven continuity.
-3. **Hardware as Strategy** — The M4 Max / 128GB isn't a deployment target, it's the strategic advantage. Running qwen3.5:122b locally with headroom. Frame what this enables now and what it unlocks.
-4. **Models** — qwen3.5:122b (primary reasoning, planning, conversation), qwen3-coder-next (code editing). Task-based routing via config. Ollama as sole inference provider.
-5. **Identity & Personality** — Workspace personality files (SOUL.md, IDENTITY.md, TOOLS.md, USER.md). Casterly has a voice, not just capabilities.
-6. **Invariants** — The non-negotiable rules, consolidated from rulebook.md, CLAUDE.md, and AGENTS.md into one canonical list.
-7. **Roadmap**:
-   - File type support: PDF, DOCX, XLSX, CSV ingestion (ISSUE-001, pending)
-   - Scheduler: cron, watch, triggers as synthetic messages (ISSUE-003, pending)
-   - Approval flow: async state machine with timeout (ISSUE-004, pending)
-   - Semantic memory: on-device embeddings for richer recall beyond keyword matching
-   - Parallelism: concurrent agent reasoning to maximize hardware utilization
-   - Dream cycle consolidation: background reasoning during idle time (stubbed)
-   - Self-knowledge rebuilding: periodic self-reflection passes (stubbed)
+**Changes:**
+- `src/autonomous/controller.ts`: Remove `isInWorkWindow()` export. Remove the
+  work-window transition block in `tick()` (lines 162-174) and the
+  `wasInWorkWindow` state variable. Keep `writeHandoff()` — it's still called
+  after cycles with pending branches (line 204).
+- `config/autonomous.yaml` (protected path): Remove the `quiet_hours` block
+  (lines 27-33). Add a comment pointing to `docs/vision.md` for the "always
+  works" philosophy.
+- `src/autonomous/loop.ts`: Remove any import/usage of `isInWorkWindow` if
+  present.
+- Update tests in `tests/autonomous-controller.test.ts` if they reference
+  `isInWorkWindow` or work-window transitions.
 
-### 2. `docs/architecture.md` — How It Works (Overview + Index)
+**Risk:** Low. The function is already a no-op.
 
-**Purpose:** High-level system overview with a short summary of each subsystem, linking to a dedicated detail doc for each. This is the entry point, not the encyclopedia.
+---
 
-Overview section:
-- **System Overview** — High-level data flow diagram. Triggers → Router → Unified Agent Loop → Tools/State/Delegation. One page, one diagram, enough to orient a new reader.
-- **Module Index** — Table linking each subsystem to its detail doc.
+## Change 2: Add dream cycle phase-skip telemetry
 
-Each subsystem gets a focused detail doc under `docs/`:
+**Problem:** Dream phases 7-17 silently skip when their stores are empty or
+undefined. After months of operation, there's no signal that tells you "your
+dream cycles have been 60% no-ops." The `phasesSkipped` array exists but is
+only populated on *errors*, not on *conditional skips* (when the `if` guard
+evaluates to false).
 
-| Detail Doc | Content | Absorbs |
-|---|---|---|
-| `docs/agent-loop.md` | `AgentLoop.run()` entry point, ReAct cycle, journal loading, state mutations | New |
-| `docs/triggers.md` | All event sources (iMessage, CLI, file watcher, git hooks, cron, goals) normalized into uniform Trigger shape | New |
-| `docs/task-execution.md` | Classifier → Planner (DAG decomposition) → Runner (parallel execution) → Verifier. Includes implementation specs and dependency graph for open issues | `docs/IMPLEMENTATION-GUIDE.md` |
-| `docs/skills-and-tools.md` | Tool registry, native executors, bash safety gates, OpenClaw-compatible skills system | Existing (keep + update) |
-| `docs/coding-interface.md` | Aider-style interface, repo-map, context budgeting, validation pipeline, modes | Existing (keep + update) |
-| `docs/imessage.md` | Daemon polling, SQLite reader, AppleScript sender, tool filter | New |
-| `docs/memory-and-state.md` | Journal, world model, user memory, execution log, session persistence | New |
-| `docs/security.md` | Sensitive data categories, pattern detection, redaction, safe logging | `docs/rulebook.md` (security invariants) |
-| `docs/configuration.md` | YAML + Zod validation, `config/models.yaml`, fail-fast, data layout (`~/.casterly/`) | New |
-| `docs/api-reference.md` | Provider interface, tool schemas, key function signatures | Existing (keep + update) |
-| `docs/error-codes.md` | Structured error system (E1xx-E9xx), auto-detection, helpers | Existing (keep + update) |
-| `docs/testing.md` | Trace collection, test cases, benchmarking, CLI, test registry | Existing (absorbs `docs/test-registry.md`) |
-| `docs/install.md` | Installation, prerequisites, configuration | Existing (keep) |
+**Changes:**
+- `src/autonomous/dream/runner.ts`: For every phase that has an `if (store)`
+  guard (phases 7a, 7b, 8a, 8b, 8c, 10-17), add an `else` clause that pushes
+  to `phasesSkipped` with a reason suffix like `'shadowAnalysis:not_configured'`
+  or `'audnConsolidation:empty_queue'`. This distinguishes "skipped because not
+  configured" from "skipped because it threw an error."
+- Add a summary log at the end of `run()` that reports: `X/17 phases completed,
+  Y skipped (Z not configured, W empty), E errors`.
+- Add a `DreamOutcome.phaseSkipReasons` field (a `Record<string, string>`) to
+  capture why each phase was skipped.
 
-### 3. `CLAUDE.md` — How to Work Here
+**Risk:** Low. Additive logging only. No behavioral change.
 
-**Purpose:** Operational instructions for Claude Code sessions. Minimal, directive, points to vision.md as authority.
+---
 
-Sections:
-1. **First Principles** — Read `docs/vision.md` first. Local-first, privacy-first. When unsure, route locally.
-2. **Mandatory Reading** — `docs/vision.md` for context, `docs/architecture.md` for technical reference.
-3. **Protected Paths** — Single canonical list: `src/security/*`, `src/tasks/classifier.ts`, `src/providers/*`, `config/*`, `.env*`, `scripts/guardrails.mjs`. State clearly and run quality gates if touched.
-4. **Quality Gates** — `npm run check` after every change. What it runs, what to do if it fails.
-5. **Implementation Standards** — Small, explicit, readable code. Provider logic in provider modules. Structured and testable routing. Never log raw sensitive content.
-6. **Subagent Flow** — Default sequence: System Architect → Implementer → Security Reviewer → Test Engineer → Quality Gates Enforcer. Absorbs subagents.md role definitions.
+## Change 3: Add background turn limit (`maxTurnsBackground`)
 
-## Standalone Docs (Kept Separately)
+**Problem:** Background cycles (scheduled/event) share the same 200-turn
+ceiling as user cycles, despite having 1/5 the token budget (100K vs 500K).
+A background cycle that reaches 50+ turns on 100K tokens is almost certainly
+stuck, not productive.
 
-These docs are self-contained and don't belong in the architecture tree:
+**Changes:**
+- `config/autonomous.yaml` (protected path): Add `max_turns_background: 40`
+  in the `agent_loop` section (near line 108).
+- `src/autonomous/agent-loop.ts`: Add `maxTurnsBackground?: number` to the
+  `AgentLoopConfig` interface.
+- `src/autonomous/loop.ts` (line ~884): Select turn limit based on trigger
+  type, same pattern as the token budget selection:
+  ```typescript
+  const scaledMaxTurns = (effectiveTrigger.type === 'user' || effectiveTrigger.type === 'goal')
+    ? (this.agentConfig.maxTurns ?? 200)
+    : (this.agentConfig.maxTurnsBackground ?? this.agentConfig.maxTurns ?? 40);
+  ```
+- Parse `max_turns_background` from YAML in the config loader.
+- Add a test that verifies background triggers get the lower turn limit.
 
-- `docs/app-wrapper-plan.md` — Casterly.app native wrapper plan (7 phases, active)
-- `docs/mac-permissions-review.md` — macOS permission surface analysis (prerequisite for app wrapper)
+**Risk:** Low. Tightens an existing safety ceiling for unattended work.
 
-## Files to Delete
+---
 
-- `casterly-plan.md` (outdated, describes cloud routing that doesn't exist)
-- `docs/rulebook.md` (absorbed into vision.md invariants + docs/security.md)
-- `docs/subagents.md` (absorbed into CLAUDE.md)
-- `docs/IMPLEMENTATION-GUIDE.md` (absorbed into docs/task-execution.md)
-- `docs/test-registry.md` (absorbed into docs/testing.md)
-- `docs/OPEN-ISSUES.md` (implemented issues captured in architecture docs, pending issues moved to vision.md roadmap)
-- `AGENTS.md` (absorbed into CLAUDE.md)
+## Change 4: Reduce issue watcher polling interval
 
-## Files to Archive (`docs/archive/`)
+**Problem:** The issue watcher checks every 6 hours for issues that are stale
+after 7 days. That's 28 polls before any issue could possibly trigger. Once
+per 24 hours is sufficient.
 
-- `docs/PLAN-agent-architecture-refactor.md` (completed work, but preserves design rationale and risk assessment)
+**Changes:**
+- `config/autonomous.yaml` (protected path): Change
+  `check_interval_ms: 21600000` to `check_interval_ms: 86400000` (24 hours).
+- No code changes required — the interval is config-driven.
+- Update the `dream-scheduling.test.ts` if it hardcodes the old interval.
+
+**Risk:** Minimal. Reduces unnecessary timer firings.
+
+---
+
+## Change 5: Add atomic file writes via `safeWriteFile` utility
+
+**Problem:** Every persistence layer (handoff, taskboard, goal stack, issue
+log) uses raw `writeFile()`. A crash mid-write corrupts the file. The journal
+is safe (append-only JSONL), but all JSON/YAML stores are vulnerable.
+
+**Changes:**
+- Create `src/persistence/safe-write.ts` with a single function:
+  ```typescript
+  export async function safeWriteFile(
+    filePath: string,
+    content: string,
+    encoding?: BufferEncoding,
+  ): Promise<void> {
+    const tmp = filePath + '.tmp';
+    await writeFile(tmp, content, encoding ?? 'utf8');
+    await rename(tmp, filePath);
+  }
+  ```
+  The `rename()` syscall is atomic on POSIX filesystems (which is what this
+  Mac Studio runs).
+- Replace `writeFile()` calls with `safeWriteFile()` in:
+  - `src/autonomous/controller.ts` (handoff write, line ~348)
+  - `src/dual-loop/task-board.ts` (save, line ~170)
+  - `src/autonomous/goal-stack.ts` (save, line ~280)
+  - `src/autonomous/issue-log.ts` (save, line ~305)
+- Add tests: write a file using `safeWriteFile`, verify it's readable. Simulate
+  a crash-like scenario (verify `.tmp` doesn't linger on success).
+
+**Risk:** Low. `rename()` is the standard POSIX pattern for atomic file
+replacement. Node.js `fs.rename` maps directly to the syscall.
+
+---
+
+## Change 6: Add dream phase tier logging to DreamOutcome
+
+**Problem:** Related to Change 2, but structural. The 17 dream phases span
+three logical tiers (core phases 1-5, vision-tier phases 7-8, advanced memory
+phases 10-17) but the outcome doesn't report by tier. This makes it hard to
+understand the health of each subsystem.
+
+**Changes:**
+- `src/autonomous/dream/runner.ts`: After all phases complete, compute a
+  per-tier summary on the `DreamOutcome`:
+  ```typescript
+  outcome.tierSummary = {
+    core: { completed: X, skipped: Y, errored: Z },
+    vision: { completed: X, skipped: Y, errored: Z },
+    memory: { completed: X, skipped: Y, errored: Z },
+  };
+  ```
+- Add `tierSummary` to the `DreamOutcome` interface.
+- Log the tier summary at the end of the dream cycle at `info` level.
+
+**Risk:** Low. Additive only.
+
+---
 
 ## Execution Order
 
-1. Read all existing docs thoroughly to capture every detail worth preserving
-2. Write `docs/vision.md`
-3. Write `docs/architecture.md` (overview + module index)
-4. Write new detail docs (agent-loop, triggers, task-execution, imessage, memory-and-state, security, configuration)
-5. Update existing detail docs that are being kept (skills-and-tools, coding-interface, api-reference, error-codes, testing, install)
-6. Rewrite `CLAUDE.md`
-7. Move archived files to `docs/archive/`
-8. Delete all absorbed/outdated files
-9. Run `npm run check` to verify nothing breaks
-10. Commit and push
+1. **Change 5** (safe writes) — foundation, no dependencies
+2. **Change 1** (remove dead code) — simplification
+3. **Change 3** (background turn limit) — config + wiring
+4. **Change 4** (issue watcher interval) — config-only
+5. **Changes 2 + 6** (dream telemetry) — related, do together
+6. Run `npm run check` — full quality gates
+7. Commit and push
+
+## Protected Path Edits
+
+`config/autonomous.yaml` is touched by changes 1, 3, and 4. These are
+minimal config changes (removing dead config, adding one field, changing one
+number). Full quality gates will run after all changes.
+
+## Files Created
+
+- `src/persistence/safe-write.ts` (new utility)
+- `tests/safe-write.test.ts` (new test)
+
+## Files Modified
+
+- `src/autonomous/controller.ts` (remove dead isInWorkWindow code)
+- `src/autonomous/dream/runner.ts` (phase skip reasons + tier summary)
+- `src/autonomous/agent-loop.ts` (maxTurnsBackground config field)
+- `src/autonomous/loop.ts` (background turn limit selection)
+- `src/dual-loop/task-board.ts` (use safeWriteFile)
+- `src/autonomous/goal-stack.ts` (use safeWriteFile)
+- `src/autonomous/issue-log.ts` (use safeWriteFile)
+- `config/autonomous.yaml` (remove quiet_hours, add max_turns_background, change issue watcher interval)
+- `tests/autonomous-controller.test.ts` (if needed)
+- `tests/dream-scheduling.test.ts` (if needed)

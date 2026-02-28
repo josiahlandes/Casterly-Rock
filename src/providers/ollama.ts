@@ -14,6 +14,8 @@ interface OllamaProviderOptions {
   timeoutMs?: number;
   /** Default num_ctx for all requests. If not set, Ollama uses its built-in default (2048). */
   numCtx?: number;
+  /** keep_alive duration for Ollama. -1 = never unload. Default: -1 */
+  keepAlive?: number | string;
 }
 
 /**
@@ -50,6 +52,7 @@ interface OllamaChatRequest {
   messages: OllamaChatMessage[];
   tools?: OllamaTool[] | undefined;
   stream: false;
+  keep_alive?: number | string;
   options?: {
     temperature?: number;
     num_predict?: number;
@@ -152,12 +155,14 @@ export class OllamaProvider implements LlmProvider {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly numCtx: number | undefined;
+  private readonly keepAlive: number | string;
 
   constructor(options: OllamaProviderOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.model = options.model;
     this.timeoutMs = options.timeoutMs ?? 60_000;
     this.numCtx = options.numCtx;
+    this.keepAlive = options.keepAlive ?? -1;
   }
 
   async generateWithTools(
@@ -245,6 +250,7 @@ export class OllamaProvider implements LlmProvider {
         messages,
         tools: tools.length > 0 ? formatToolsForOllama(tools) : undefined,
         stream: false,
+        keep_alive: this.keepAlive,
         options: {
           temperature: request.temperature ?? 0.7,
           num_predict: request.maxTokens ?? 2048,
