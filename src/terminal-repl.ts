@@ -2,22 +2,27 @@
 /**
  * Casterly Terminal REPL
  *
- * Send messages through the exact same pipeline as iMessage,
- * without needing an actual phone. Perfect for testing tools,
- * personality, multi-turn conversations, and debugging.
+ * Uses the exact same dual-loop architecture as the iMessage daemon:
+ * FastLoop (35B-A3B) for triage + DeepLoop (122B) for reasoning/coding.
+ * Responses are delivered asynchronously via the terminal.
  *
  * Usage:
- *   npx tsx src/terminal-repl.ts              # Start REPL
+ *   npx tsx src/terminal-repl.ts              # Start REPL (dual-loop)
  *   npx tsx src/terminal-repl.ts --debug      # Start with debug output
- *   npx tsx src/terminal-repl.ts --no-tools   # Disable tool execution
+ *   npx tsx src/terminal-repl.ts --no-dual-loop  # Fall back to standard pipeline
  *   npm run repl                              # Shortcut
  */
 
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import yaml from 'yaml';
 
 import { loadConfig } from './config/index.js';
 import { buildProviders } from './providers/index.js';
+import { OllamaProvider } from './providers/ollama.js';
+import { ConcurrentProvider } from './providers/concurrent.js';
 import { createSkillRegistry } from './skills/index.js';
 import {
   createToolRegistry,
@@ -40,6 +45,16 @@ import {
 import { createModeManager } from './coding/modes/index.js';
 import { processChatMessage, type ChatInput, type ProcessDependencies, type ProcessResult } from './pipeline/index.js';
 import { wrapError, formatErrorForUser } from './errors/index.js';
+import { createDualLoopController } from './dual-loop/index.js';
+import { EventBus } from './autonomous/events.js';
+import { GoalStack } from './autonomous/goal-stack.js';
+import { createVoiceFilter } from './imessage/voice-filter.js';
+import { triggerFromMessage } from './autonomous/trigger-router.js';
+import type { AutonomousController } from './autonomous/controller.js';
+import { buildAgentToolkit } from './autonomous/agent-tools.js';
+import { buildFilteredToolkit } from './autonomous/tools/registry.js';
+import { IssueLog } from './autonomous/issue-log.js';
+import { WorldModel } from './autonomous/world-model.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CLI Arguments
@@ -49,6 +64,7 @@ const args = parseArgs({
   options: {
     debug: { type: 'boolean', short: 'd', default: false },
     'no-tools': { type: 'boolean', default: false },
+    'no-dual-loop': { type: 'boolean', default: false },
     workspace: { type: 'string', short: 'w' },
     'max-iterations': { type: 'string', short: 'm' },
     help: { type: 'boolean', short: 'h', default: false },
@@ -64,9 +80,10 @@ USAGE:
 
 OPTIONS:
   -d, --debug              Show debug output (tool calls, iterations, tokens)
-  --no-tools               Disable tool execution
+  --no-tools               Disable tool execution (standard pipeline only)
+  --no-dual-loop           Use standard pipeline instead of dual-loop
   -w, --workspace <path>   Override workspace path
-  -m, --max-iterations <n> Max tool iterations per message (default: 5)
+  -m, --max-iterations <n> Max tool iterations per message (default: 200)
   -h, --help               Show this help
 
 REPL COMMANDS:
@@ -78,9 +95,10 @@ REPL COMMANDS:
   /model                   Show current model info
 
 EXAMPLES:
-  npm run repl                                # Start REPL
+  npm run repl                                # Start REPL (dual-loop)
   npm run repl -- --debug                     # With debug output
-  npm run repl -- --no-tools                  # Conversation only
+  npm run repl -- --no-dual-loop              # Standard pipeline
+  npm run repl -- --no-dual-loop --no-tools   # Conversation only
 `;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -88,6 +106,7 @@ EXAMPLES:
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let debugMode = args.values.debug ?? false;
+let dualLoopActive = false;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Output Helpers
@@ -129,12 +148,17 @@ function handleSlashCommand(
     sessionManager: ReturnType<typeof createSessionManager>;
     modeManager: ReturnType<typeof createModeManager>;
     config: ReturnType<typeof loadConfig>;
+    controller?: AutonomousController;
   },
 ): boolean {
   const parts = input.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
 
   if (cmd === '/exit' || cmd === '/quit') {
+    if (deps.controller) {
+      console.log('\x1b[90mStopping dual-loop...\x1b[0m');
+      deps.controller.stop();
+    }
     console.log('\nGoodbye!');
     process.exit(0);
   }
@@ -160,6 +184,10 @@ function handleSlashCommand(
   }
 
   if (cmd === '/mode') {
+    if (dualLoopActive) {
+      console.log('\x1b[33mMode switching is not available in dual-loop mode.\x1b[0m');
+      return true;
+    }
     const modeName = parts[1];
     if (!modeName) {
       const current = deps.modeManager.getCurrentMode();
@@ -174,13 +202,30 @@ function handleSlashCommand(
   }
 
   if (cmd === '/model') {
-    console.log(`\x1b[33mModel: ${deps.config.local.model}\x1b[0m`);
+    if (dualLoopActive) {
+      console.log('\x1b[33mMode: dual-loop\x1b[0m');
+      console.log('\x1b[33mDeep: qwen3.5:122b (reasoning + coding)\x1b[0m');
+      console.log('\x1b[33mFast: qwen3.5:35b-a3b (triage + review)\x1b[0m');
+    } else {
+      console.log(`\x1b[33mMode: standard pipeline\x1b[0m`);
+      console.log(`\x1b[33mModel: ${deps.config.local.model}\x1b[0m`);
+    }
     console.log(`\x1b[33mBase URL: ${deps.config.local.baseUrl}\x1b[0m`);
     return true;
   }
 
+  if (cmd === '/status') {
+    if (deps.controller) {
+      const report = deps.controller.getStatusReport('status');
+      console.log(`\x1b[33m${report}\x1b[0m`);
+    } else {
+      console.log('\x1b[33mNo dual-loop controller active.\x1b[0m');
+    }
+    return true;
+  }
+
   console.log(`\x1b[31mUnknown command: ${cmd}\x1b[0m`);
-  console.log('\x1b[33mAvailable: /exit, /clear, /debug, /session, /mode, /model\x1b[0m');
+  console.log('\x1b[33mAvailable: /exit, /clear, /debug, /session, /mode, /model, /status\x1b[0m');
   return true;
 }
 
@@ -195,101 +240,165 @@ async function main(): Promise<void> {
   }
 
   const enableTools = !(args.values['no-tools'] ?? false);
+  const noDualLoop = args.values['no-dual-loop'] ?? false;
   const maxToolIterations = args.values['max-iterations']
     ? parseInt(args.values['max-iterations'], 10)
     : 200;
   const workspaceOverride = args.values.workspace;
 
-  // ─── Initialize (mirrors startDaemon) ─────────────────────────────────
-  console.log('\x1b[90mInitializing Casterly pipeline...\x1b[0m');
+  // ─── Initialize ────────────────────────────────────────────────────────
+  console.log('\x1b[90mInitializing Casterly...\x1b[0m');
 
   const config = loadConfig();
-  const providers = buildProviders(config);
   const skillRegistry = createSkillRegistry();
   const sessionManager = createSessionManager({ scope: 'main' });
   const workspacePath = workspaceOverride || findWorkspacePath() || process.cwd();
   const modeManager = createModeManager({ autoDetect: false });
-  const jobStore = createJobStore();
-  const executionLog = createExecutionLog();
 
-  // Task manager (same setup as daemon)
-  const startupToolRegistry = createToolRegistry();
-  const startupOrchestrator = createToolOrchestrator();
-  startupOrchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
-  registerNativeExecutors(startupOrchestrator);
-  for (const tool of getSchedulerToolSchemas()) {
-    startupToolRegistry.register(tool);
-  }
+  // ─── Dual-loop or standard pipeline ────────────────────────────────────
+  let controller: AutonomousController | undefined;
+  let rl: readline.Interface;
 
-  const taskManager = createTaskManager({
-    orchestrator: startupOrchestrator,
-    executionLog,
-    availableTools: startupToolRegistry.getTools(),
-  });
+  if (!noDualLoop) {
+    // ── Dual-loop mode (mirrors daemon setup) ──────────────────────────
+    dualLoopActive = true;
 
-  // Build shared dependencies
-  const deps: ProcessDependencies = {
-    provider: providers.local,
-    skillRegistry,
-    sessionManager,
-    modeManager,
-    jobStore,
-    taskManager,
-    providers,
-    // No approvalBridge — auto-approve at terminal
-  };
+    const baseUrl = process.env['OLLAMA_BASE_URL'] || config.local.baseUrl;
 
-  const processOptions = {
-    enableTools,
-    maxToolIterations,
-    workspacePath,
-  };
+    const fastProvider = new OllamaProvider({
+      baseUrl,
+      model: 'qwen3.5:35b-a3b',
+      timeoutMs: 30_000,
+      think: false, // Disable thinking for triage/review — we need plain JSON output
+    });
+    const deepProvider = new OllamaProvider({
+      baseUrl,
+      model: 'qwen3.5:122b',
+      timeoutMs: 300_000,
+      numCtx: 40_960,
+    });
 
-  const availableSkills = skillRegistry.getAvailable();
+    const concurrentProvider = new ConcurrentProvider(
+      new Map([
+        ['qwen3.5:122b', deepProvider],
+        ['qwen3.5:35b-a3b', fastProvider],
+      ]),
+    );
 
-  const modelInfo = config.local.codingModel && config.local.codingModel !== config.local.model
-    ? `${config.local.model} (primary) / ${config.local.codingModel} (coding)`
-    : config.local.model;
-  console.log(`\x1b[90mModel: ${modelInfo}\x1b[0m`);
-  console.log(`\x1b[90mSkills: ${availableSkills.length} loaded\x1b[0m`);
-  console.log(`\x1b[90mTools: ${enableTools ? 'enabled' : 'disabled'}\x1b[0m`);
-  console.log(`\x1b[90mDebug: ${debugMode ? 'on' : 'off'}\x1b[0m`);
-  console.log(`\x1b[90mWorkspace: ${workspacePath}\x1b[0m`);
+    const eventBus = new EventBus({ maxQueueSize: 100, logEvents: true });
+    const goalStack = new GoalStack();
 
-  console.log('\n\x1b[1mCasterly Terminal REPL\x1b[0m');
-  console.log('\x1b[90mType a message to talk to Tyrion. Use /help for commands.\x1b[0m\n');
-
-  // ─── REPL Loop ────────────────────────────────────────────────────────
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  // Track whether we're processing a message (prevents premature exit on pipe close)
-  let processing = false;
-  let stdinClosed = false;
-
-  // Handle stdin close gracefully (e.g. when piping input)
-  rl.on('close', () => {
-    stdinClosed = true;
-    if (!processing) {
-      console.log('\n\x1b[90mSession ended.\x1b[0m');
-      process.exit(0);
-    }
-  });
-
-  const prompt = (): void => {
-    if (stdinClosed) {
-      console.log('\n\x1b[90mSession ended.\x1b[0m');
-      process.exit(0);
-      return;
+    // Load voice filter config from autonomous.yaml (same as daemon)
+    let voiceFilter = createVoiceFilter(undefined);
+    try {
+      const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
+      const rawYaml = yaml.parse(await readFile(autonomousConfigPath, 'utf-8'));
+      voiceFilter = createVoiceFilter(rawYaml.voice_filter as Record<string, unknown> | undefined);
+    } catch {
+      // Disabled fallback
     }
 
-    rl.question('\x1b[1mtyrion>\x1b[0m ', async (rawInput) => {
+    // Track pending messages for piped-input shutdown
+    let pendingMessages = 0;
+    let stdinClosed = false;
+
+    // Create readline before deliverFn so we can reference it
+    rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    // Check if DeepLoop still has work to do by inspecting the status report
+    const hasActiveDeepWork = (): boolean => {
+      if (!controller) return false;
+      const report = controller.getStatusReport('status');
+      // Parse "Tasks: N active, M queued" from the status line
+      const activeMatch = report.match(/(\d+)\s*active/);
+      const queuedMatch = report.match(/(\d+)\s*queued/);
+      const active = activeMatch ? parseInt(activeMatch[1]!, 10) : 0;
+      const queued = queuedMatch ? parseInt(queuedMatch[1]!, 10) : 0;
+      return (active + queued) > 0;
+    };
+
+    // deliverFn prints to terminal instead of sending iMessage
+    const sendMessageFn = (sender: string, text: string): void => {
+      // Clear current prompt line, print response, re-show prompt
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`\x1b[36m${text}\x1b[0m`);
+
+      pendingMessages--;
+
+      // If stdin was piped and closed, exit when no pending fast messages
+      // AND no active deep work (queued/planning/implementing tasks)
+      if (stdinClosed && pendingMessages <= 0 && !hasActiveDeepWork()) {
+        if (controller) controller.stop();
+        console.log('\x1b[90mSession ended.\x1b[0m');
+        process.exit(0);
+      }
+
+      rl.prompt();
+    };
+
+    // Build agent toolkit for DeepLoop tool use (read_file, bash, grep, etc.)
+    // projectRoot must be the actual source code directory (process.cwd()),
+    // NOT workspacePath (~/.casterly/workspace) which is a data/bootstrap dir.
+    const projectRoot = process.cwd();
+    const agentState = {
+      goalStack,
+      issueLog: new IssueLog(),
+      worldModel: new WorldModel(),
+    };
+    const fullToolkit = buildAgentToolkit(
+      { projectRoot, allowedDirectories: [projectRoot] },
+      agentState,
+    );
+    // coding_complex categories + communication (for message_user / clarification)
+    const toolkit = buildFilteredToolkit(fullToolkit, [
+      'core', 'quality', 'git', 'state', 'reasoning', 'memory', 'introspection', 'communication',
+    ]);
+
+    controller = createDualLoopController({
+      fastProvider,
+      deepProvider,
+      concurrentProvider,
+      eventBus,
+      goalStack,
+      voiceFilter,
+      sendMessageFn,
+      toolkit,
+    });
+
+    controller.start();
+
+    console.log('\x1b[90mMode: dual-loop\x1b[0m');
+    console.log('\x1b[90mDeep: qwen3.5:122b (reasoning + coding)\x1b[0m');
+    console.log('\x1b[90mFast: qwen3.5:35b-a3b (triage + review)\x1b[0m');
+    console.log(`\x1b[90mDebug: ${debugMode ? 'on' : 'off'}\x1b[0m`);
+    console.log(`\x1b[90mProject: ${projectRoot}\x1b[0m`);
+
+    console.log('\n\x1b[1mCasterly Terminal REPL\x1b[0m');
+    console.log('\x1b[90mType a message to talk to Tyrion. Use /help for commands.\x1b[0m\n');
+
+    // ── Dual-loop REPL Loop ──────────────────────────────────────────
+    rl.setPrompt('\x1b[1mtyrion>\x1b[0m ');
+
+    rl.on('close', () => {
+      stdinClosed = true;
+      // If no pending fast messages AND no active deep work, exit immediately
+      if (pendingMessages <= 0 && !hasActiveDeepWork()) {
+        if (controller) controller.stop();
+        console.log('\n\x1b[90mSession ended.\x1b[0m');
+        process.exit(0);
+      }
+      // Otherwise, deliverFn will handle shutdown after last deep response
+    });
+
+    rl.on('line', async (rawInput: string) => {
       const input = rawInput.trim();
 
       if (!input) {
-        prompt();
+        rl.prompt();
         return;
       }
 
@@ -297,43 +406,161 @@ async function main(): Promise<void> {
       if (input.startsWith('/')) {
         if (input === '/help') {
           console.log(HELP_TEXT);
-          prompt();
+          rl.prompt();
           return;
         }
-        handleSlashCommand(input, { sessionManager, modeManager, config });
-        prompt();
+        handleSlashCommand(input, { sessionManager, modeManager, config, controller: controller! });
+        rl.prompt();
         return;
       }
 
-      // Process message through the shared pipeline
-      const chatInput: ChatInput = {
-        text: input,
-        sender: 'terminal-user',
-        senderLabel: 'Developer (terminal)',
-        channel: 'cli',
-      };
-
-      processing = true;
+      // Route through dual-loop (mirrors daemon processMessage)
+      pendingMessages++;
       try {
-        const result = await processChatMessage(chatInput, deps, processOptions);
-        printResponse(result);
+        const trigger = triggerFromMessage(input, 'Developer (terminal)');
+        const outcome = await controller!.runTriggeredCycle(trigger);
+
+        // If summary is non-empty, print it (standard mode fallback).
+        // Otherwise the response arrives async via sendMessageFn.
+        if (outcome.summary) {
+          console.log(`\x1b[36m${outcome.summary}\x1b[0m`);
+        }
       } catch (error) {
         printError(error);
       }
-      processing = false;
 
-      console.log('');
+      rl.prompt();
+    });
 
+    rl.prompt();
+
+  } else {
+    // ── Standard pipeline mode (original behavior) ─────────────────────
+    dualLoopActive = false;
+
+    const providers = buildProviders(config);
+    const jobStore = createJobStore();
+    const executionLog = createExecutionLog();
+
+    const startupToolRegistry = createToolRegistry();
+    const startupOrchestrator = createToolOrchestrator();
+    startupOrchestrator.registerExecutor(createBashExecutor({ autoApprove: true }));
+    registerNativeExecutors(startupOrchestrator);
+    for (const tool of getSchedulerToolSchemas()) {
+      startupToolRegistry.register(tool);
+    }
+
+    const taskManager = createTaskManager({
+      orchestrator: startupOrchestrator,
+      executionLog,
+      availableTools: startupToolRegistry.getTools(),
+    });
+
+    const deps: ProcessDependencies = {
+      provider: providers.local,
+      skillRegistry,
+      sessionManager,
+      modeManager,
+      jobStore,
+      taskManager,
+      providers,
+    };
+
+    const processOptions = {
+      enableTools,
+      maxToolIterations,
+      workspacePath,
+    };
+
+    const availableSkills = skillRegistry.getAvailable();
+
+    const modelInfo = config.local.codingModel && config.local.codingModel !== config.local.model
+      ? `${config.local.model} (primary) / ${config.local.codingModel} (coding)`
+      : config.local.model;
+    console.log('\x1b[90mMode: standard pipeline\x1b[0m');
+    console.log(`\x1b[90mModel: ${modelInfo}\x1b[0m`);
+    console.log(`\x1b[90mSkills: ${availableSkills.length} loaded\x1b[0m`);
+    console.log(`\x1b[90mTools: ${enableTools ? 'enabled' : 'disabled'}\x1b[0m`);
+    console.log(`\x1b[90mDebug: ${debugMode ? 'on' : 'off'}\x1b[0m`);
+    console.log(`\x1b[90mWorkspace: ${workspacePath}\x1b[0m`);
+
+    console.log('\n\x1b[1mCasterly Terminal REPL\x1b[0m');
+    console.log('\x1b[90mType a message to talk to Tyrion. Use /help for commands.\x1b[0m\n');
+
+    // ── Standard REPL Loop ────────────────────────────────────────────
+    rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    let processing = false;
+    let stdinClosed = false;
+
+    rl.on('close', () => {
+      stdinClosed = true;
+      if (!processing) {
+        console.log('\n\x1b[90mSession ended.\x1b[0m');
+        process.exit(0);
+      }
+    });
+
+    const prompt = (): void => {
       if (stdinClosed) {
-        console.log('\x1b[90mSession ended.\x1b[0m');
+        console.log('\n\x1b[90mSession ended.\x1b[0m');
         process.exit(0);
         return;
       }
-      prompt();
-    });
-  };
 
-  prompt();
+      rl.question('\x1b[1mtyrion>\x1b[0m ', async (rawInput) => {
+        const input = rawInput.trim();
+
+        if (!input) {
+          prompt();
+          return;
+        }
+
+        // Handle slash commands
+        if (input.startsWith('/')) {
+          if (input === '/help') {
+            console.log(HELP_TEXT);
+            prompt();
+            return;
+          }
+          handleSlashCommand(input, { sessionManager, modeManager, config });
+          prompt();
+          return;
+        }
+
+        // Process message through the standard pipeline
+        const chatInput: ChatInput = {
+          text: input,
+          sender: 'terminal-user',
+          senderLabel: 'Developer (terminal)',
+          channel: 'cli',
+        };
+
+        processing = true;
+        try {
+          const result = await processChatMessage(chatInput, deps, processOptions);
+          printResponse(result);
+        } catch (error) {
+          printError(error);
+        }
+        processing = false;
+
+        console.log('');
+
+        if (stdinClosed) {
+          console.log('\x1b[90mSession ended.\x1b[0m');
+          process.exit(0);
+          return;
+        }
+        prompt();
+      });
+    };
+
+    prompt();
+  }
 }
 
 main().catch((error) => {

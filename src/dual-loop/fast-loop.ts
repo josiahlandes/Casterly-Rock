@@ -299,7 +299,8 @@ export class FastLoop {
           triageNotes: triage.triageNotes,
         });
 
-        const ack = `Got it — working on that now.`;
+        // Use the triage model's natural ack if available, otherwise fall back
+        const ack = triage.directResponse || `Got it — working on that now.`;
         this.addToConversation(sender, 'assistant', ack);
         await this.deliver(sender, ack);
 
@@ -334,6 +335,11 @@ export class FastLoop {
         this.config.triageTimeoutMs,
         'Triage timed out',
       );
+
+      tracer.log('fast-loop', 'debug', 'Triage raw response', {
+        responseLength: response.length,
+        responsePreview: response.substring(0, 200),
+      });
 
       return parseTriageResponse(response);
     } catch (error) {
@@ -418,6 +424,9 @@ export class FastLoop {
 
   /**
    * Deliver a completed task's userFacing response.
+   *
+   * Marks delivered BEFORE sending to prevent infinite re-delivery
+   * if the delivery function throws (e.g., readline closed on piped input).
    */
   async deliverResponse(task: Task): Promise<void> {
     const tracer = getTracer();
@@ -429,9 +438,10 @@ export class FastLoop {
 
     tracer.log('fast-loop', 'info', `Delivering response for task: ${task.id}`);
 
+    // Mark delivered first — prevents infinite retry loop if deliver() throws
+    this.taskBoard.markDelivered(task.id);
     this.addToConversation(task.sender, 'assistant', task.userFacing);
     await this.deliver(task.sender, task.userFacing);
-    this.taskBoard.markDelivered(task.id);
   }
 
   // ── Status Reporting ────────────────────────────────────────────────────

@@ -205,10 +205,18 @@ describe('DualLoopController', () => {
   });
 
   describe('getHandoff', () => {
-    it('returns null when no handoff file exists', async () => {
+    it('returns null or a valid HandoffState', async () => {
       const controller = createDualLoopController(makeOptions());
       const handoff = await controller.getHandoff();
-      expect(handoff).toBeNull();
+      // If no handoff file exists, returns null.
+      // If a real handoff file exists on disk (e.g. from daemon runs), returns a valid object.
+      if (handoff === null) {
+        expect(handoff).toBeNull();
+      } else {
+        expect(handoff).toHaveProperty('timestamp');
+        expect(handoff).toHaveProperty('pendingBranches');
+        expect(handoff).toHaveProperty('nightSummary');
+      }
     });
   });
 

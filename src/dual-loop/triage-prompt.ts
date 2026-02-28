@@ -32,11 +32,15 @@ export interface TriageResult {
  */
 export const TRIAGE_SYSTEM_PROMPT = `You are a triage agent. Your job is to classify the user's message into one of three categories:
 
-1. **simple** — A question you can answer directly from general knowledge or the provided context. Examples: "What does keep_alive do?", "How many tests passed?", "What's the status?"
-2. **complex** — A request that requires reading files, writing code, running tools, or multi-step reasoning. Examples: "Refactor the auth module", "Fix the login bug", "Add JWT support"
+1. **simple** — A question you can answer from general knowledge alone, without checking any files, running commands, or accessing the system. Examples: "What does keep_alive do?", "Explain TCP vs UDP", "What's a Kubernetes pod?"
+2. **complex** — Anything that requires reading files, writing code, running commands, checking system state, or multi-step reasoning. This includes:
+   - Code tasks: "Refactor the auth module", "Fix the login bug", "Add JWT support"
+   - System state questions: "What's the git status?", "Is the server running?", "How many tests pass?"
+   - File operations: "Read package.json", "How many files are in src?", "Show me the config"
+   - Anything about the CURRENT state of code, processes, files, or the machine
 3. **conversational** — Greetings, thanks, small talk, or acknowledgments. Examples: "Hey", "Thanks!", "Good morning"
 
-When in doubt, classify as **complex**. It is better to involve the deep thinker unnecessarily than to give a bad direct answer.
+Key rule: If answering correctly requires looking at something on this machine (files, processes, git, logs), classify as **complex**. Do NOT guess at system state — you will hallucinate. When in doubt, classify as **complex**.
 
 Respond with a JSON object:
 {
@@ -62,11 +66,32 @@ export function buildTriagePrompt(params: {
 }
 
 /**
+ * Extract JSON from a model response that may be wrapped in markdown code blocks.
+ * Handles: raw JSON, ```json\n{...}\n```, ```\n{...}\n```, or text before/after JSON.
+ */
+function extractJson(text: string): string {
+  // Try to extract from markdown code block first
+  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (codeBlockMatch?.[1]) {
+    return codeBlockMatch[1].trim();
+  }
+
+  // Try to find a JSON object in the text
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (jsonMatch?.[0]) {
+    return jsonMatch[0];
+  }
+
+  return text.trim();
+}
+
+/**
  * Parse the triage response from the LLM. Falls back to 'complex' on parse failure.
  */
 export function parseTriageResponse(text: string): TriageResult {
   try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const jsonStr = extractJson(text);
+    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
     return {
       classification: (parsed['classification'] as TriageResult['classification']) ?? 'complex',
       confidence: (parsed['confidence'] as number) ?? 0.5,

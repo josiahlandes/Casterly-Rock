@@ -24,6 +24,7 @@ import type { LlmProvider } from '../providers/base.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
 import type { GoalStack } from '../autonomous/goal-stack.js';
+import type { AgentToolkit } from '../autonomous/tools/types.js';
 import type {
   AutonomousController,
   AutonomousStatus,
@@ -59,6 +60,8 @@ export interface DualLoopControllerOptions {
   coordinatorConfig?: Partial<CoordinatorConfig> | undefined;
   /** Function to send a message to a user (iMessage sender) */
   sendMessageFn: (sender: string, text: string) => void;
+  /** Agent toolkit for DeepLoop tool use (read_file, bash, grep, etc.) */
+  toolkit?: AgentToolkit | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,22 +103,34 @@ export function createDualLoopController(
     options.concurrentProvider,
     options.eventBus,
     options.coordinatorConfig,
+    options.toolkit,
   );
 
   // Wire the GoalStack into DeepLoop for idle-time goal work
   coordinator.getDeepLoop().setGoalStack(options.goalStack);
 
-  // Wire response delivery: FastLoop → voice filter → iMessage
+  // Wire response delivery: FastLoop → voice filter → send
+  // Voice filter and delivery are separate concerns: if the voice filter
+  // fails we fall back to unvoiced text, but if delivery itself fails
+  // (e.g. readline closed on piped input) we do NOT retry — the message
+  // may have already been partially delivered, and retrying would duplicate it.
   const deliverFn: DeliverFn = async (sender: string, text: string) => {
+    let voiced: string;
     try {
-      const voiced = await options.voiceFilter.apply(text);
+      voiced = await options.voiceFilter.apply(text);
+    } catch (error) {
+      safeLogger.error('Voice filter failed, sending unvoiced', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      voiced = text;
+    }
+
+    try {
       options.sendMessageFn(sender, voiced);
     } catch (error) {
       safeLogger.error('Dual-loop delivery failed', {
         error: error instanceof Error ? error.message : String(error),
       });
-      // Fall back to unvoiced delivery
-      options.sendMessageFn(sender, text);
     }
   };
   coordinator.setDeliverFn(deliverFn);

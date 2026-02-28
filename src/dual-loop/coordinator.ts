@@ -15,6 +15,7 @@
 import type { LlmProvider } from '../providers/base.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
+import type { AgentToolkit } from '../autonomous/tools/types.js';
 import { getTracer } from '../autonomous/debug.js';
 import { TaskBoard, createTaskBoard } from './task-board.js';
 import { FastLoop, createFastLoop } from './fast-loop.js';
@@ -119,6 +120,7 @@ export class LoopCoordinator {
     concurrentProvider: ConcurrentProvider,
     eventBus: EventBus,
     config?: Partial<CoordinatorConfig>,
+    toolkit?: AgentToolkit,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.eventBus = eventBus;
@@ -145,6 +147,7 @@ export class LoopCoordinator {
         tiers: this.config.contextTiers.deep,
         coderTiers: this.config.contextTiers.coder,
       },
+      toolkit,
     );
   }
 
@@ -168,6 +171,7 @@ export class LoopCoordinator {
     // 1. Load TaskBoard state from disk
     this.taskBoard.init();
     await this.taskBoard.load();
+    this.taskBoard.markExistingDoneAsDelivered(); // Don't re-deliver old tasks
     tracer.log('coordinator', 'info', 'TaskBoard loaded');
 
     // 2. Start periodic save timer (persist dirty state to disk)
@@ -373,6 +377,7 @@ export function createLoopCoordinator(
   concurrentProvider: ConcurrentProvider,
   eventBus: EventBus,
   config?: Partial<CoordinatorConfig>,
+  toolkit?: AgentToolkit,
 ): LoopCoordinator {
-  return new LoopCoordinator(fastProvider, deepProvider, concurrentProvider, eventBus, config);
+  return new LoopCoordinator(fastProvider, deepProvider, concurrentProvider, eventBus, config, toolkit);
 }

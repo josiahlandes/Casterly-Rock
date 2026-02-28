@@ -14,10 +14,12 @@
  * See docs/dual-loop-architecture.md Sections 6, 17, and 28.
  */
 
-import type { LlmProvider, GenerateRequest } from '../providers/base.js';
+import type { LlmProvider, GenerateRequest, PreviousAssistantMessage } from '../providers/base.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
 import type { GoalStack } from '../autonomous/goal-stack.js';
+import type { AgentToolkit } from '../autonomous/tools/types.js';
+import type { ToolResultMessage } from '../tools/schemas/types.js';
 import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
 import type { Task, TaskArtifact, PlanStep } from './task-board-types.js';
@@ -38,8 +40,10 @@ export interface DeepLoopConfig {
   model: string;
   /** Model ID for the coder model */
   coderModel: string;
-  /** Maximum ReAct turns per task */
+  /** Maximum ReAct turns per task (total budget across all steps) */
   maxTurnsPerTask: number;
+  /** Maximum ReAct turns per individual plan step */
+  maxTurnsPerStep: number;
   /** Maximum review→revision cycles before failing */
   maxRevisionRounds: number;
   /** Check the TaskBoard for preemption every N turns */
@@ -67,6 +71,7 @@ const DEFAULT_CONFIG: DeepLoopConfig = {
   model: 'qwen3.5:122b',
   coderModel: 'qwen3.5:122b',
   maxTurnsPerTask: 50,
+  maxTurnsPerStep: 10,
   maxRevisionRounds: 3,
   preemptCheckIntervalTurns: 5,
   idleSleepMs: 10_000,
@@ -104,7 +109,12 @@ Guidelines:
 - Each step should be a single, testable action.
 - Include a test/verify step at the end.
 - For bug fixes: diagnose → fix → test.
-- For features: read context → implement → test.`;
+- For features: read context → implement → test.
+- For research/query tasks (e.g., "find all X", "what does Y do", "list Z"):
+  Use a SINGLE step. The executor has tools (grep, read_file, glob) and works
+  best when it can freely search and read in one continuous loop rather than
+  being forced through rigid sub-steps. Single-step plans preserve context
+  across all tool calls.`;
 
 const REVISION_SYSTEM_PROMPT = `You are addressing code review feedback. The reviewer has identified issues that need to be fixed.
 
@@ -120,6 +130,7 @@ export class DeepLoop {
   private readonly concurrentProvider: ConcurrentProvider;
   private readonly taskBoard: TaskBoard;
   private readonly eventBus: EventBus;
+  private readonly toolkit: AgentToolkit | null;
   private goalStack: GoalStack | null = null;
   private eventConfig: DeepLoopEventConfig | undefined;
   private running: boolean = false;
@@ -132,12 +143,14 @@ export class DeepLoop {
     taskBoard: TaskBoard,
     eventBus: EventBus,
     config?: Partial<DeepLoopConfig>,
+    toolkit?: AgentToolkit,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.provider = provider;
     this.concurrentProvider = concurrentProvider;
     this.taskBoard = taskBoard;
     this.eventBus = eventBus;
+    this.toolkit = toolkit ?? null;
   }
 
   // ── Main Work Loop ──────────────────────────────────────────────────────
@@ -365,7 +378,8 @@ export class DeepLoop {
   }> {
     const tracer = getTracer();
     const steps = task.planSteps ?? [];
-    const artifacts: TaskArtifact[] = [];
+    // Initialize from existing artifacts (supports parked task resume)
+    const artifacts: TaskArtifact[] = [...(task.artifacts ?? [])];
     let stepsCompleted = 0;
 
     // Find the first pending step (supports resuming parked tasks)
@@ -393,7 +407,7 @@ export class DeepLoop {
           );
           this.taskBoard.update(task.id, {
             planSteps: updatedSteps,
-            artifacts: [...(task.artifacts ?? []), ...artifacts],
+            artifacts,
           });
 
           return { success: false, preempted: true, stepsCompleted, artifacts };
@@ -408,7 +422,9 @@ export class DeepLoop {
       this.taskBoard.update(task.id, { planSteps: steps });
 
       try {
-        const result = await this.executeStep(task, step);
+        // Collect completed step outputs for context continuity
+        const priorSteps = steps.slice(0, i).filter((s) => s.status === 'done' && s.output);
+        const result = await this.executeStep(task, step, priorSteps, steps.length);
         step.status = 'done';
         step.output = result.output;
 
@@ -419,7 +435,7 @@ export class DeepLoop {
         stepsCompleted++;
         this.taskBoard.update(task.id, {
           planSteps: steps,
-          artifacts: [...(task.artifacts ?? []), ...artifacts],
+          artifacts,
         });
       } catch (error) {
         step.status = 'failed';
@@ -452,19 +468,42 @@ export class DeepLoop {
 
   /**
    * Execute a single plan step by dispatching to the Coder.
+   * Prior step outputs are included in the prompt so each step builds on
+   * what previous steps discovered — solving the step isolation problem.
    */
   private async executeStep(
     task: Task,
     step: PlanStep,
+    priorSteps: PlanStep[] = [],
+    totalSteps: number = 1,
   ): Promise<{ output: string; artifact?: TaskArtifact }> {
+    // Build prior step context — most recent step gets full output,
+    // older steps get truncated to keep the prompt manageable.
+    let priorContext = '';
+    if (priorSteps.length > 0) {
+      const sections = priorSteps.map((s, idx) => {
+        const isRecent = idx >= priorSteps.length - 2; // last 2 steps get full output
+        const output = isRecent
+          ? s.output!
+          : s.output!.slice(0, 500) + (s.output!.length > 500 ? '\n...(truncated)' : '');
+        return `### Step ${idx + 1}: ${s.description}\n${output}`;
+      });
+      priorContext = `## Previous Step Results\n${sections.join('\n\n')}`;
+    }
+
     const prompt = [
       `## Task: ${task.originalMessage ?? '(no message)'}`,
       `## Plan: ${task.plan ?? '(no plan)'}`,
+      priorContext,
       `## Current Step: ${step.description}`,
       task.triageNotes ? `## Context: ${task.triageNotes}` : '',
-    ].join('\n\n');
+    ].filter(Boolean).join('\n\n');
 
-    const response = await this.dispatchToCoder(prompt, '');
+    // Single-step tasks get the full task budget; multi-step get per-step cap
+    const maxTurns = totalSteps <= 1
+      ? this.config.maxTurnsPerTask
+      : this.config.maxTurnsPerStep;
+    const response = await this.dispatchToCoder(prompt, '', maxTurns);
 
     // Create an artifact from the response if it contains code
     const hasCode = response.includes('```') || response.includes('diff');
@@ -519,7 +558,7 @@ export class DeepLoop {
         systemPrompt: REVISION_SYSTEM_PROMPT,
         temperature: 0.2,
         maxTokens: 4096,
-      });
+      }, true); // useTools — revisions need file access
 
       // Create a new artifact from the revision
       const artifact: TaskArtifact = {
@@ -559,21 +598,33 @@ export class DeepLoop {
 
   /**
    * Generate a user-facing summary of the completed work.
+   *
+   * Uses think:false to prevent reasoning chains from leaking into
+   * the user-facing text. No tools needed — this is pure text generation.
    */
   private async generateSummary(task: Task, artifacts: TaskArtifact[]): Promise<string> {
     try {
+      // Include actual step outputs so the summary contains the data the user asked for
+      const steps = task.planSteps ?? [];
+      const stepResults = steps
+        .filter((s) => s.output)
+        .map((s, i) => `Step ${i + 1}: ${s.output!.slice(0, 500)}`)
+        .join('\n');
+
       const prompt = [
-        `Summarize what was done for this task in 2-3 sentences for the user.`,
-        `\n## Original Request\n${task.originalMessage ?? '(unknown)'}`,
+        `Summarize what was done for this task for the user.`,
+        ` Include the key results or data the user asked for in your summary.`,
+        `\n\n## Original Request\n${task.originalMessage ?? '(unknown)'}`,
         `\n## Plan\n${task.plan ?? '(no plan)'}`,
-        `\n## Artifacts Created\n${artifacts.length} artifact(s)`,
+        stepResults ? `\n## Step Results\n${stepResults}` : '',
       ].join('');
 
       const response = await this.callWithTier('compact', {
         prompt,
-        systemPrompt: 'Write a brief, friendly summary of the completed work. Keep it under 100 words.',
+        systemPrompt: 'Write a concise summary of the completed work that includes the actual results or data the user requested. Keep it under 150 words. Plain text only, no markdown.',
         temperature: 0.3,
-        maxTokens: 256,
+        maxTokens: 512,
+        providerOptions: { think: false }, // Prevent thinking chain from leaking
       });
 
       return response;
@@ -587,20 +638,37 @@ export class DeepLoop {
 
   /**
    * Dispatch a plan step to the Coder model for implementation.
-   * Selects the Coder context tier based on measured prompt size.
+   * When a toolkit is available, runs a ReAct loop so the model can
+   * read files, run commands, and write code via tools.
    */
-  async dispatchToCoder(prompt: string, fileContents: string): Promise<string> {
+  async dispatchToCoder(prompt: string, fileContents: string, maxTurns?: number): Promise<string> {
     const totalChars = prompt.length + fileContents.length;
     const tier = selectCoderTier(totalChars, this.config.coderTiers);
     const providerOptions = buildProviderOptions(this.config.coderTiers, tier);
 
     const request: GenerateRequest = {
       prompt: fileContents ? `${prompt}\n\n---\n\n${fileContents}` : prompt,
-      systemPrompt: 'You are a code implementation assistant. Write the code changes requested. Be precise and minimal.',
+      systemPrompt: this.toolkit
+        ? `You are a code implementation assistant with access to tools (read_file, grep, glob, bash, etc.).
+
+Rules:
+- Use tools to read files, search code, run commands, and complete the task.
+- Tool results are returned to you directly — analyze them and use the data.
+- Focus on source files (src/), not build artifacts (dist/) or test output.
+- When you have the answer, state it clearly with the specific data found.
+- Be precise and minimal. Do not describe the tool output format — extract the actual information.
+- When using grep, always set file_pattern (e.g., "*.ts") to filter results. Use simple substring patterns, not complex regex.
+- If grep doesn't find what you need after 2 tries, switch to read_file on specific files instead.
+- Do NOT repeat the same tool call with the same arguments — try a different approach.`
+        : 'You are a code implementation assistant. Write the code changes requested. Be precise and minimal.',
       temperature: 0.1,
       maxTokens: 4096,
       providerOptions,
     };
+
+    if (this.toolkit) {
+      return this.executeWithTools(request, maxTurns ?? this.config.maxTurnsPerStep);
+    }
 
     const response = await this.concurrentProvider.generate(
       this.config.coderModel,
@@ -619,14 +687,127 @@ export class DeepLoop {
     return this.taskBoard.getHigherPriorityTask(currentPriority);
   }
 
+  // ── Tool Execution ──────────────────────────────────────────────────────
+
+  /**
+   * Execute an LLM request with a ReAct tool loop.
+   *
+   * Calls the model, executes any tool calls, feeds results back, and
+   * repeats until the model stops calling tools (or maxTurns is reached).
+   * Falls back to a plain no-tools call when no toolkit is configured.
+   */
+  private async executeWithTools(
+    request: GenerateRequest,
+    maxTurns: number = 20,
+  ): Promise<string> {
+    if (!this.toolkit) {
+      const response = await this.provider.generateWithTools(request, []);
+      return response.text;
+    }
+
+    const tracer = getTracer();
+    const tools = this.toolkit.schemas;
+    let lastText = '';
+
+    // Accumulate full conversation history so each turn sees ALL prior
+    // tool results, not just the last batch. This is critical for multi-turn
+    // research tasks where the model needs to synthesize data from earlier reads.
+    const conversationHistory: PreviousAssistantMessage[] = [];
+    const allToolResults: ToolResultMessage[] = [];
+
+    // Budget warning threshold
+    const warnAtTurn = Math.max(1, maxTurns - 2);
+
+    for (let turn = 0; turn < maxTurns; turn++) {
+      // When approaching the turn limit, inject a budget warning.
+      const effectiveRequest: GenerateRequest = {
+        ...(turn === warnAtTurn
+          ? {
+              ...request,
+              prompt: `${request.prompt}\n\n[BUDGET WARNING] You have ${maxTurns - turn} tool turns remaining. Review what you've gathered so far. If you have enough information to answer, provide your final answer now without using more tools. If critical data is still missing, use your remaining turns wisely on the most important calls.`,
+            }
+          : request),
+        // Thread full conversation history so the model sees ALL prior turns
+        ...(conversationHistory.length > 0
+          ? { previousAssistantMessages: conversationHistory }
+          : {}),
+      };
+
+      const response = await this.provider.generateWithTools(
+        effectiveRequest,
+        tools,
+        allToolResults.length > 0 ? allToolResults : undefined,
+      );
+
+      lastText = response.text;
+
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        break;
+      }
+
+      tracer.log('deep-loop', 'debug', `Tool turn ${turn + 1}: ${response.toolCalls.length} call(s)`, {
+        tools: response.toolCalls.map((c) => c.name),
+      });
+
+      // Record this assistant turn in conversation history
+      conversationHistory.push({
+        text: response.text,
+        toolCalls: response.toolCalls.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: JSON.stringify(tc.input),
+        })),
+      });
+
+      // Execute tools and accumulate ALL results
+      for (const call of response.toolCalls) {
+        const result = await this.toolkit.execute(call);
+        allToolResults.push({
+          callId: call.id,
+          result: result.output ?? result.error ?? '(no output)',
+          isError: !result.success,
+        });
+      }
+    }
+
+    if (allToolResults.length > 0 && conversationHistory.length >= maxTurns) {
+      tracer.log('deep-loop', 'warn', `Tool loop hit maxTurns (${maxTurns}) — forcing wrap-up`);
+
+      // Give the model one final turn to synthesize what it found,
+      // with full conversation history so it can reference all prior results.
+      try {
+        const wrapUpResponse = await this.provider.generateWithTools(
+          {
+            ...request,
+            prompt: `${request.prompt}\n\n[TURN LIMIT REACHED] You have used all your tool turns. Based on everything you've gathered from the tools above, provide your final answer now. Summarize what you found. If the task is incomplete, state clearly what was found and what remains unknown.`,
+            ...(conversationHistory.length > 0
+              ? { previousAssistantMessages: conversationHistory }
+              : {}),
+          },
+          [], // no tools — must produce text
+          allToolResults,
+        );
+        return wrapUpResponse.text;
+      } catch {
+        // Fall back to whatever text we have
+      }
+    }
+
+    return lastText;
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   /**
    * Make an LLM call with the appropriate context tier.
+   *
+   * When useTools is true and a toolkit is available, runs a full ReAct
+   * tool loop. Otherwise makes a single no-tools call.
    */
   private async callWithTier(
     tier: ContextTier,
-    request: Omit<GenerateRequest, 'providerOptions'>,
+    request: Omit<GenerateRequest, 'providerOptions'> & { providerOptions?: Record<string, unknown> },
+    useTools: boolean = false,
   ): Promise<string> {
     const tracer = getTracer();
     const numCtx = resolveNumCtx(this.config.tiers, tier);
@@ -643,10 +824,16 @@ export class DeepLoop {
       });
     }
 
-    const response = await this.provider.generateWithTools(
-      { ...request, providerOptions: { num_ctx: numCtx } },
-      [],
-    );
+    const fullRequest: GenerateRequest = {
+      ...request,
+      providerOptions: { num_ctx: numCtx, ...request.providerOptions },
+    };
+
+    if (useTools && this.toolkit) {
+      return this.executeWithTools(fullRequest);
+    }
+
+    const response = await this.provider.generateWithTools(fullRequest, []);
     return response.text;
   }
 
@@ -678,6 +865,7 @@ export function createDeepLoop(
   taskBoard: TaskBoard,
   eventBus: EventBus,
   config?: Partial<DeepLoopConfig>,
+  toolkit?: AgentToolkit,
 ): DeepLoop {
-  return new DeepLoop(provider, concurrentProvider, taskBoard, eventBus, config);
+  return new DeepLoop(provider, concurrentProvider, taskBoard, eventBus, config, toolkit);
 }

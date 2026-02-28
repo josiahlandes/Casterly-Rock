@@ -581,7 +581,7 @@ communication:
 
 voice_filter:
   enabled: true
-  model: qwen3.5:122b          # Same as primary/reasoning model
+  model: qwen3.5:35b-a3b       # Fast model — voice rewrite is a simple transformation
   max_tokens: 512               # Responses should be same length or shorter
   temperature: 0.7              # Natural variation in voice
   timeout_ms: 30000             # 30s timeout — falls back to raw on failure

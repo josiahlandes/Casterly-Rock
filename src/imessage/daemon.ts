@@ -334,6 +334,10 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       const { ConcurrentProvider } = await import('../providers/concurrent.js');
       const { EventBus } = await import('../autonomous/events.js');
       const { GoalStack } = await import('../autonomous/goal-stack.js');
+      const { buildAgentToolkit } = await import('../autonomous/agent-tools.js');
+      const { buildFilteredToolkit } = await import('../autonomous/tools/registry.js');
+      const { IssueLog } = await import('../autonomous/issue-log.js');
+      const { WorldModel } = await import('../autonomous/world-model.js');
 
       const baseUrl = process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434';
 
@@ -341,6 +345,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         baseUrl,
         model: 'qwen3.5:35b-a3b',
         timeoutMs: 30_000,
+        think: false, // Disable thinking for triage/review — we need plain JSON output
       });
       const deepProvider = new OllamaProvider({
         baseUrl,
@@ -359,6 +364,24 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       const eventBus = new EventBus({ maxQueueSize: 100, logEvents: true });
       const goalStack = new GoalStack();
 
+      // Build agent toolkit for DeepLoop tool use
+      // projectRoot must be the actual source code directory (process.cwd()),
+      // NOT findWorkspacePath() (~/.casterly/workspace) which is a data/bootstrap dir.
+      const projectRoot = process.cwd();
+      const agentState = {
+        goalStack,
+        issueLog: new IssueLog(),
+        worldModel: new WorldModel(),
+      };
+      const fullToolkit = buildAgentToolkit(
+        { projectRoot, allowedDirectories: [projectRoot] },
+        agentState,
+      );
+      // coding_complex categories + communication (for message_user / clarification)
+      const toolkit = buildFilteredToolkit(fullToolkit, [
+        'core', 'quality', 'git', 'state', 'reasoning', 'memory', 'introspection', 'communication',
+      ]);
+
       autonomousController = createDualLoopController({
         fastProvider,
         deepProvider,
@@ -367,6 +390,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         goalStack,
         voiceFilter,
         sendMessageFn: sendMessage,
+        toolkit,
       });
 
       autonomousController.start();

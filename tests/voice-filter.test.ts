@@ -94,7 +94,7 @@ describe('createVoiceFilter', () => {
 describe('DEFAULT_VOICE_FILTER_CONFIG', () => {
   it('has sensible defaults', () => {
     expect(DEFAULT_VOICE_FILTER_CONFIG.enabled).toBe(true);
-    expect(DEFAULT_VOICE_FILTER_CONFIG.model).toBe('qwen3.5:122b');
+    expect(DEFAULT_VOICE_FILTER_CONFIG.model).toBe('qwen3.5:35b-a3b');
     expect(DEFAULT_VOICE_FILTER_CONFIG.maxTokens).toBe(512);
     expect(DEFAULT_VOICE_FILTER_CONFIG.temperature).toBe(0.7);
     expect(DEFAULT_VOICE_FILTER_CONFIG.timeoutMs).toBe(30_000);

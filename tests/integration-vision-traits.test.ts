@@ -1235,8 +1235,8 @@ describe('Quietness Trait', () => {
     );
 
     // Personality is now applied by the voice filter, not the system prompt
-    expect(source).toContain('Concise');
-    expect(source).toContain('Get to the point');
+    expect(source).toContain('Tyrion Lannister');
+    expect(source).toContain('Cuts to the answer');
   });
 
   it('CHARACTER_PROMPT uses neutral agent framing (no persona)', () => {

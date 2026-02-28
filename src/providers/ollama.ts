@@ -16,6 +16,8 @@ interface OllamaProviderOptions {
   numCtx?: number;
   /** keep_alive duration for Ollama. -1 = never unload. Default: -1 */
   keepAlive?: number | string;
+  /** Enable/disable thinking for thinking models. Default: undefined (model decides). */
+  think?: boolean;
 }
 
 /**
@@ -53,6 +55,8 @@ interface OllamaChatRequest {
   tools?: OllamaTool[] | undefined;
   stream: false;
   keep_alive?: number | string;
+  /** Enable/disable thinking for thinking models (Qwen3, DeepSeek-R1, etc.) */
+  think?: boolean;
   options?: {
     temperature?: number;
     num_predict?: number;
@@ -71,6 +75,8 @@ interface OllamaChatResponse {
   message?: {
     role: 'assistant';
     content: string;
+    /** Thinking/reasoning content returned by thinking models (e.g. Qwen3, DeepSeek-R1) */
+    thinking?: string;
     tool_calls?: OllamaToolCall[];
   };
   done: boolean;
@@ -156,6 +162,7 @@ export class OllamaProvider implements LlmProvider {
   private readonly timeoutMs: number;
   private readonly numCtx: number | undefined;
   private readonly keepAlive: number | string;
+  private readonly think: boolean | undefined;
 
   constructor(options: OllamaProviderOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
@@ -163,6 +170,7 @@ export class OllamaProvider implements LlmProvider {
     this.timeoutMs = options.timeoutMs ?? 60_000;
     this.numCtx = options.numCtx;
     this.keepAlive = options.keepAlive ?? -1;
+    this.think = options.think;
   }
 
   async generateWithTools(
@@ -245,17 +253,25 @@ export class OllamaProvider implements LlmProvider {
         }
       }
 
+      // Support per-request think override via providerOptions.think
+      // (extracted here because `think` is a top-level Ollama field, not inside `options`)
+      const { think: rawRequestThink, ...otherProviderOptions } =
+        (request.providerOptions ?? {}) as Record<string, unknown>;
+      const requestThink = typeof rawRequestThink === 'boolean' ? rawRequestThink : undefined;
+      const effectiveThink = requestThink !== undefined ? requestThink : this.think;
+
       const chatRequest: OllamaChatRequest = {
         model: this.model,
         messages,
         tools: tools.length > 0 ? formatToolsForOllama(tools) : undefined,
         stream: false,
         keep_alive: this.keepAlive,
+        ...(effectiveThink !== undefined ? { think: effectiveThink } : {}),
         options: {
           temperature: request.temperature ?? 0.7,
           num_predict: request.maxTokens ?? 2048,
           ...(this.numCtx ? { num_ctx: this.numCtx } : {}),
-          ...(request.providerOptions ?? {}),
+          ...otherProviderOptions,
         },
       };
 
@@ -309,8 +325,14 @@ export class OllamaProvider implements LlmProvider {
         const toolCalls = parseToolCalls(data.message?.tool_calls);
         const stopReason = getStopReason(data);
 
+        // Thinking models (Qwen3, DeepSeek-R1) may put output in `thinking`
+        // with an empty `content`. Use thinking as fallback when content is empty.
+        const content = data.message?.content ?? '';
+        const thinking = data.message?.thinking ?? '';
+        const text = content || thinking;
+
         return {
-          text: data.message?.content ?? '',
+          text,
           toolCalls,
           providerId: this.id,
           model: this.model,

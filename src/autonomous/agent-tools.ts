@@ -454,7 +454,7 @@ const CREATE_FILE_SCHEMA: ToolSchema = {
 
 const GREP_SCHEMA: ToolSchema = {
   name: 'grep',
-  description: 'Search for a text pattern across files in the codebase. Returns matching lines with file paths and line numbers.',
+  description: 'Search for a text pattern across files in the codebase. Returns matching lines with file paths and line numbers. Tip: For finding imports, use a simple substring like "voice-filter" rather than a complex regex — import paths include relative prefixes (../) and .js suffixes.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -2888,7 +2888,13 @@ function buildExecutors(
 
     return tracer.withSpan('agent-loop', `grep:${patternResult.value}`, async () => {
       try {
-        const args = ['-rn', '--color=never', '-m', String(maxResults)];
+        const args = [
+          '-rn', '--color=never', '-m', String(maxResults),
+          '--exclude-dir=node_modules',
+          '--exclude-dir=dist',
+          '--exclude-dir=.git',
+          '--exclude-dir=coverage',
+        ];
         if (filePattern) {
           args.push('--include', filePattern);
         }
@@ -2902,14 +2908,14 @@ function buildExecutors(
         const lines = stdout.trim().split('\n').filter(Boolean);
         const output = lines.length > 0
           ? `Found ${lines.length} matches:\n${lines.join('\n')}`
-          : 'No matches found.';
+          : `No matches found for pattern: ${patternResult.value}\nTip: Try a simpler substring pattern (e.g., just "voice-filter" instead of a complex regex). For imports, search the module name as a plain substring since paths include "./" or "../" prefixes and ".js" suffixes.`;
 
         return successResult(call.id, output, config.maxOutputChars);
       } catch (err) {
         // grep exits 1 when no matches found
         const exitCode = (err as { code?: number }).code;
         if (exitCode === 1) {
-          return successResult(call.id, 'No matches found.', config.maxOutputChars);
+          return successResult(call.id, `No matches found for pattern: ${patternResult.value}\nTip: Try a simpler substring pattern (e.g., just "voice-filter" instead of a complex regex). For imports, search the module name as a plain substring since paths include "./" or "../" prefixes and ".js" suffixes.`, config.maxOutputChars);
         }
         const errorMsg = err instanceof Error ? err.message : String(err);
         return failureResult(call.id, `Grep failed: ${errorMsg}`);

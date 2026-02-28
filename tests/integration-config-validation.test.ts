@@ -136,14 +136,16 @@ describe('config/autonomous.yaml', () => {
 
   it('has valid quiet hours config', () => {
     const raw = loadYaml('config/autonomous.yaml');
-    const auto = raw.autonomous as Record<string, unknown>;
-    const quietHours = auto.quiet_hours as Record<string, unknown>;
-    expect(quietHours).toBeDefined();
-    expect(quietHours.enabled).toBe(true);
+    // quiet_hours settings live under communication.throttle
+    const comm = raw.communication as Record<string, unknown>;
+    expect(comm).toBeDefined();
+    const throttle = comm.throttle as Record<string, unknown>;
+    expect(throttle).toBeDefined();
+    expect(throttle.quiet_hours).toBe(true);
     // Validate time format (HH:MM)
     const timeRegex = /^\d{2}:\d{2}$/;
-    expect(quietHours.start).toMatch(timeRegex);
-    expect(quietHours.end).toMatch(timeRegex);
+    expect(throttle.quiet_start).toMatch(timeRegex);
+    expect(throttle.quiet_end).toMatch(timeRegex);
   });
 
   it('integration mode is approval_required', () => {

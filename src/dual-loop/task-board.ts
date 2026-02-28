@@ -367,6 +367,18 @@ export class TaskBoard {
     }
   }
 
+  /**
+   * Mark all already-completed tasks as delivered.
+   * Called after load() to prevent re-delivery of tasks from previous sessions.
+   */
+  markExistingDoneAsDelivered(): void {
+    for (const task of this.data.tasks) {
+      if (task.status === 'done' || task.status === 'answered_directly' || task.status === 'failed') {
+        this.delivered.add(task.id);
+      }
+    }
+  }
+
   /** Get a queued, unclaimed task with higher priority (lower number) than the threshold */
   getHigherPriorityTask(currentPriority: number): Task | null {
     return this.data.tasks
