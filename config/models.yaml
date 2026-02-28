@@ -3,6 +3,7 @@
 #
 # All models run locally via Ollama. No cloud APIs.
 # Two-model architecture: 122b (81 GB) + 35b-a3b (24 GB) = ~105 GB of 128 GB.
+# KV cache at 131K context adds ~8-10 GB → ~117 GB total, 11 GB headroom.
 
 models:
   # Coding tasks: code generation, refactoring, bug fixes
@@ -10,7 +11,7 @@ models:
   coding:
     provider: ollama
     model: qwen3.5:122b
-    context_length: 40960
+    context_length: 131072
     temperature: 0.1  # Low for code accuracy
     keep_alive: -1    # Never unload (always-hot)
     fallback: null  # This is the primary model
@@ -19,7 +20,7 @@ models:
   primary:
     provider: ollama
     model: qwen3.5:122b
-    context_length: 40960
+    context_length: 131072
     temperature: 0.6  # Balanced for tool use + reasoning
     keep_alive: -1    # Never unload (always-hot)
     fallback: null  # No fallback - this is the fallback
@@ -28,7 +29,7 @@ models:
   autonomous:
     provider: ollama
     model: qwen3.5:122b
-    context_length: 40960
+    context_length: 131072
     temperature: 0.2  # Slightly higher for exploration
     keep_alive: -1    # Never unload (always-hot)
     fallback: null
@@ -77,7 +78,7 @@ hardware:
   platform: mac-studio-m4-max
   memory_gb: 128
   max_concurrent_models: 2  # Two-model architecture: 122b + 35b-a3b
-  target_memory_usage_pct: 82  # ~105 GB of 128 GB, ~23 GB headroom
+  target_memory_usage_pct: 91  # ~117 GB of 128 GB (incl. 131K KV cache), ~11 GB headroom
 
 # Ollama settings
 ollama:

@@ -98,13 +98,13 @@ export const DEFAULT_CONTEXT_TIERS: ContextTiersConfig = {
   deep: {
     compact: 8192,
     standard: 24576,
-    extended: 40960,
+    extended: 131072,
     contextPressureWarningThreshold: 0.80,
   },
   coder: {
     compact: 8192,
     standard: 16384,
-    extended: 32768,
+    extended: 65536,
     responseBufferTokens: 2000,
   },
 };

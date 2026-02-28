@@ -149,7 +149,7 @@ describe('Context Tiers', () => {
     });
 
     it('resolves extended tier', () => {
-      expect(resolveNumCtx(DEFAULT_CONTEXT_TIERS.coder, 'extended')).toBe(32768);
+      expect(resolveNumCtx(DEFAULT_CONTEXT_TIERS.coder, 'extended')).toBe(65536);
     });
   });
 

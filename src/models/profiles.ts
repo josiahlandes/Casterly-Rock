@@ -184,7 +184,7 @@ const QWEN35_122B: ModelProfile = {
     temperature: 0.6,
     numPredict: 2048,
     ollamaOptions: {
-      num_ctx: 40960,  // qwen3.5 supports 256K; use 40K as practical max with 128GB unified memory (81GB model + KV cache)
+      num_ctx: 131072,  // qwen3.5 supports 256K; use 131K as practical max with 128GB unified memory (81GB model + ~10GB KV cache)
     },
   },
   responseHints: [

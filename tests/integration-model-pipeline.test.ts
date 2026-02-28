@@ -176,7 +176,7 @@ describe('full pipeline: qwen3.5:122b', () => {
   it('sets correct generation overrides', () => {
     expect(result.generationOverrides.temperature).toBe(0.6);
     expect(result.generationOverrides.num_predict).toBe(2048);
-    expect(result.generationOverrides.num_ctx).toBe(40960);
+    expect(result.generationOverrides.num_ctx).toBe(131072);
   });
 });
 

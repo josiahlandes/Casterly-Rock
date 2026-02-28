@@ -63,6 +63,16 @@ interface PlanResult {
   steps: PlanStep[];
 }
 
+/**
+ * Tracks a file created or modified by tool calls within a step.
+ * Accumulated across steps to form the workspace manifest.
+ */
+export interface FileOperation {
+  path: string;
+  action: 'created' | 'modified';
+  lines?: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Default Configuration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,13 +88,13 @@ const DEFAULT_CONFIG: DeepLoopConfig = {
   tiers: {
     compact: 8192,
     standard: 24576,
-    extended: 40960,
+    extended: 131072,
     contextPressureWarningThreshold: 0.80,
   },
   coderTiers: {
     compact: 8192,
     standard: 16384,
-    extended: 32768,
+    extended: 65536,
     responseBufferTokens: 2000,
   },
 };
@@ -136,6 +146,8 @@ export class DeepLoop {
   private running: boolean = false;
   private currentTask: Task | null = null;
   private revisionCounts: Map<string, number> = new Map();
+  /** File operations tracked during the current executeWithTools call */
+  private stepFileOps: FileOperation[] = [];
 
   constructor(
     provider: LlmProvider,
@@ -382,6 +394,11 @@ export class DeepLoop {
     const artifacts: TaskArtifact[] = [...(task.artifacts ?? [])];
     let stepsCompleted = 0;
 
+    // Workspace manifest: tracks files created/modified across ALL steps.
+    // This gives each step awareness of what earlier steps produced,
+    // preventing naming inconsistencies and import mismatches.
+    const workspaceManifest: FileOperation[] = [];
+
     // Find the first pending step (supports resuming parked tasks)
     let startIdx = steps.findIndex((s) => s.status === 'pending');
     if (startIdx < 0) startIdx = 0;
@@ -421,10 +438,30 @@ export class DeepLoop {
       step.status = 'in_progress';
       this.taskBoard.update(task.id, { planSteps: steps });
 
+      // Reset per-step file operation tracking
+      this.stepFileOps = [];
+
       try {
         // Collect completed step outputs for context continuity
         const priorSteps = steps.slice(0, i).filter((s) => s.status === 'done' && s.output);
-        const result = await this.executeStep(task, step, priorSteps, steps.length);
+        const result = await this.executeStep(task, step, priorSteps, steps.length, workspaceManifest);
+
+        // Merge file operations tracked during this step into the manifest
+        for (const op of this.stepFileOps) {
+          const existing = workspaceManifest.find((f) => f.path === op.path);
+          if (existing) {
+            if (op.lines !== undefined) existing.lines = op.lines;
+          } else {
+            workspaceManifest.push(op);
+          }
+        }
+
+        if (workspaceManifest.length > 0) {
+          tracer.log('deep-loop', 'debug', `Workspace manifest: ${workspaceManifest.length} files tracked`, {
+            files: workspaceManifest.map((f) => f.path),
+          });
+        }
+
         step.status = 'done';
         step.output = result.output;
 
@@ -476,6 +513,7 @@ export class DeepLoop {
     step: PlanStep,
     priorSteps: PlanStep[] = [],
     totalSteps: number = 1,
+    manifest: FileOperation[] = [],
   ): Promise<{ output: string; artifact?: TaskArtifact }> {
     // Build prior step context — most recent step gets full output,
     // older steps get truncated to keep the prompt manageable.
@@ -491,9 +529,13 @@ export class DeepLoop {
       priorContext = `## Previous Step Results\n${sections.join('\n\n')}`;
     }
 
+    // Inject workspace manifest so the model knows what files exist
+    const manifestContext = this.formatWorkspaceManifest(manifest);
+
     const prompt = [
       `## Task: ${task.originalMessage ?? '(no message)'}`,
       `## Plan: ${task.plan ?? '(no plan)'}`,
+      manifestContext,
       priorContext,
       `## Current Step: ${step.description}`,
       task.triageNotes ? `## Context: ${task.triageNotes}` : '',
@@ -659,7 +701,9 @@ Rules:
 - Be precise and minimal. Do not describe the tool output format — extract the actual information.
 - When using grep, always set file_pattern (e.g., "*.ts") to filter results. Use simple substring patterns, not complex regex.
 - If grep doesn't find what you need after 2 tries, switch to read_file on specific files instead.
-- Do NOT repeat the same tool call with the same arguments — try a different approach.`
+- Do NOT repeat the same tool call with the same arguments — try a different approach.
+- When a Workspace Manifest is provided, use the EXACT file paths listed. Do NOT guess or vary file names — read existing files with read_file to check their exports before importing.
+- Maintain consistent naming conventions (camelCase, PascalCase, kebab-case) with files already created.`
         : 'You are a code implementation assistant. Write the code changes requested. Be precise and minimal.',
       temperature: 0.1,
       maxTokens: 4096,
@@ -767,6 +811,9 @@ Rules:
           result: result.output ?? result.error ?? '(no output)',
           isError: !result.success,
         });
+
+        // Track file operations for the workspace manifest
+        this.trackFileOperation(call.name, call.input, result.output, result.success);
       }
     }
 
@@ -848,6 +895,61 @@ Rules:
       resolvedAt: new Date().toISOString(),
     });
     this.revisionCounts.delete(id);
+  }
+
+  /**
+   * Track file operations from create_file / edit_file tool calls.
+   * Called during executeWithTools to build the workspace manifest.
+   */
+  private trackFileOperation(
+    callName: string,
+    callInput: Record<string, unknown>,
+    resultOutput: string | undefined,
+    success: boolean,
+  ): void {
+    if (!success) return;
+    if (callName !== 'create_file' && callName !== 'edit_file') return;
+
+    const path = String(callInput['path'] ?? '');
+    if (!path) return;
+
+    const action: 'created' | 'modified' = callName === 'create_file' ? 'created' : 'modified';
+    const linesMatch = resultOutput?.match(/\((\d+) lines?\)/);
+    const lines = linesMatch ? parseInt(linesMatch[1]!, 10) : undefined;
+
+    // Deduplicate: if the same path was already tracked, update line count
+    const existing = this.stepFileOps.find((f) => f.path === path);
+    if (existing) {
+      // Keep original action (created stays created even if later modified)
+      if (lines !== undefined) {
+        existing.lines = lines;
+      }
+      return;
+    }
+
+    this.stepFileOps.push({ path, action, ...(lines !== undefined ? { lines } : {}) });
+  }
+
+  /**
+   * Format the workspace manifest for injection into step prompts.
+   * Returns empty string if no files have been tracked.
+   */
+  private formatWorkspaceManifest(manifest: FileOperation[]): string {
+    if (manifest.length === 0) return '';
+
+    const entries = manifest.map(
+      (f) => `- ${f.path} (${f.action}${f.lines !== undefined ? `, ${f.lines} lines` : ''})`,
+    );
+
+    return [
+      `## Workspace Manifest`,
+      `Files created/modified in previous steps:`,
+      ...entries,
+      ``,
+      `IMPORTANT: Use these EXACT file paths when importing or referencing files.`,
+      `Use read_file to check a file's exports or contents before importing from it.`,
+      `Maintain consistent naming conventions (case, separators) with existing files.`,
+    ].join('\n');
   }
 
   private sleep(ms: number): Promise<void> {
