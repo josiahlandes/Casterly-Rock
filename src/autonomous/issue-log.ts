@@ -28,8 +28,8 @@
  * No user-provided sensitive data is stored in issues.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { safeWriteFile } from '../persistence/safe-write.js';
 import YAML from 'yaml';
 import { getTracer } from './debug.js';
 
@@ -293,14 +293,11 @@ export class IssueLog {
       }
 
       const resolvedPath = resolvePath(this.config.path);
-      const dir = dirname(resolvedPath);
-
-      await mkdir(dir, { recursive: true });
 
       const content = YAML.stringify(this.data, { lineWidth: 120 });
       const startMs = Date.now();
 
-      await writeFile(resolvedPath, content, 'utf8');
+      await safeWriteFile(resolvedPath, content, 'utf8');
       this.dirty = false;
 
       tracer.logIO('issue-log', 'write', resolvedPath, Date.now() - startMs, {

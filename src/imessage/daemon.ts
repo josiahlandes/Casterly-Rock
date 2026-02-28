@@ -376,6 +376,8 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         sendMessageFn: sendMessage,
       });
 
+      autonomousController.start();
+
       safeLogger.info('Dual-loop controller initialized', {
         fastModel: 'qwen3:27b',
         deepModel: 'qwen3.5:122b',

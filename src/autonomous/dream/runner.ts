@@ -165,6 +165,16 @@ export interface DreamOutcome {
   graphEdges: number;
   graphComponents: number;
 
+  /** Why each skipped phase was skipped (phase name → reason) */
+  phaseSkipReasons: Record<string, string>;
+
+  /** Per-tier summary of phase execution */
+  tierSummary: {
+    core: { completed: number; skipped: number; errored: number };
+    vision: { completed: number; skipped: number; errored: number };
+    memory: { completed: number; skipped: number; errored: number };
+  };
+
   /** Total duration in milliseconds */
   durationMs: number;
 
@@ -278,6 +288,12 @@ export class DreamCycleRunner {
         graphNodes: 0,
         graphEdges: 0,
         graphComponents: 0,
+        phaseSkipReasons: {},
+        tierSummary: {
+          core: { completed: 0, skipped: 0, errored: 0 },
+          vision: { completed: 0, skipped: 0, errored: 0 },
+          memory: { completed: 0, skipped: 0, errored: 0 },
+        },
         durationMs: 0,
         timestamp: new Date().toISOString(),
       };
@@ -292,6 +308,7 @@ export class DreamCycleRunner {
       } catch (err) {
         tracer.log('dream', 'warn', `Consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('consolidateReflections');
+        outcome.phaseSkipReasons['consolidateReflections'] = 'error';
       }
 
       // Phase 2: Update world model
@@ -301,6 +318,7 @@ export class DreamCycleRunner {
       } catch (err) {
         tracer.log('dream', 'warn', `World model update failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('updateWorldModel');
+        outcome.phaseSkipReasons['updateWorldModel'] = 'error';
       }
 
       // Phase 3: Reorganize goals
@@ -310,6 +328,7 @@ export class DreamCycleRunner {
       } catch (err) {
         tracer.log('dream', 'warn', `Goal reorganization failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('reorganizeGoals');
+        outcome.phaseSkipReasons['reorganizeGoals'] = 'error';
       }
 
       // Phase 4: Explore (code archaeology)
@@ -339,6 +358,7 @@ export class DreamCycleRunner {
       } catch (err) {
         tracer.log('dream', 'warn', `Exploration failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('explore');
+        outcome.phaseSkipReasons['explore'] = 'error';
       }
 
       // Phase 5: Update self-model
@@ -350,6 +370,7 @@ export class DreamCycleRunner {
       } catch (err) {
         tracer.log('dream', 'warn', `Self-model update failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('updateSelfModel');
+        outcome.phaseSkipReasons['updateSelfModel'] = 'error';
       }
 
       // Phase 7a: Shadow analysis (Vision Tier 2)
@@ -371,7 +392,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Shadow analysis failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('shadowAnalysis');
+          outcome.phaseSkipReasons['shadowAnalysis'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('shadowAnalysis');
+        outcome.phaseSkipReasons['shadowAnalysis'] = 'not_configured';
       }
 
       // Phase 7b: Tool inventory management (Vision Tier 2)
@@ -393,7 +418,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Tool inventory failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('toolInventory');
+          outcome.phaseSkipReasons['toolInventory'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('toolInventory');
+        outcome.phaseSkipReasons['toolInventory'] = 'not_configured';
       }
 
       // Phase 8a: Adversarial challenge generation (Vision Tier 3)
@@ -415,7 +444,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Adversarial challenges failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('adversarialChallenges');
+          outcome.phaseSkipReasons['adversarialChallenges'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('adversarialChallenges');
+        outcome.phaseSkipReasons['adversarialChallenges'] = 'not_configured';
       }
 
       // Phase 8b: Prompt evolution generation (Vision Tier 3)
@@ -435,7 +468,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Prompt evolution failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('promptEvolution');
+          outcome.phaseSkipReasons['promptEvolution'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('promptEvolution');
+        outcome.phaseSkipReasons['promptEvolution'] = 'not_configured';
       }
 
       // Phase 8c: Training data extraction (Vision Tier 3)
@@ -452,7 +489,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Training data extraction failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('trainingDataExtraction');
+          outcome.phaseSkipReasons['trainingDataExtraction'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('trainingDataExtraction');
+        outcome.phaseSkipReasons['trainingDataExtraction'] = 'not_configured';
       }
 
       // Phase 9: Write retrospective
@@ -465,10 +506,12 @@ export class DreamCycleRunner {
           outcome.phasesCompleted.push('writeRetrospective');
         } else {
           outcome.phasesSkipped.push('writeRetrospective');
+          outcome.phaseSkipReasons['writeRetrospective'] = 'not_due';
         }
       } catch (err) {
         tracer.log('dream', 'warn', `Retrospective failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('writeRetrospective');
+        outcome.phaseSkipReasons['writeRetrospective'] = 'error';
       }
 
       // Phase 10: Link network decay (Advanced Memory: Zettelkasten A-MEM)
@@ -483,7 +526,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Link decay failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('linkDecay');
+          outcome.phaseSkipReasons['linkDecay'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('linkDecay');
+        outcome.phaseSkipReasons['linkDecay'] = 'not_configured';
       }
 
       // Phase 11: AUDN consolidation (Advanced Memory: Mem0)
@@ -512,7 +559,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `AUDN consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('audnConsolidation');
+          outcome.phaseSkipReasons['audnConsolidation'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('audnConsolidation');
+        outcome.phaseSkipReasons['audnConsolidation'] = !audnConsolidator ? 'not_configured' : 'empty_queue';
       }
 
       // Phase 12: Entropy-based tier migration evaluation (Advanced Memory: SAGE)
@@ -539,11 +590,16 @@ export class DreamCycleRunner {
             tracer.log('dream', 'info', `Entropy tier migration: ${report.evaluated} evaluated → ${report.promotions} promote, ${report.demotions} demote, ${report.stable} stable`);
           } else {
             outcome.phasesSkipped.push('entropyTierMigration');
+            outcome.phaseSkipReasons['entropyTierMigration'] = 'empty_warm_tier';
           }
         } catch (err) {
           tracer.log('dream', 'warn', `Entropy tier migration failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('entropyTierMigration');
+          outcome.phaseSkipReasons['entropyTierMigration'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('entropyTierMigration');
+        outcome.phaseSkipReasons['entropyTierMigration'] = 'not_configured';
       }
 
       // Phase 13: Memory snapshot (Advanced Memory: Git-Backed Versioning Letta)
@@ -560,7 +616,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Memory snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('memorySnapshot');
+          outcome.phaseSkipReasons['memorySnapshot'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('memorySnapshot');
+        outcome.phaseSkipReasons['memorySnapshot'] = 'not_configured';
       }
 
       // Phase 14: Memory evolution summary (Advanced Memory: A-MEM)
@@ -572,7 +632,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Memory evolution summary failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('memoryEvolution');
+          outcome.phaseSkipReasons['memoryEvolution'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('memoryEvolution');
+        outcome.phaseSkipReasons['memoryEvolution'] = 'not_configured';
       }
 
       // Phase 15: Temporal invalidation sweep (Advanced Memory: Mem0)
@@ -587,7 +651,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Temporal invalidation failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('temporalInvalidation');
+          outcome.phaseSkipReasons['temporalInvalidation'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('temporalInvalidation');
+        outcome.phaseSkipReasons['temporalInvalidation'] = !temporalInvalidation ? 'not_configured' : 'empty_store';
       }
 
       // Phase 16: Skill files summary (Advanced Memory: Letta)
@@ -601,7 +669,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Skill files summary failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('skillFiles');
+          outcome.phaseSkipReasons['skillFiles'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('skillFiles');
+        outcome.phaseSkipReasons['skillFiles'] = !skillFilesManager ? 'not_configured' : 'empty_store';
       }
 
       // Phase 17: Graph memory summary (Advanced Memory: Mem0)
@@ -616,7 +688,11 @@ export class DreamCycleRunner {
         } catch (err) {
           tracer.log('dream', 'warn', `Graph memory summary failed: ${err instanceof Error ? err.message : String(err)}`);
           outcome.phasesSkipped.push('graphMemory');
+          outcome.phaseSkipReasons['graphMemory'] = 'error';
         }
+      } else {
+        outcome.phasesSkipped.push('graphMemory');
+        outcome.phaseSkipReasons['graphMemory'] = !graphMemory ? 'not_configured' : 'empty_store';
       }
 
       // Promote stale context entries
@@ -628,12 +704,35 @@ export class DreamCycleRunner {
         }
       }
 
+      // Compute per-tier summary
+      const corePhases = ['consolidateReflections', 'updateWorldModel', 'reorganizeGoals', 'explore', 'updateSelfModel'];
+      const visionPhases = ['shadowAnalysis', 'toolInventory', 'adversarialChallenges', 'promptEvolution', 'trainingDataExtraction', 'writeRetrospective'];
+      const memoryPhases = ['linkDecay', 'audnConsolidation', 'entropyTierMigration', 'memorySnapshot', 'memoryEvolution', 'temporalInvalidation', 'skillFiles', 'graphMemory'];
+
+      for (const [tier, phases] of [['core', corePhases], ['vision', visionPhases], ['memory', memoryPhases]] as const) {
+        const tierStats = outcome.tierSummary[tier];
+        for (const p of phases) {
+          if (outcome.phasesCompleted.includes(p)) {
+            tierStats.completed++;
+          } else if (outcome.phaseSkipReasons[p] === 'error') {
+            tierStats.errored++;
+          } else if (outcome.phasesSkipped.includes(p)) {
+            tierStats.skipped++;
+          }
+        }
+      }
+
       outcome.durationMs = Date.now() - startMs;
 
+      const errored = Object.values(outcome.phaseSkipReasons).filter(r => r === 'error').length;
+      const notConfigured = Object.values(outcome.phaseSkipReasons).filter(r => r === 'not_configured').length;
       tracer.log('dream', 'info', '=== Dream cycle complete ===', {
         completed: outcome.phasesCompleted.length,
         skipped: outcome.phasesSkipped.length,
+        errored,
+        notConfigured,
         durationMs: outcome.durationMs,
+        tierSummary: outcome.tierSummary,
       });
 
       return outcome;

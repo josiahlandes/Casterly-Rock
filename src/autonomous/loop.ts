@@ -879,12 +879,14 @@ export class AutonomousLoop {
         tags: [],
       });
 
-      // Difficulty informs candidate generation (bestOfN) but NOT turn limits.
-      // Local inference has no cost — every task gets full turns for reflection.
-      const scaledMaxTurns = this.agentConfig.maxTurns ?? 200;
+      // Turn limit: user/goal work gets full turns, background cycles get a tighter ceiling
+      const isHighPriority = effectiveTrigger.type === 'user' || effectiveTrigger.type === 'goal';
+      const scaledMaxTurns = isHighPriority
+        ? (this.agentConfig.maxTurns ?? 200)
+        : (this.agentConfig.maxTurnsBackground ?? this.agentConfig.maxTurns ?? 40);
 
       // Token budget: user/goal work gets full budget, background cycles get moderate budget
-      const tokenBudget = (effectiveTrigger.type === 'user' || effectiveTrigger.type === 'goal')
+      const tokenBudget = isHighPriority
         ? (this.agentConfig.maxTokensPerCycle ?? 500_000)
         : (this.agentConfig.maxTokensPerCycleBackground ?? this.agentConfig.maxTokensPerCycle ?? 100_000);
 
@@ -1164,6 +1166,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
     agentLoop: raw.agent_loop
       ? {
           maxTurns: raw.agent_loop.max_turns,
+          maxTurnsBackground: raw.agent_loop.max_turns_background,
           maxTokensPerCycle: raw.agent_loop.max_tokens_per_cycle,
           maxTokensPerCycleBackground: raw.agent_loop.max_tokens_per_cycle_background,
           reasoningModel: raw.agent_loop.reasoning_model,

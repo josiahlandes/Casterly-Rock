@@ -77,6 +77,9 @@ export interface AgentLoopConfig {
   /** Maximum number of reason-act-observe turns per cycle */
   maxTurns: number;
 
+  /** Tighter turn ceiling for background (scheduled/event) cycles. Falls back to maxTurns. */
+  maxTurnsBackground?: number | undefined;
+
   /** Soft limit on total tokens per cycle (input + output) */
   maxTokensPerCycle: number;
 
