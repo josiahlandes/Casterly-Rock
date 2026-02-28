@@ -2,17 +2,18 @@
 # Mac Studio M4 Max Edition - Local Ollama Only
 #
 # All models run locally via Ollama. No cloud APIs.
-# With 128GB unified memory, can run multiple 70B models simultaneously.
+# Two-model architecture: 122b (81 GB) + 35b-a3b (24 GB) = ~105 GB of 128 GB.
 
 models:
   # Coding tasks: code generation, refactoring, bug fixes
+  # The 122b matches dedicated coding models on benchmarks (72.0 SWE-bench).
   coding:
     provider: ollama
-    model: qwen3-coder-next:latest
-    context_length: 32768
+    model: qwen3.5:122b
+    context_length: 40960
     temperature: 0.1  # Low for code accuracy
-    keep_alive: -1    # Never unload (Phase 5: always-hot)
-    fallback: qwen3.5:122b
+    keep_alive: -1    # Never unload (always-hot)
+    fallback: null  # This is the primary model
 
   # Primary/General: reasoning, planning, conversation
   primary:
@@ -20,22 +21,23 @@ models:
     model: qwen3.5:122b
     context_length: 40960
     temperature: 0.6  # Balanced for tool use + reasoning
-    keep_alive: -1    # Never unload (Phase 5: always-hot)
+    keep_alive: -1    # Never unload (always-hot)
     fallback: null  # No fallback - this is the fallback
 
   # Autonomous improvement cycles
   autonomous:
     provider: ollama
-    model: qwen3-coder-next:latest
-    context_length: 32768
+    model: qwen3.5:122b
+    context_length: 40960
     temperature: 0.2  # Slightly higher for exploration
-    keep_alive: -1    # Never unload (Phase 5: always-hot)
-    fallback: qwen3.5:122b
+    keep_alive: -1    # Never unload (always-hot)
+    fallback: null
 
   # Fast model: triage, review, acknowledgment (dual-loop FastLoop)
+  # MoE: 35B total params, 3B active — blazing fast inference for triage.
   fast:
     provider: ollama
-    model: qwen3.5:27b
+    model: qwen3.5:35b-a3b
     context_length: 24576   # Extended tier max
     temperature: 0.1  # Low for triage accuracy
     keep_alive: -1    # Never unload — always-hot for <2s responses
@@ -74,11 +76,11 @@ routing:
 hardware:
   platform: mac-studio-m4-max
   memory_gb: 128
-  max_concurrent_models: 3  # Updated: can run 3 models with 128GB (Phase 5)
-  target_memory_usage_pct: 70  # Leave 30% headroom for OS and tools
+  max_concurrent_models: 2  # Two-model architecture: 122b + 35b-a3b
+  target_memory_usage_pct: 82  # ~105 GB of 128 GB, ~23 GB headroom
 
 # Ollama settings
 ollama:
   base_url: http://localhost:11434
   timeout_ms: 300000  # 5 minutes for long generations
-  keep_alive: -1       # Never unload — all three models stay hot
+  keep_alive: -1       # Never unload — both models stay hot

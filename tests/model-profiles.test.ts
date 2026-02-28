@@ -143,13 +143,6 @@ describe('resolveModelProfile', () => {
     expect(profile.generation?.temperature).toBe(0.7);
   });
 
-  it('returns built-in profile for qwen3-coder-next:latest', () => {
-    const profile = resolveModelProfile('qwen3-coder-next:latest');
-    expect(profile.modelId).toBe('qwen3-coder-next:latest');
-    expect(profile.family).toBe('qwen');
-    expect(profile.generation?.temperature).toBe(0.1);
-  });
-
   it('falls back to family match for unknown qwen3.5 variant', () => {
     const profile = resolveModelProfile('qwen3.5:35b');
     expect(profile.modelId).toBe('qwen3.5:35b');

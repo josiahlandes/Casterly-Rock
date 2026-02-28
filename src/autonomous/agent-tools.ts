@@ -711,8 +711,7 @@ const UPDATE_GOAL_SCHEMA: ToolSchema = {
 const DELEGATE_SCHEMA: ToolSchema = {
   name: 'delegate',
   description: `Send a sub-task to a specific model. Use this for:
-- hermes3:70b — reasoning, planning, architectural decisions, evaluating alternatives
-- qwen3-coder-next:latest — code generation, analysis, modification, review
+- qwen3.5:122b — reasoning, planning, code generation, analysis, review
 
 The delegate receives the task description and optional file contents as context.`,
   inputSchema: {
@@ -721,7 +720,7 @@ The delegate receives the task description and optional file contents as context
       model: {
         type: 'string',
         description: 'Which model to delegate to.',
-        enum: ['hermes3:70b', 'qwen3-coder-next:latest'],
+        enum: ['qwen3.5:122b'],
       },
       task: {
         type: 'string',

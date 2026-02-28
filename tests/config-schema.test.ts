@@ -63,7 +63,7 @@ describe('appConfigSchema — valid configs', () => {
         model: 'qwen3.5:122b',
         baseUrl: 'http://localhost:11434',
         timeoutMs: 60000,
-        codingModel: 'qwen3-coder-next:latest',
+        codingModel: 'qwen3.5:122b',
       },
       sensitivity: {
         alwaysLocal: ['credentials', 'health', 'finances'],
@@ -71,7 +71,7 @@ describe('appConfigSchema — valid configs', () => {
     };
     const result = appConfigSchema.parse(config);
     expect(result.local.timeoutMs).toBe(60000);
-    expect(result.local.codingModel).toBe('qwen3-coder-next:latest');
+    expect(result.local.codingModel).toBe('qwen3.5:122b');
   });
 
   it('accepts all sensitive categories', () => {

@@ -1,7 +1,7 @@
 /**
  * Triage Prompt — System prompts for FastLoop message classification.
  *
- * The FastLoop uses the 27B model to triage incoming user messages into:
+ * The FastLoop uses the 35B-A3B model to triage incoming user messages into:
  *   - simple:         FastLoop answers directly
  *   - complex:        Create a task for DeepLoop
  *   - conversational: Greetings, small talk — answer directly

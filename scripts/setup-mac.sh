@@ -18,8 +18,8 @@ CASTERLY_HOME="${HOME}/.casterly"
 WORKSPACE_DIR="${CASTERLY_HOME}/workspace"
 BIN_DIR="${HOME}/.local/bin"
 
-PRIMARY_MODEL="hermes3:70b"
-CODING_MODEL="qwen3-coder-next:latest"
+PRIMARY_MODEL="qwen3.5:122b"
+FAST_MODEL="qwen3.5:35b-a3b"
 OLLAMA_URL="http://localhost:11434"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -125,7 +125,7 @@ pull_model() {
 
 info "Checking Ollama models..."
 pull_model "$PRIMARY_MODEL"
-pull_model "$CODING_MODEL"
+pull_model "$FAST_MODEL"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Step 5: Install npm dependencies

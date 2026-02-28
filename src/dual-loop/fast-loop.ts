@@ -1,5 +1,5 @@
 /**
- * Fast Loop — The 27B user-facing agent.
+ * Fast Loop — The 35B-A3B user-facing agent.
  *
  * Runs on a ~2-second heartbeat, handling:
  *   - User message triage and acknowledgment
@@ -314,7 +314,7 @@ export class FastLoop {
   // ── Triage ──────────────────────────────────────────────────────────────
 
   /**
-   * Triage a user message by calling the 27B model.
+   * Triage a user message by calling the 35B-A3B model.
    */
   private async triageMessage(message: string, sender: string): Promise<TriageResult> {
     const tracer = getTracer();

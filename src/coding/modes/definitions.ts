@@ -38,7 +38,7 @@ Guidelines:
   canDelete: true,
   canBash: true,
   canGit: true,
-  preferredModel: 'qwen3-coder-next:latest',
+  preferredModel: 'qwen3.5:122b',
   fallbackModel: 'qwen3.5:122b',
 };
 
@@ -91,7 +91,7 @@ When the plan is approved, switch to CODE mode to implement.`,
   canBash: false,
   canGit: false,
   preferredModel: 'qwen3.5:122b',
-  fallbackModel: 'qwen3-coder-next:latest',
+  fallbackModel: 'qwen3.5:122b',
 };
 
 /**
@@ -124,7 +124,7 @@ suggest switching to CODE mode.`,
   canBash: false,
   canGit: false,
   preferredModel: 'qwen3.5:122b',
-  fallbackModel: 'qwen3-coder-next:latest',
+  fallbackModel: 'qwen3.5:122b',
 };
 
 /**
@@ -172,7 +172,7 @@ Suggest specific fixes that can be applied in CODE mode.`,
   canDelete: false,
   canBash: false,
   canGit: false,
-  preferredModel: 'qwen3-coder-next:latest',
+  preferredModel: 'qwen3.5:122b',
   fallbackModel: 'qwen3.5:122b',
 };
 

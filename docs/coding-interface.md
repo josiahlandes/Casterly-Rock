@@ -55,8 +55,8 @@ This is what Claude Code is to Opus, or what Aider is to GPT-4. Tyrion needs the
               ┌───────────────────────────────┐
               │        Model Router           │
               │                               │
-              │  qwen3.5:122b (reasoning)     │
-              │  Qwen3-Coder (implementation) │
+              │  qwen3.5:122b (reason+code)   │
+              │  qwen3.5:35b-a3b (fast loop)  │
               └───────────────────────────────┘
 ```
 
@@ -521,13 +521,13 @@ interface ModelRouter {
   architect: 'qwen3.5:122b';
 
   // Code implementation
-  code: 'qwen3-coder-next:latest';
+  code: 'qwen3.5:122b';
 
   // Quick questions, explanations
   ask: 'qwen3.5:122b';
 
-  // Code review
-  review: 'qwen3-coder-next:latest';
+  // Code review (fast model for speed)
+  review: 'qwen3.5:35b-a3b';
 }
 ```
 
@@ -540,16 +540,13 @@ function routeToModel(mode: Mode, task: string): string {
       return 'qwen3.5:122b';      // Reasoning for planning
 
     case 'code':
-      return 'qwen3-coder-next';  // Coding specialist
+      return 'qwen3.5:122b';      // Reasoning + code generation
 
     case 'ask':
-      // Use coding model for code questions, reasoning for general
-      return isCodeQuestion(task)
-        ? 'qwen3-coder-next'
-        : 'qwen3.5:122b';
+      return 'qwen3.5:122b';      // All questions use DeepLoop
 
     case 'review':
-      return 'qwen3-coder-next';  // Code understanding
+      return 'qwen3.5:35b-a3b';   // Fast triage/review (MoE)
   }
 }
 ```
@@ -1600,9 +1597,9 @@ coding:
   # Model routing
   models:
     architect: qwen3.5:122b
-    code: qwen3-coder-next:latest
+    code: qwen3.5:122b
     ask: qwen3.5:122b
-    review: qwen3-coder-next:latest
+    review: qwen3.5:35b-a3b
 
   # Session settings
   session:

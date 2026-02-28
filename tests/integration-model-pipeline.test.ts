@@ -181,40 +181,6 @@ describe('full pipeline: qwen3.5:122b', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Full pipeline for qwen3-coder-next:latest (coding model)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('full pipeline: qwen3-coder-next:latest', () => {
-  const result = runFullPipeline('qwen3-coder-next:latest');
-
-  it('resolves the correct profile', () => {
-    expect(result.profile.modelId).toBe('qwen3-coder-next:latest');
-    expect(result.profile.family).toBe('qwen');
-  });
-
-  it('enriches system prompt with code-focused hint', () => {
-    expect(result.systemPrompt).toContain(BASE_SYSTEM_PROMPT);
-    expect(result.systemPrompt).toContain('code correctness');
-  });
-
-  it('does not add tool routing rules (no tool overrides)', () => {
-    // Qwen profile has no toolOverrides, so tools should pass through
-    expect(result.tools).toBe(SAMPLE_TOOLS);
-  });
-
-  it('sets lower temperature for coding precision', () => {
-    expect(result.generationOverrides.temperature).toBe(0.1);
-    expect(result.generationOverrides.num_predict).toBe(4096);
-  });
-
-  it('has no response hints', () => {
-    const text = 'Hello ```tool_call\nfoo\n``` world';
-    const cleaned = applyResponseHints(text, result.profile);
-    expect(cleaned).toBe(text); // No hints, so unchanged
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // Full pipeline for hermes3:70b (legacy model)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -278,12 +244,10 @@ describe('family-based fallback', () => {
     expect(result.generationOverrides.temperature).toBe(0.6);
   });
 
-  it('qwen3-coder-next:32b falls back to default (family guess is qwen3-coder-next, not qwen)', () => {
-    // Family extraction splits on ':', so 'qwen3-coder-next:32b' -> 'qwen3-coder-next'
-    // which does NOT match the built-in 'qwen' family. Falls through to DEFAULT_PROFILE.
-    const result = runFullPipeline('qwen3-coder-next:32b');
+  it('unknown-family:7b falls back to DEFAULT_PROFILE', () => {
+    const result = runFullPipeline('unknown-family:7b');
     expect(result.profile.family).toBeUndefined();
-    expect(result.profile.modelId).toBe('qwen3-coder-next:32b');
+    expect(result.profile.modelId).toBe('unknown-family:7b');
   });
 });
 

@@ -915,12 +915,12 @@ describe('Reasoning Scaler (Phase 5)', () => {
         '../src/autonomous/reasoning/scaling.js'
       );
       const scaler = new ReasoningScaler({
-        codingModel: 'qwen3-coder-next:latest',
+        codingModel: 'qwen3.5:122b',
         reasoningModel: 'hermes3:70b',
       });
       const config = scaler.getConfig();
 
-      expect(config.codingModel).toBe('qwen3-coder-next:latest');
+      expect(config.codingModel).toBe('qwen3.5:122b');
       expect(config.reasoningModel).toBe('hermes3:70b');
     });
 

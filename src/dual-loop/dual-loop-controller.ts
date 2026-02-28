@@ -43,11 +43,11 @@ import type { DeliverFn } from './fast-loop.js';
  * Options for creating a DualLoopController.
  */
 export interface DualLoopControllerOptions {
-  /** LlmProvider for the FastLoop (27B model) */
+  /** LlmProvider for the FastLoop (35B-A3B model) */
   fastProvider: LlmProvider;
   /** LlmProvider for the DeepLoop (122B model) */
   deepProvider: LlmProvider;
-  /** ConcurrentProvider for Coder dispatch */
+  /** ConcurrentProvider for model dispatch */
   concurrentProvider: ConcurrentProvider;
   /** Shared event bus (same instance used by watchers) */
   eventBus: EventBus;

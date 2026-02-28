@@ -210,26 +210,10 @@ const HERMES3_70B: ModelProfile = {
   },
 };
 
-/**
- * qwen3-coder-next profile (family: qwen).
- * Coding-specialized model. Low temperature for precision.
- */
-const QWEN3_CODER: ModelProfile = {
-  modelId: 'qwen3-coder-next:latest',
-  displayName: 'Qwen3 Coder Next',
-  family: 'qwen',
-  generation: {
-    temperature: 0.1,
-    numPredict: 4096,
-  },
-  systemPromptHint: 'Focus on code correctness and completeness. Use the write_file tool for code output rather than putting code in your text response.',
-};
-
 /** All built-in profiles indexed by model ID */
 const BUILT_IN_PROFILES = new Map<string, ModelProfile>([
   [QWEN35_122B.modelId, QWEN35_122B],
   [HERMES3_70B.modelId, HERMES3_70B],
-  [QWEN3_CODER.modelId, QWEN3_CODER],
 ]);
 
 // ─── Config Loading ──────────────────────────────────────────────────────────

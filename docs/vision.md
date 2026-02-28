@@ -51,8 +51,8 @@ This means the system can afford patterns that cloud architectures cannot:
 
 ### What 128GB Enables
 
-- **qwen3.5:122b + qwen3-coder-next concurrently** -- two 70B+ parameter models coexisting in memory. No cold starts, no swapping, no choosing between them. The LLM decides which model handles each step at runtime.
-- **Headroom for a third lightweight model** (7b-13b) that can serve as a fast tool -- a draft generator, a quick classifier, or a spell-checker for the executive model's reasoning. The 122b model decides when to invoke it.
+- **qwen3.5:122b + qwen3.5:35b-a3b concurrently** -- the 122B reasoning model and the 35B-A3B fast-loop model coexisting in memory (~105 GB total, ~23 GB headroom). No cold starts, no swapping, no choosing between them. The LLM decides which model handles each step at runtime.
+- **MoE efficiency via 35B-A3B** -- 35B total parameters with only 3B active per token means the fast-loop model delivers blazing inference speed for triage, review, and acknowledgment while leaving ample memory for the 122B executive.
 - **Large context windows** -- 128K token windows paired with LLM-controlled context management. Quality over quantity: exactly the right 32K tokens of context outperforms 128K tokens of noise, and the model is the one best positioned to judge what's relevant.
 - **On-device embeddings** for semantic memory without competing for memory with the inference models.
 - **NVMe storage** for fast journal reads, session loading, and repo-map generation.
@@ -98,25 +98,24 @@ Classification, planning, execution strategy, verification, memory management, a
 
 ## Models: LLM-Controlled Mixture of Experts
 
-| Role | Model | Purpose |
-|------|-------|---------|
-| Executive / reasoning | qwen3.5:122b | Strategy, judgment, coordination, verification, general tasks |
-| Code specialist | qwen3-coder-next | Code generation, refactoring, review, implementation |
-| Fast utility (planned) | 7b-13b TBD | Quick classification, draft generation, spell-checking reasoning |
+| Role | Model | VRAM | Purpose |
+|------|-------|------|---------|
+| DeepLoop (executive) | qwen3.5:122b | ~81 GB | Reasoning, planning, code generation, verification, general tasks (SWE-bench: 72.0) |
+| FastLoop (triage) | qwen3.5:35b-a3b | ~24 GB | Triage, review, acknowledgment (MoE: 35B total params, 3B active per token -- blazing fast inference) |
 
 Ollama is the sole inference provider. Model configuration lives in `config/models.yaml`.
 
-The two-model setup is a basic mixture of experts where the **gating function is the LLM itself**. The reasoning model is the executive. It sees the problem, reasons about it, and decides how to solve it -- including which model to use for each step. It delegates to the coding model explicitly via the `delegate` tool, providing scoped context and clear instructions, then reviews the result.
+The two-model setup is a basic mixture of experts where the **gating function is the LLM itself**. The 122B DeepLoop model is the executive. It handles reasoning, planning, *and* code generation directly (SWE-bench: 72.0, slightly better than a dedicated coder). The 35B-A3B FastLoop model handles triage, review, and acknowledgment at high speed thanks to its MoE architecture (only 3B parameters active per token). Total memory: ~105 GB, leaving ~23 GB headroom on 128 GB.
 
-This is not hardcoded task-type routing. The executive model decides at runtime based on the task's characteristics, its own self-assessed strengths and weaknesses, and what it's learned from past delegations recorded in the journal. A task that looks like "code editing" might actually need the reasoning model if it requires architectural judgment. The LLM makes that call.
+This is not hardcoded task-type routing. The executive model decides at runtime based on the task's characteristics, its own self-assessed strengths and weaknesses, and what it's learned from past delegations recorded in the journal. The FastLoop model handles the lightweight, latency-sensitive work, freeing the DeepLoop model for substantive reasoning and implementation.
 
 ### Best-of-N as a Native Strategy
 
-Because tokens are free, the executive model can use redundancy as a reliability strategy. For hard decisions, it can ask both models to solve the same problem and compare results -- not as a hardcoded `bestOfN()` method, but as the model's own judgment: "This is hard. Let me try it myself and also delegate to the coding model, then compare approaches." The `ConcurrentProvider` infrastructure supports this; the model just needs the tools to invoke it.
+Because tokens are free, the executive model can use redundancy as a reliability strategy. For hard decisions, it can generate multiple approaches and compare them -- not as a hardcoded `bestOfN()` method, but as the model's own judgment: "This is hard. Let me try two different approaches and compare." The `ConcurrentProvider` infrastructure supports this; the model just needs the tools to invoke it.
 
-### The Third Model Slot
+### Memory Budget
 
-With 128GB, there's memory headroom beyond the two primary models. A lightweight 7b-13b model could serve as a fast tool the executive invokes for specific purposes: generating drafts that the executive refines, doing quick pre-classification before the executive engages, or sanity-checking the executive's reasoning. The executive decides when speed matters more than depth.
+With 128 GB unified memory and `max_concurrent_models: 2`, the two-model setup uses ~105 GB (81 GB + 24 GB), leaving ~23 GB headroom for embeddings, context windows, and system overhead. This is well within the 128 GB budget, unlike the previous three-model architecture (~149 GB) which exceeded it.
 
 ## Identity and Personality
 
@@ -286,13 +285,13 @@ The model literally gets better at tasks it encounters, using its own experience
 
 Use the two models against each other to discover and strengthen weaknesses.
 
-**Concept:** During dream cycles, the coding model generates challenges in domains where the self-model reports low confidence. The reasoning model attempts the challenges. Results feed back into the self-model with higher fidelity than real-task tracking (which is sparse and noisy). This creates a training signal from nothing -- the model practices its weaknesses proactively rather than waiting for real tasks to expose them.
+**Concept:** During dream cycles, the FastLoop model generates challenges in domains where the self-model reports low confidence. The DeepLoop model attempts the challenges. Results feed back into the self-model with higher fidelity than real-task tracking (which is sparse and noisy). This creates a training signal from nothing -- the model practices its weaknesses proactively rather than waiting for real tasks to expose them.
 
 **Modes of adversarial testing:**
 
-1. **Challenge generation.** "Self-model says I'm at 40% on regex. Coding model generates 20 regex challenges of increasing difficulty. I attempt them. I pass 14/20. The 6 failures are analyzed: all involve nested lookaheads. Updated self-model: regex-general (70%), regex-lookaheads (15%)."
+1. **Challenge generation.** "Self-model says I'm at 40% on regex. FastLoop generates 20 regex challenges of increasing difficulty. DeepLoop attempts them. It passes 14/20. The 6 failures are analyzed: all involve nested lookaheads. Updated self-model: regex-general (70%), regex-lookaheads (15%)."
 
-2. **Adversarial code review.** The coding model writes an implementation with intentional subtle bugs. The reasoning model tries to find them. Missed bugs are logged. Over time, the reasoning model learns what kinds of bugs the coding model tends to introduce, and the coding model learns what the reasoning model tends to miss.
+2. **Adversarial code review.** The FastLoop model writes an implementation with intentional subtle bugs. The DeepLoop model tries to find them. Missed bugs are logged. Over time, DeepLoop learns what kinds of bugs it tends to miss in review.
 
 3. **Strategy debate.** Both models propose approaches to a problem. Each critiques the other's approach. The exchange is logged as a learning experience. This builds the LLM's understanding of when each model's strengths are relevant.
 
@@ -302,9 +301,9 @@ Use the two models against each other to discover and strengthen weaknesses.
 - Dream cycles already have an "exploration" phase that can host adversarial testing.
 
 **Implementation plan:**
-1. **Challenge generator** -- `src/autonomous/dream/challenge-generator.ts`. Uses the coding model to generate domain-specific challenges based on self-model weakness data. Challenge types: code completion, bug detection, regex construction, refactoring decisions, security review.
-2. **Challenge evaluator** -- `src/autonomous/dream/challenge-evaluator.ts`. Runs the reasoning model against challenges, evaluates results against known answers, and updates the self-model with granular skill data.
-3. **Adversarial review mode** -- Extension to the challenge generator where the coding model intentionally writes buggy code and the reasoning model reviews it. Scoring: bugs found / bugs planted.
+1. **Challenge generator** -- `src/autonomous/dream/challenge-generator.ts`. Uses the FastLoop model to generate domain-specific challenges based on self-model weakness data. Challenge types: code completion, bug detection, regex construction, refactoring decisions, security review.
+2. **Challenge evaluator** -- `src/autonomous/dream/challenge-evaluator.ts`. Runs the DeepLoop model against challenges, evaluates results against known answers, and updates the self-model with granular skill data.
+3. **Adversarial review mode** -- Extension to the challenge generator where the FastLoop model intentionally writes buggy code and the DeepLoop model reviews it. Scoring: bugs found / bugs planted.
 4. **Self-model granularity** -- Extend `self-model.ts` to support sub-skills (e.g., `regex.lookaheads`, `typescript.generics`, `security.injection`). The adversarial testing reveals which sub-skills are weak.
 5. **Dream cycle integration** -- Add adversarial testing as an optional dream phase, configured with a challenge budget (default: 20 challenges per cycle) and domain selection (prioritize weakest skills).
 6. **Tests** -- Challenge generation produces valid, solvable problems. Evaluation scoring is correct. Self-model updates reflect challenge outcomes. Budget limits are respected.
@@ -418,7 +417,7 @@ The LLM writes its own operational rules, versioned and decayable.
   invocations: 12
   successes: 10
 
-- rule: "When the coding model returns TypeScript with `any` type, flag for review."
+- rule: "When generated TypeScript contains `any` type, flag for review before accepting."
   added: 2026-02-18
   motivation: "journal#3012: accepted code with `any` that later caused a runtime error"
   confidence: 0.92

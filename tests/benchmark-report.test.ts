@@ -56,9 +56,9 @@ function makeRun(overrides: Partial<BenchmarkRun> = {}): BenchmarkRun {
 
 describe('formatRunSummary', () => {
   it('includes model ID and suite', () => {
-    const run = makeRun({ modelId: 'qwen3-coder-next:latest', suiteId: 'coding-suite' });
+    const run = makeRun({ modelId: 'qwen3.5:122b', suiteId: 'coding-suite' });
     const output = formatRunSummary(run);
-    expect(output).toContain('qwen3-coder-next:latest');
+    expect(output).toContain('qwen3.5:122b');
     expect(output).toContain('coding-suite');
   });
 

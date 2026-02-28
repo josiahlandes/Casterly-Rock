@@ -43,8 +43,8 @@ describe('Mode Definitions — CODE_MODE', () => {
     expect(CODE_MODE.forbiddenTools).toEqual([]);
   });
 
-  it('prefers qwen3-coder-next', () => {
-    expect(CODE_MODE.preferredModel).toBe('qwen3-coder-next:latest');
+  it('prefers qwen3.5:122b', () => {
+    expect(CODE_MODE.preferredModel).toBe('qwen3.5:122b');
     expect(CODE_MODE.fallbackModel).toBe('qwen3.5:122b');
   });
 });
@@ -109,8 +109,8 @@ describe('Mode Definitions — REVIEW_MODE', () => {
     expect(REVIEW_MODE.canDelete).toBe(false);
   });
 
-  it('prefers qwen3-coder-next', () => {
-    expect(REVIEW_MODE.preferredModel).toBe('qwen3-coder-next:latest');
+  it('prefers qwen3.5:122b', () => {
+    expect(REVIEW_MODE.preferredModel).toBe('qwen3.5:122b');
   });
 });
 
@@ -182,10 +182,10 @@ describe('DEFAULT_MODE_CONFIG', () => {
   });
 
   it('has model mappings for all modes', () => {
-    expect(DEFAULT_MODE_CONFIG.models.code).toBe('qwen3-coder-next:latest');
+    expect(DEFAULT_MODE_CONFIG.models.code).toBe('qwen3.5:122b');
     expect(DEFAULT_MODE_CONFIG.models.architect).toBe('qwen3.5:122b');
     expect(DEFAULT_MODE_CONFIG.models.ask).toBe('qwen3.5:122b');
-    expect(DEFAULT_MODE_CONFIG.models.review).toBe('qwen3-coder-next:latest');
+    expect(DEFAULT_MODE_CONFIG.models.review).toBe('qwen3.5:122b');
   });
 });
 
@@ -459,7 +459,7 @@ describe('ModeManager — isToolAllowed', () => {
 describe('ModeManager — getPreferredModel', () => {
   it('returns config model for current mode', () => {
     const manager = new ModeManager();
-    expect(manager.getPreferredModel()).toBe('qwen3-coder-next:latest');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
   });
 
   it('returns config model for architect mode', () => {

@@ -71,12 +71,12 @@ describe('loadConfig — basic parsing', () => {
     const fp = writeYaml('minimal.yaml', `
 autonomous:
   enabled: true
-  model: qwen3-coder-next:latest
+  model: qwen3.5:122b
   cycle_interval_minutes: 30
 `);
     const config = await loadConfig(fp);
     expect(config.enabled).toBe(true);
-    expect(config.model).toBe('qwen3-coder-next:latest');
+    expect(config.model).toBe('qwen3.5:122b');
     expect(config.cycleIntervalMinutes).toBe(30);
   });
 
@@ -89,7 +89,7 @@ autonomous:
     // Always active — no master switch (see docs/vision.md)
     expect(config.enabled).toBe(true);
     expect(config.provider).toBe('ollama');
-    expect(config.model).toBe('qwen3-coder-next:latest');
+    expect(config.model).toBe('qwen3.5:122b');
     expect(config.cycleIntervalMinutes).toBe(60);
     expect(config.maxCyclesPerDay).toBe(12);
     expect(config.maxAttemptsPerCycle).toBe(3);

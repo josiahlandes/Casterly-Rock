@@ -38,7 +38,7 @@ export interface ReasoningScalerConfig {
   /** Model for reasoning/planning (e.g., hermes3:70b) */
   reasoningModel: string;
 
-  /** Model for code generation (e.g., qwen3-coder-next:latest) */
+  /** Model for code generation (e.g., qwen3.5:122b) */
   codingModel: string;
 
   /** Maximum parallel candidates for hard problems */
@@ -97,7 +97,7 @@ export interface ScaledSolution {
 
 const DEFAULT_CONFIG: ReasoningScalerConfig = {
   reasoningModel: 'hermes3:70b',
-  codingModel: 'qwen3-coder-next:latest',
+  codingModel: 'qwen3.5:122b',
   maxCandidates: 4,
   enabled: true,
 };

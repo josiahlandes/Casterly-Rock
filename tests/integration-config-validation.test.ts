@@ -69,15 +69,15 @@ describe('config/models.yaml', () => {
     expect(models.primary!.model).toBe('qwen3.5:122b');
   });
 
-  it('coding model is qwen3-coder-next:latest', () => {
-    expect(models.coding!.model).toBe('qwen3-coder-next:latest');
+  it('coding model is qwen3.5:122b', () => {
+    expect(models.coding!.model).toBe('qwen3.5:122b');
   });
 
   it('autonomous model references a valid model', () => {
     const autoModel = models.autonomous!.model as string;
     expect(autoModel).toBeTruthy();
     // Should be either the coding model or primary model
-    expect(['qwen3-coder-next:latest', 'qwen3.5:122b']).toContain(autoModel);
+    expect(['qwen3.5:122b', 'qwen3.5:122b']).toContain(autoModel);
   });
 
   it('all fallbacks reference existing models or null', () => {

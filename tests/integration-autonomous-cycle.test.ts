@@ -33,7 +33,7 @@ function createMinimalConfig(): AutonomousConfig {
   return {
     enabled: true,
     provider: 'ollama',
-    model: 'qwen3-coder-next:latest',
+    model: 'qwen3.5:122b',
     cycleIntervalMinutes: 60,
     maxCyclesPerDay: 12,
     maxAttemptsPerCycle: 3,
@@ -428,7 +428,7 @@ describe('loadConfig integration with AutonomousLoop', () => {
     const config = await loadConfig(configPath);
     expect(config.enabled).toBe(true);
     expect(config.provider).toBe('ollama');
-    expect(config.model).toBe('qwen3-coder-next:latest');
+    expect(config.model).toBe('qwen3.5:122b');
     expect(config.git.integrationMode).toBe('approval_required');
   });
 

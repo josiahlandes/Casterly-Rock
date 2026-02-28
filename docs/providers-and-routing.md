@@ -14,7 +14,7 @@ Every provider implements the `LlmProvider` interface:
 interface LlmProvider {
   id: string;                    // e.g. 'ollama'
   kind: 'local' | 'cloud';      // always 'local' in current setup
-  model: string;                 // e.g. 'qwen3.5:122b', 'qwen3-coder-next:latest'
+  model: string;                 // e.g. 'qwen3.5:122b', 'qwen3.5:35b-a3b'
 
   generateWithTools(
     request: GenerateRequest,
@@ -119,14 +119,14 @@ interface ProviderRegistry {
 
 ### Two-Model Setup
 
-When `config.local.codingModel` is set and differs from the primary model, a separate `OllamaProvider` is created for coding tasks:
+In the current two-model architecture, the 122B model handles all reasoning and code generation. The `codingModel` config key is unused -- both the `local` and `coding` slots point to the same provider instance:
 
 | Slot | Config Key | Default Model | Purpose |
 |------|-----------|---------------|---------|
-| `local` | `local.model` | `qwen3.5:122b` | Reasoning, planning, conversation |
-| `coding` | `local.codingModel` | `qwen3-coder-next:latest` | Code generation, review, file operations |
+| `local` | `local.model` | `qwen3.5:122b` | DeepLoop: reasoning, planning, code generation, conversation |
+| `fast` | `fast_loop.model` | `qwen3.5:35b-a3b` | FastLoop: triage, review, acknowledgment (MoE: 35B total, 3B active) |
 
-If `codingModel` is not set or matches the primary model, both slots point to the same provider instance.
+The `codingModel` config key still exists for backward compatibility but is effectively unused since the 122B DeepLoop model handles coding directly (SWE-bench: 72.0).
 
 ### Model Routing
 
@@ -261,7 +261,7 @@ The provider interface itself is well-designed and aligned with the vision. All 
 
 **Why change:** The vision says the two-model setup is "a basic mixture of experts where the gating function is the LLM itself." The LLM should decide which model handles a subtask at runtime, not a static lookup table. A task classified as "coding" might actually need the reasoning model if it requires architectural judgment.
 
-**What to do:** Remove the `CODING_TASK_TYPES` set and the `forTask()` routing method from `ProviderRegistry`. The `delegate` agent tool already lets the LLM specify which model to use — this is the correct mechanism. The system prompt should describe the models' strengths: "Use qwen3-coder-next for implementation, code generation, and refactoring. Use qwen3.5:122b for planning, analysis, and judgment calls."
+**What to do:** Remove the `CODING_TASK_TYPES` set and the `forTask()` routing method from `ProviderRegistry`. The `delegate` agent tool already lets the LLM specify which model to use — this is the correct mechanism. The system prompt should describe the models' strengths: "Use qwen3.5:122b (DeepLoop) for reasoning, planning, code generation, and implementation. Use qwen3.5:35b-a3b (FastLoop) for triage, review, and acknowledgment."
 
 > **Status:** Hardcoded task-type model routing deprecated. `forTask` returns local for all task types. The LLM decides model routing via the `delegate` tool.
 

@@ -1,7 +1,7 @@
 # Model Profiles Configuration
 # Custom per-model tuning for tool calling, prompting, and generation.
 #
-# Built-in profiles exist for: qwen3.5:122b, hermes3:70b, qwen3-coder-next:latest
+# Built-in profiles exist for: qwen3.5:122b, hermes3:70b
 # Entries here OVERRIDE built-in profiles for the same modelId.
 #
 # Unknown models fall back to family matching, then to the default (no-op) profile.

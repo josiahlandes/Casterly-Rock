@@ -297,9 +297,9 @@ describe('Mode detection → tool filtering (end-to-end)', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Preferred model per mode', () => {
-  it('code mode prefers qwen3-coder-next', () => {
+  it('code mode prefers qwen3.5:122b', () => {
     const manager = createModeManager();
-    expect(manager.getPreferredModel()).toBe('qwen3-coder-next:latest');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
   });
 
   it('architect mode prefers qwen3.5:122b', () => {
@@ -314,20 +314,20 @@ describe('Preferred model per mode', () => {
     expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
   });
 
-  it('review mode prefers qwen3-coder-next', () => {
+  it('review mode prefers qwen3.5:122b', () => {
     const manager = createModeManager();
     manager.switchMode('review');
-    expect(manager.getPreferredModel()).toBe('qwen3-coder-next:latest');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
   });
 
   it('mode switch changes preferred model', () => {
     const manager = createModeManager();
-    expect(manager.getPreferredModel()).toBe('qwen3-coder-next:latest');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
 
     manager.autoDetectAndSwitch('plan the architecture');
     expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
 
     manager.autoDetectAndSwitch('/code');
-    expect(manager.getPreferredModel()).toBe('qwen3-coder-next:latest');
+    expect(manager.getPreferredModel()).toBe('qwen3.5:122b');
   });
 });

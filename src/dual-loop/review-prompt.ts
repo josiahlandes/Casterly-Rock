@@ -1,7 +1,7 @@
 /**
  * Review Prompt — System prompts for FastLoop code review.
  *
- * The FastLoop (27B) reviews diffs produced by DeepLoop+Coder before
+ * The FastLoop (35B-A3B) reviews diffs produced by DeepLoop before
  * changes are committed. The review is advisory — DeepLoop can override
  * with explanation, but cannot ignore.
  *

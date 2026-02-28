@@ -33,7 +33,7 @@ npm install
 
 # 3. Set up Ollama models
 ollama pull qwen3.5:122b
-ollama pull qwen3-coder-next:latest
+ollama pull qwen3.5:35b-a3b
 
 # 4. Build and install
 npm run install:host
@@ -65,11 +65,11 @@ This installs:
 
 2. Pull the required models:
    ```bash
-   # Primary model for general tasks
+   # DeepLoop: reasoning, planning, and code generation (~81 GB)
    ollama pull qwen3.5:122b
 
-   # Coding model
-   ollama pull qwen3-coder-next:latest
+   # FastLoop: triage, review, acknowledgment (~24 GB, MoE: 35B total, 3B active)
+   ollama pull qwen3.5:35b-a3b
    ```
 
 3. Verify Ollama is running:
@@ -98,15 +98,15 @@ Model routing is configured in `config/models.yaml`:
 
 ```yaml
 models:
-  coding:
-    provider: ollama
-    model: qwen3-coder-next:latest
-    temperature: 0.1
-
   primary:
     provider: ollama
     model: qwen3.5:122b
     temperature: 0.6
+
+  fast:
+    provider: ollama
+    model: qwen3.5:35b-a3b
+    temperature: 0.3
 
 hardware:
   platform: mac-studio-m4-max
@@ -274,12 +274,12 @@ Pull the required models:
 
 ```bash
 ollama pull qwen3.5:122b
-ollama pull qwen3-coder-next:latest
+ollama pull qwen3.5:35b-a3b
 ```
 
 ### "Out of memory"
 
-With 128GB unified memory, you should be able to run two 70B+ parameter models simultaneously. If you encounter memory issues:
+With 128GB unified memory, the two-model architecture uses ~105 GB (81 GB + 24 GB), leaving ~23 GB headroom. If you encounter memory issues:
 
 1. Check what models are loaded:
    ```bash

@@ -4,8 +4,8 @@
  * Standalone CLI for running model benchmarks against Ollama.
  *
  * Usage:
- *   tsx src/benchmark-cli.ts run --models qwen3.5:122b,qwen3-coder-next:latest [--category tool_use] [--difficulty moderate]
- *   tsx src/benchmark-cli.ts compare --models qwen3.5:122b,qwen3-coder-next:latest
+ *   tsx src/benchmark-cli.ts run --models qwen3.5:122b,qwen3.5:122b [--category tool_use] [--difficulty moderate]
+ *   tsx src/benchmark-cli.ts compare --models qwen3.5:122b,qwen3.5:122b
  *   tsx src/benchmark-cli.ts history [--model qwen3.5:122b]
  *   tsx src/benchmark-cli.ts list
  */

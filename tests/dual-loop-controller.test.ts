@@ -39,9 +39,8 @@ function makeMockVoiceFilter(): VoiceFilter {
 }
 
 function makeOptions(): DualLoopControllerOptions {
-  const fastProvider = makeMockProvider('qwen3:27b');
+  const fastProvider = makeMockProvider('qwen3.5:35b-a3b');
   const deepProvider = makeMockProvider('qwen3.5:122b');
-  const coderProvider = makeMockProvider('qwen3-coder-next:latest');
 
   return {
     fastProvider,
@@ -49,7 +48,7 @@ function makeOptions(): DualLoopControllerOptions {
     concurrentProvider: new ConcurrentProvider(
       new Map([
         ['qwen3.5:122b', deepProvider],
-        ['qwen3-coder-next:latest', coderProvider],
+        ['qwen3.5:35b-a3b', fastProvider],
       ]),
     ),
     eventBus: new EventBus({ maxQueueSize: 100, logEvents: false }),

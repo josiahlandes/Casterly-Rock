@@ -189,7 +189,7 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
   maxTurns: 200,
   maxTokensPerCycle: 500_000,
   reasoningModel: 'hermes3:70b',
-  codingModel: 'qwen3-coder-next:latest',
+  codingModel: 'qwen3.5:122b',
   thinkToolEnabled: true,
   delegationEnabled: true,
   userMessagingEnabled: false,

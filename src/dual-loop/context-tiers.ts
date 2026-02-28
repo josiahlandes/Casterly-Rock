@@ -62,7 +62,7 @@ export interface CoderTierConfig extends ContextTierConfig {
 }
 
 /**
- * Full context tiers configuration for all three models.
+ * Full context tiers configuration for both models (fast + deep/coder).
  */
 export interface ContextTiersConfig {
   fast: FastTierConfig;

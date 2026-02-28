@@ -1,4 +1,4 @@
-# Dual-Loop Architecture: Three-Model Concurrent System
+# Dual-Loop Architecture: Two-Model Concurrent System
 
 ## Status: IMPLEMENTED — All 8 passes complete
 
@@ -41,25 +41,23 @@ src/dual-loop/
 
 ## 1. Executive Summary
 
-Replace the current single-loop `AutonomousLoop` (one model handles everything sequentially) with a **dual-loop architecture** where two independent event loops run concurrently, coordinated through a shared **TaskBoard**. A third model (the coder) is dispatched as a tool by the deep loop.
+Replace the current single-loop `AutonomousLoop` (one model handles everything sequentially) with a **dual-loop architecture** where two independent event loops run concurrently, coordinated through a shared **TaskBoard**. The DeepLoop handles both reasoning and code generation (no separate coder model needed).
 
 | Loop | Model | Role | Cadence |
 |------|-------|------|---------|
-| **FastLoop** | `qwen3.5:27b` | User-facing, triage, code review, status | ~2s heartbeat |
-| **DeepLoop** | `qwen3.5:122b` | Planning, reasoning, tool calling, decisions | Natural pace (10-60s/turn) |
-| **Coder** | `qwen3-coder-next` | Code generation (dispatched by DeepLoop) | On-demand |
+| **FastLoop** | `qwen3.5:35b-a3b` | User-facing, triage, code review, status | ~2s heartbeat |
+| **DeepLoop** | `qwen3.5:122b` | Planning, reasoning, tool calling, code generation, decisions | Natural pace (10-60s/turn) |
 
 ### Memory Budget
 
 | Component | VRAM |
 |-----------|------|
-| qwen3.5:122b-a10b | ~73 GB |
-| qwen3.5:27b | ~17 GB |
-| qwen3-coder-next | ~22 GB |
-| **Total** | **~112 GB** |
-| Remaining (of 128 GB) | ~16 GB (12.5% headroom) |
+| qwen3.5:122b | ~81 GB |
+| qwen3.5:35b-a3b | ~24 GB |
+| **Total** | **~105 GB** |
+| Remaining (of 128 GB) | ~23 GB (18% headroom) |
 
-All three models run with `keep_alive: -1` (never unloaded). The 122b MoE architecture activates only ~10B parameters per token, so actual compute per token is modest despite the large weight footprint.
+Both models run with `keep_alive: -1` (never unloaded). The 35B-A3B is an MoE architecture that activates only ~3B parameters per token, delivering blazing fast inference despite its 35B total parameter count. The 122b's large weight footprint yields strong code generation (SWE-bench 72.0) alongside its deep reasoning capabilities.
 
 ---
 
@@ -69,15 +67,15 @@ Today's system has a single `AgentLoop` driven by one LLM provider. This creates
 
 1. **Responsiveness** — When the 122B is mid-generation on a 40-turn autonomous cycle, user messages queue behind it. The user waits 30-60 seconds for acknowledgment.
 2. **Concurrency** — The system can only do one thing at a time. A scheduled improvement cycle blocks event processing.
-3. **Model underutilization** — The 27B sits idle unless the routing classifier sends it a coding task. The 122B is used for trivial triage that a smaller model could handle.
+3. **Model underutilization** — The 35B-A3B MoE model sits idle unless the routing classifier sends it a coding task. The 122B is used for trivial triage that a smaller model could handle.
 
 ### What the Dual-Loop Solves
 
-- The **FastLoop** (27B) is always responsive — its small size means sub-second first-token latency for short responses.
+- The **FastLoop** (35B-A3B) is always responsive — its MoE architecture (3B active params per token) means sub-second first-token latency for short responses.
 - The **DeepLoop** (122B) runs uninterrupted — it never has to pause mid-plan to acknowledge a user message.
 - Both loops operate **concurrently** through a data-structure coupling (TaskBoard), not a model-call coupling.
-- The 27B handles **two roles** it's strong at: user interaction (IFEval 95.0) and code review (SWE-bench 72.4).
-- The 122B focuses on what it's best at: deep reasoning (GPQA 86.6), tool calling (BFCL-V4 72.2), and complex planning.
+- The 35B-A3B handles **two roles** it's strong at: user interaction and code review, with blazing fast inference thanks to MoE sparsity.
+- The 122B focuses on what it's best at: deep reasoning (GPQA 86.6), tool calling (BFCL-V4 72.2), complex planning, and code generation (SWE-bench 72.0).
 
 ---
 
@@ -96,30 +94,22 @@ Today's system has a single `AgentLoop` driven by one LLM provider. This creates
 └─────────┼─────────────────┼────────────────────────┼─────────────┘
           │                 │                        │
    ┌──────┴─────────────────┴──────┐   ┌────────────┴──────────┐
-   │         FAST LOOP (27B)       │   │     DEEP LOOP (122B)  │
+   │       FAST LOOP (35B-A3B)      │   │     DEEP LOOP (122B)  │
    │                               │   │                       │
    │  Responsibilities:            │   │  Responsibilities:    │
    │  • User message handling      │   │  • Task planning      │
    │  • Task triage & creation     │   │  • Multi-step tool    │
    │  • Status reporting           │   │    calling            │
    │  • Code review                │   │  • Complex reasoning  │
-   │  • Quick answers (simple Qs)  │   │  • Code dispatch to   │
-   │  • Dashboard / progress       │   │    Coder model        │
-   │                               │   │  • Accept/reject      │
-   │  Heartbeat: ~2 seconds        │   │    reviews            │
-   │  Context: user conversation   │   │  • Quality decisions  │
-   │           + task board state   │   │                       │
-   │                               │   │  Pace: natural        │
-   └───────────────────────────────┘   │  Context: task detail │
-                                       │           + codebase  │
+   │  • Quick answers (simple Qs)  │   │  • Code generation    │
+   │  • Dashboard / progress       │   │  • Accept/reject      │
+   │                               │   │    reviews            │
+   │  Heartbeat: ~2 seconds        │   │  • Quality decisions  │
+   │  Context: user conversation   │   │                       │
+   │           + task board state   │   │  Pace: natural        │
+   │                               │   │  Context: task detail │
+   └───────────────────────────────┘   │           + codebase  │
                                        │                       │
-                                       │  ┌─────────────────┐  │
-                                       │  │  CODER           │  │
-                                       │  │  (qwen3-coder)   │  │
-                                       │  │                  │  │
-                                       │  │  Dispatched as   │  │
-                                       │  │  tool by DeepLoop│  │
-                                       │  └─────────────────┘  │
                                        └───────────────────────┘
 ```
 
@@ -180,7 +170,7 @@ interface Task {
 type TaskStatus =
   | 'queued'            // Created by FastLoop, waiting for DeepLoop
   | 'planning'          // DeepLoop is planning the approach
-  | 'implementing'      // DeepLoop is dispatching to Coder
+  | 'implementing'      // DeepLoop is generating code
   | 'reviewing'         // FastLoop is reviewing the output
   | 'revision'          // DeepLoop is addressing review feedback
   | 'done'              // Completed successfully
@@ -237,7 +227,7 @@ The `WHERE owner IS NULL` clause ensures only one loop can claim a task at a tim
 
 ---
 
-## 5. FastLoop: The 27B User-Facing Agent
+## 5. FastLoop: The 35B-A3B User-Facing Agent
 
 ### 5.1 Responsibilities
 
@@ -247,7 +237,7 @@ The `WHERE owner IS NULL` clause ensures only one loop can claim a task at a tim
 | **Triage** | Classify messages as simple/complex/conversational |
 | **Direct answers** | Handle simple questions without involving DeepLoop |
 | **Status reporting** | "Your task is 60% done — planning phase complete, now implementing" |
-| **Code review** | Review diffs produced by DeepLoop+Coder before commit |
+| **Code review** | Review diffs produced by DeepLoop before commit |
 | **Dashboard** | Summarize the task board when user asks "what's going on?" |
 | **Interrupt relay** | If user sends follow-up that changes the task, update the TaskBoard |
 
@@ -255,7 +245,7 @@ The `WHERE owner IS NULL` clause ensures only one loop can claim a task at a tim
 
 ```typescript
 class FastLoop {
-  private readonly provider: LlmProvider;      // 27B OllamaProvider
+  private readonly provider: LlmProvider;      // 35B-A3B OllamaProvider
   private readonly taskBoard: TaskBoard;
   private readonly eventBus: EventBus;
   private readonly conversationHistory: Message[];  // User-facing context
@@ -307,7 +297,7 @@ User message → FastLoop triage:
 1. Is this a greeting/small talk?
    → Answer directly. No task created.
 
-2. Is this a simple factual question the 27B can answer?
+2. Is this a simple factual question the 35B-A3B can answer?
    → Answer directly. Log as 'answered_directly'.
 
 3. Is this a status query ("how's it going?", "what are you working on?")?
@@ -322,7 +312,7 @@ User message → FastLoop triage:
    → Acknowledge to user: "I'll start working on that."
 ```
 
-The triage decision uses the 27B with a focused system prompt (not the full 96-tool toolkit). The 27B's IFEval 95.0 means it reliably follows classification prompts.
+The triage decision uses the 35B-A3B with a focused system prompt (not the full 96-tool toolkit). The 35B-A3B's MoE architecture (3B active params) delivers fast, reliable classification.
 
 ### 5.4 Code Review Flow
 
@@ -330,7 +320,7 @@ When DeepLoop finishes implementation and sets `status='reviewing'`:
 
 1. FastLoop claims the task (`owner='fast'`)
 2. Reads the `artifacts` (diffs, file changes)
-3. Sends each diff to the 27B with a review prompt:
+3. Sends each diff to the 35B-A3B with a review prompt:
    - "Review this diff for correctness, security issues, and style violations"
    - "Check that the change matches the plan: {plan}"
 4. Writes `reviewResult` and `reviewNotes`:
@@ -341,7 +331,7 @@ When DeepLoop finishes implementation and sets `status='reviewing'`:
 
 ### 5.5 Context Window Management
 
-The FastLoop's 27B has a ~32K context window. It holds:
+The FastLoop's 35B-A3B has a ~32K context window. It holds:
 
 - **System prompt** (~2K): Triage/review/status instructions
 - **User conversation** (~10K): Rolling window of recent messages
@@ -364,7 +354,7 @@ The FastLoop does NOT hold:
 |-----------|-------------|
 | **Task planning** | Break complex tasks into steps |
 | **Tool calling** | Execute the full 96-tool toolkit |
-| **Code dispatch** | Send implementation tasks to Coder model via ConcurrentProvider |
+| **Code generation** | Generate implementation code directly (SWE-bench 72.0) |
 | **Quality decisions** | Accept/reject based on test results |
 | **Autonomous work** | Scheduled cycles, goal stack, event-driven responses |
 | **Review arbitration** | Address FastLoop's review feedback |
@@ -374,7 +364,6 @@ The FastLoop does NOT hold:
 ```typescript
 class DeepLoop {
   private readonly provider: LlmProvider;           // 122B OllamaProvider
-  private readonly concurrentProvider: ConcurrentProvider; // For Coder dispatch
   private readonly taskBoard: TaskBoard;
   private readonly eventBus: EventBus;
   private readonly state: AgentState;               // Goals, issues, world model
@@ -435,48 +424,20 @@ When DeepLoop picks up a queued task:
 4. Write the plan to TaskBoard (status='planning' → 'implementing')
 5. For each implementation step:
    a. Assess difficulty via ReasoningScaler
-   b. Easy → dispatch to Coder model directly
-   c. Hard → bestOfN via ConcurrentProvider
-   d. Execute tool calls (edit_file, run_tests, etc.)
-   e. Update plan step status in TaskBoard
+   b. Generate code directly (122B handles both reasoning and code generation)
+   c. Execute tool calls (edit_file, run_tests, etc.)
+   d. Update plan step status in TaskBoard
 6. When all steps done → status='reviewing', owner=null
 7. Wait for FastLoop review
 8. If 'revision' → read feedback, fix issues, back to reviewing
 9. If 'approved' → write userFacing response, status='done'
 ```
 
-### 6.4 Coder Dispatch
+### 6.4 Code Generation
 
-The Coder model is NOT a loop — it's a tool invoked by DeepLoop:
+The 122B handles code generation directly — no separate coder model needed. With a SWE-bench score of 72.0 (slightly better than the previously considered dedicated coder's 70.6), the 122B delivers strong code generation alongside its reasoning capabilities.
 
-```typescript
-// Inside DeepLoop.planAndExecute():
-
-async dispatchToCoder(task: Task, step: PlanStep): Promise<string> {
-  const request: GenerateRequest = {
-    prompt: this.buildCoderPrompt(task, step),
-    systemPrompt: 'You are a code implementation assistant. Write the code changes requested. Be precise and minimal.',
-    temperature: 0.1,
-    maxTokens: 4096,
-  };
-
-  // Use ConcurrentProvider so Coder runs without blocking 122B's next thought
-  const response = await this.concurrentProvider.generate(
-    'qwen3-coder-next:latest',
-    request,
-  );
-
-  return response.text;
-}
-```
-
-The Coder gets a **scoped prompt** — not the full conversation history, just:
-- The specific step to implement
-- Relevant file contents
-- The plan context
-- Style/convention notes
-
-This keeps the Coder's context clean and focused.
+For each implementation step, the DeepLoop generates code within its own ReAct loop using tool calls (edit_file, write_file, etc.). This eliminates the overhead of dispatching to a separate model and keeps the full task context available during code generation.
 
 ### 6.5 Context Window Management
 
@@ -574,10 +535,10 @@ Timeline:
 | `AgentLoop` | Retained as-is — used inside DeepLoop for its ReAct cycle |
 | `EventBus` | Shared between both loops (already designed for concurrent access) |
 | `trigger-router.ts` | Extended: user triggers go to FastLoop, others to DeepLoop |
-| `ConcurrentProvider` | Extended: registers all 3 models instead of 2 |
+| `ConcurrentProvider` | Extended: registers both models |
 | `AutonomousProvider` (legacy) | No change — already deprecated |
 | Tool system | FastLoop gets a filtered toolkit; DeepLoop gets the full toolkit |
-| `config/models.yaml` | Add `fast` model entry for 27B |
+| `config/models.yaml` | Add `fast` model entry for 35B-A3B |
 | `config/autonomous.yaml` | Add `dual_loop` section with per-loop config |
 
 ### 8.2 What Stays the Same
@@ -591,7 +552,7 @@ Timeline:
 | WorldModel, GoalStack, IssueLog | Both loops can read; only DeepLoop writes |
 | Journal | DeepLoop writes handoff notes as before |
 | Dream cycles | Run inside DeepLoop during quiet periods |
-| Reasoning scaler | Used inside DeepLoop for Coder dispatch |
+| Reasoning scaler | Used inside DeepLoop for code generation |
 
 ### 8.3 New Files
 
@@ -616,9 +577,9 @@ config/
 
 ### 8.4 Modified Files (Protected Paths — Requires Explicit Callout)
 
-- `config/models.yaml` — Add `fast:` model entry for 27B
+- `config/models.yaml` — Add `fast:` model entry for 35B-A3B
 - `config/autonomous.yaml` — Add `dual_loop:` configuration section
-- `src/providers/concurrent.ts` — Register 3 models instead of 2
+- `src/providers/concurrent.ts` — Register both models
 
 ### 8.5 Migration Path
 
@@ -628,7 +589,7 @@ The dual-loop is **additive**, not a rewrite. The existing `AutonomousLoop` cont
 # config/autonomous.yaml
 dual_loop:
   enabled: true                    # false = use legacy single loop
-  fast_model: qwen3.5:27b
+  fast_model: qwen3.5:35b-a3b
   fast_context_length: 32768
   fast_heartbeat_ms: 2000
   task_board_path: ~/.casterly/taskboard.db
@@ -661,7 +622,7 @@ const FAST_LOOP_CUSTOM_TOOLS = [
 ];
 ```
 
-This keeps the 27B's context overhead minimal (~2K for tool schemas vs ~50K for full toolkit).
+This keeps the 35B-A3B's context overhead minimal (~2K for tool schemas vs ~50K for full toolkit).
 
 ---
 
@@ -674,20 +635,16 @@ models:
   # NEW: Fast model for user-facing loop
   fast:
     provider: ollama
-    model: qwen3.5:27b
+    model: qwen3.5:35b-a3b
     context_length: 32768
     temperature: 0.3      # Slightly creative for natural conversation
     keep_alive: -1         # Never unload
-    fallback: null         # If 27B is down, DeepLoop handles everything
+    fallback: null         # If 35B-A3B is down, DeepLoop handles everything
 
-  # Existing entries unchanged
+  # Existing entry unchanged
   primary:
     provider: ollama
     model: qwen3.5:122b
-    ...
-  coding:
-    provider: ollama
-    model: qwen3-coder-next:latest
     ...
 ```
 
@@ -699,7 +656,7 @@ dual_loop:
 
   # FastLoop settings
   fast:
-    model: qwen3.5:27b
+    model: qwen3.5:35b-a3b
     heartbeat_ms: 2000
     triage_timeout_ms: 10000
     max_conversation_tokens: 10000   # Rolling window for user chat
@@ -708,7 +665,6 @@ dual_loop:
   # DeepLoop settings
   deep:
     model: qwen3.5:122b
-    coder_model: qwen3-coder-next:latest
     max_turns_per_task: 50            # Safety ceiling per task
     max_revision_rounds: 3            # Before marking task as failed
     preempt_check_interval_turns: 5   # Check board every N turns
@@ -726,11 +682,11 @@ dual_loop:
 
 ### 11.1 Who Has Final Authority?
 
-**The DeepLoop (122B) has final authority on implementation decisions.** The FastLoop (27B) reviews and provides feedback, but the DeepLoop can override with explanation. This mirrors a senior engineer overriding a code review.
+**The DeepLoop (122B) has final authority on implementation decisions.** The FastLoop (35B-A3B) reviews and provides feedback, but the DeepLoop can override with explanation. This mirrors a senior engineer overriding a code review.
 
 However, the **FastLoop has exclusive authority on user interaction.** The DeepLoop never sends messages to the user directly — it writes `userFacing` text to the TaskBoard, and the FastLoop delivers it. This ensures consistent voice and prevents both loops from talking to the user simultaneously.
 
-### 11.2 What If the 27B Gives a Bad Review?
+### 11.2 What If the 35B-A3B Gives a Bad Review?
 
 The DeepLoop's `implementationNotes` for an override must address the specific concern:
 
@@ -757,7 +713,7 @@ When a user asks about a task they didn't witness, the FastLoop needs enough con
 2. FastLoop reads these fields and summarizes for the user
 3. If the FastLoop can't answer from TaskBoard data alone, it writes a clarification request to the TaskBoard, which the DeepLoop picks up on its next check
 
-The 27B's IFEval 95.0 means it can reliably follow a prompt like:
+The 35B-A3B can reliably follow a prompt like:
 > "Summarize the plan and implementation notes of task #7 for the user. Be concise."
 
 ### 11.5 Graceful Degradation
@@ -766,9 +722,8 @@ If one loop crashes:
 
 | Failure | Behavior |
 |---------|----------|
-| 27B model unavailable | FastLoop stops. DeepLoop continues. User messages queue (delivered when 27B recovers). |
+| 35B-A3B model unavailable | FastLoop stops. DeepLoop continues. User messages queue (delivered when 35B-A3B recovers). |
 | 122B model unavailable | DeepLoop stops. FastLoop continues acknowledging messages ("I'm experiencing technical issues, will get back to you soon"). |
-| Coder unavailable | DeepLoop falls back to 122B for code generation (existing `fallback` config). |
 | SQLite corruption | Both loops fall back to in-memory TaskBoard (volatile, no persistence). |
 | Both loops crash | LoopCoordinator restarts both. TaskBoard state survives (on-disk). |
 
@@ -812,20 +767,20 @@ If one loop crashes:
 
 1. Create DeepLoop class wrapping the existing AgentLoop
 2. Implement task claim and plan-and-execute flow
-3. Implement Coder dispatch via ConcurrentProvider
+3. Implement code generation within the 122B's ReAct loop
 4. Implement revision handling (read review feedback, fix, resubmit)
 5. Implement preemption checking (check board every N turns for higher-priority tasks)
 6. Wire up to EventBus for system events, goal stack for autonomous work
-7. **Context Tiers integration** (Section 28): Wire `selectDeepTier()` into task claim. Pass `providerOptions` through to AgentLoop config. Add `setContextWindow()` to ContextManager. Wire Coder dispatch through `selectCoderTier()`
-8. Write unit tests: task flow state machine, coder dispatch, revision cycle, tier selection for various task shapes, context pressure flow
+7. **Context Tiers integration** (Section 28): Wire `selectDeepTier()` into task claim. Pass `providerOptions` through to AgentLoop config. Add `setContextWindow()` to ContextManager.
+8. Write unit tests: task flow state machine, code generation, revision cycle, tier selection for various task shapes, context pressure flow
 
-**Testing checkpoint:** DeepLoop can plan, implement, and respond to reviews. Tier-selected `num_ctx` flows through to all Ollama calls.
+**Testing checkpoint:** DeepLoop can plan, generate code, implement, and respond to reviews. Tier-selected `num_ctx` flows through to all Ollama calls.
 
 ### Phase 4: Code Review (FastLoop ↔ DeepLoop)
 
 **Files:** `src/dual-loop/review-prompt.ts`
 
-1. Implement review flow in FastLoop (claim reviewing tasks, send diffs to 27B)
+1. Implement review flow in FastLoop (claim reviewing tasks, send diffs to 35B-A3B)
 2. Implement review response parsing (approved/changes_requested/rejected)
 3. Implement revision flow in DeepLoop (read feedback, fix, resubmit)
 4. Add max-revision-rounds safety (prevent infinite ping-pong)
@@ -861,12 +816,12 @@ If one loop crashes:
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| 27B gives incorrect triage | Medium | Medium | Triage errors are recoverable — DeepLoop can re-classify. Add triage confidence threshold. |
+| 35B-A3B gives incorrect triage | Medium | Medium | Triage errors are recoverable — DeepLoop can re-classify. Add triage confidence threshold. |
 | Review ping-pong (endless revisions) | Low | High | Hard cap at 3 revision rounds. After that, task is marked for human review. |
 | SQLite contention under heavy load | Low | Medium | WAL mode handles this. Both loops do short transactions. Benchmark under stress. |
 | Context fragmentation (user asks about unknown task) | Medium | Low | Rich TaskBoard fields (plan, notes, resolution). FastLoop can relay to DeepLoop. |
-| 27B model quality insufficient for review | Medium | Medium | Review is advisory, not blocking. DeepLoop can override. We can disable review via config. |
-| Memory pressure (112GB of 128GB) | Low | High | Dynamic context tiers (Section 28) reduce KV cache from ~6 GB to ~2 GB typical. Monitor via `ollama ps`. Enable `OLLAMA_FLASH_ATTENTION=1` for further 2x reduction. |
+| 35B-A3B model quality insufficient for review | Medium | Medium | Review is advisory, not blocking. DeepLoop can override. We can disable review via config. |
+| Memory pressure (105GB of 128GB) | Low | Medium | Dynamic context tiers (Section 28) reduce KV cache. ~23 GB headroom (18%). Monitor via `ollama ps`. Enable `OLLAMA_FLASH_ATTENTION=1` for further 2x reduction. |
 | Both loops writing to EventBus | Low | Low | EventBus is already designed for concurrent emitters. No structural change needed. |
 
 ---
@@ -878,8 +833,8 @@ If one loop crashes:
 | User message acknowledgment latency | 10-60s | <2s |
 | User message → full response (simple) | 10-30s | 2-5s |
 | Autonomous cycle interruption latency | Up to full cycle | <5s (FastLoop acknowledges immediately) |
-| Review coverage of code changes | 0% (no review) | 100% (all changes reviewed by 27B) |
-| Model utilization (% time active) | 122B: ~40%, Coder: ~20%, 27B: 0% | 122B: ~60%, Coder: ~30%, 27B: ~30% |
+| Review coverage of code changes | 0% (no review) | 100% (all changes reviewed by 35B-A3B) |
+| Model utilization (% time active) | 122B: ~40%, 35B-A3B: 0% | 122B: ~70%, 35B-A3B: ~30% |
 
 ---
 
@@ -887,7 +842,7 @@ If one loop crashes:
 
 1. **Should the FastLoop maintain its own conversation history, or use the existing session system?** The current `session.ts` is designed for per-peer sessions via iMessage. The FastLoop's conversation is a superset of any single peer. Likely need a new "agent conversation" store.
 
-2. **Should the Coder have a persistent warm-up context?** Currently it gets cold-started on each dispatch. We could maintain a persistent "coder session" with repo map and style guide pre-loaded.
+2. **Should the 122B's code generation have a persistent warm-up context?** The 122B handles code generation within its ReAct loop, so it naturally has full task context. No separate warm-up needed.
 
 3. **How should dream cycles interact with the dual-loop?** Today they run inside the single loop. In the dual-loop world, they should probably run inside DeepLoop during idle periods, but the FastLoop should be aware of dream cycle state for status reporting.
 
@@ -931,11 +886,11 @@ The single-process model works because our loops are I/O-bound (waiting on Ollam
 
 ### 16.3 Ollama Concurrency Considerations
 
-With three models loaded and both loops generating concurrently, Ollama's internal scheduler matters:
+With both models loaded and both loops generating concurrently, Ollama's internal scheduler matters:
 
 - **OLLAMA_NUM_PARALLEL**: Set to 2 (one request per loop maximum). Avoids thrashing.
-- **Model switching latency**: All three models are pre-loaded (`keep_alive: -1`). No cold-start penalty.
-- **Metal GPU scheduling**: Apple's M4 Max GPU scheduler handles concurrent inference across models. The 122B activates 10B params/token, so when it's generating, there's compute headroom for the 27B's smaller footprint.
+- **Model switching latency**: Both models are pre-loaded (`keep_alive: -1`). No cold-start penalty.
+- **Metal GPU scheduling**: Apple's M4 Max GPU scheduler handles concurrent inference across models. The 35B-A3B's MoE architecture activates only 3B params/token, so when the 122B is generating, there's ample compute headroom for the FastLoop.
 - **Worst case**: Both loops request generation simultaneously. Ollama queues one and processes them sequentially. This adds ~1-2 seconds to the queued request — acceptable for the FastLoop's 2-second heartbeat.
 
 ---
@@ -1037,10 +992,10 @@ In the dual-loop, **the FastLoop applies the voice filter**, not the DeepLoop:
 
 This is better because:
 - The FastLoop already owns user communication
-- The 27B is sufficient for voice rewriting (it's a text transformation, not deep reasoning)
+- The 35B-A3B is sufficient for voice rewriting (it's a text transformation, not deep reasoning)
 - The 122B doesn't waste context on personality concerns
 
-**Configuration change**: `voice_filter.model` changes from `qwen3.5:122b` to `qwen3.5:27b`.
+**Configuration change**: `voice_filter.model` changes from `qwen3.5:122b` to `qwen3.5:35b-a3b`.
 
 **Fallback**: If voice filter fails (timeout, model issue), deliver the raw text. Same as today.
 
@@ -1096,7 +1051,7 @@ The AutonomousController currently orchestrates cycle lifecycle. In dual-loop mo
 |--------|-----------|-----------|
 | TaskBoard | `tests/task-board.test.ts` | Create/read/update, atomic claims, concurrent ownership, priority ordering, archive cleanup, WAL concurrent access |
 | FastLoop | `tests/fast-loop.test.ts` | Triage classification, status formatting, review flow, heartbeat timing, direct answer path |
-| DeepLoop | `tests/deep-loop.test.ts` | Task claim, plan generation, coder dispatch, revision handling, preemption |
+| DeepLoop | `tests/deep-loop.test.ts` | Task claim, plan generation, code generation, revision handling, preemption |
 | LoopCoordinator | `tests/loop-coordinator.test.ts` | Startup/shutdown, health monitoring, graceful degradation, restart |
 | Review prompts | `tests/review-prompts.test.ts` | Prompt construction, response parsing (approved/rejected/changes) |
 | Triage prompts | `tests/triage-prompts.test.ts` | Classification accuracy, confidence thresholds |
@@ -1108,7 +1063,7 @@ The AutonomousController currently orchestrates cycle lifecycle. In dual-loop mo
 | Full lifecycle | Message → triage → task → plan → implement → review → deliver |
 | Preemption | Low-priority task interrupted by high-priority user message |
 | Review rejection | Implementation rejected, revised, re-approved |
-| Graceful degradation | Kill 27B provider, verify DeepLoop continues |
+| Graceful degradation | Kill 35B-A3B provider, verify DeepLoop continues |
 | Concurrent access | Both loops hitting TaskBoard simultaneously (stress test) |
 
 ### 20.3 Mock Strategy
@@ -1181,12 +1136,12 @@ Per `docs/rulebook.md`, verify each architecture invariant:
 
 | # | Invariant | Compliant? | Notes |
 |---|-----------|-----------|-------|
-| 1 | All inference local via Ollama | Yes | All three models are local Ollama |
+| 1 | All inference local via Ollama | Yes | Both models are local Ollama |
 | 2 | Providers behind stable LlmProvider | Yes | Both loops use LlmProvider interface |
 | 3 | Security centralized in src/security/ | Yes | No security changes needed |
 | 4 | Logging through safe-logger | Yes | Both loops log through existing tracer |
 | 5 | Config validated at startup | Yes | New dual_loop config validated via Zod |
-| 6 | Model selection task-based | Yes | Fast=27B, Deep=122B, Code=coder |
+| 6 | Model selection task-based | Yes | Fast=35B-A3B, Deep=122B (also handles code generation) |
 | 7 | Agent loop is single execution path | **Modified** | Now TWO loops, but each uses AgentLoop internally. The principle (no separate code paths) holds — both loops share the same tool executors and provider interface |
 | 8 | Journal append-only | Yes | DeepLoop writes to journal as before |
 | 9 | Delegation transparent | Yes | All TaskBoard operations are logged |
@@ -1206,7 +1161,7 @@ Per `docs/rulebook.md`, verify each architecture invariant:
 **Solution:**
 - FastLoop batches consecutive user messages within a **coalesce window** (default: 3 seconds)
 - If multiple messages arrive within the window, they're combined into a single triage call
-- The 27B sees all messages together and creates one coherent task (or answers directly)
+- The 35B-A3B sees all messages together and creates one coherent task (or answers directly)
 - Configurable: `fast.message_coalesce_ms: 3000`
 
 ```typescript
@@ -1248,7 +1203,7 @@ interface StallDetector {
 
 **Scenario:** User sends a complex request ("refactor the auth system to use JWT and add refresh token rotation") but FastLoop classifies it as 'simple' and tries to answer directly.
 
-**Problem:** The 27B gives a bad answer. The user is confused or annoyed.
+**Problem:** The 35B-A3B gives a bad answer. The user is confused or annoyed.
 
 **Solution:**
 - FastLoop's triage includes a **confidence score** (0-1). If confidence < 0.7, default to 'complex' (escalate to DeepLoop).
@@ -1293,9 +1248,9 @@ The `parkedState.reason` field provides the context. FastLoop's status reporting
   3. If successful, both loops resume naturally (they pull from the TaskBoard)
   4. If unsuccessful after 4 attempts, notifies the user via FastLoop (if it's still up): "I'm having trouble connecting to my inference engine. Standing by."
 
-### 23.7 27B and 122B Disagree on Review (Repeatedly)
+### 23.7 35B-A3B and 122B Disagree on Review (Repeatedly)
 
-**Scenario:** The 27B flags an issue. The 122B overrides. The 27B flags the same issue again. The 122B overrides again. This happens 3 times.
+**Scenario:** The 35B-A3B flags an issue. The 122B overrides. The 35B-A3B flags the same issue again. The 122B overrides again. This happens 3 times.
 
 **Problem:** Infinite ping-pong. Neither model is necessarily wrong — they have different perspectives.
 
@@ -1382,33 +1337,32 @@ On restart, the DeepLoop checks for in-progress tasks:
 | Operation | Estimated Latency | Context Tier (Section 28) | Notes |
 |-----------|------------------|--------------------------|-------|
 | FastLoop heartbeat (idle) | 2s | — | Just a sleep + board check |
-| FastLoop triage (27B) | 0.5-1.5s | compact (4K) | ~5x faster than fixed 32K due to reduced prefill |
-| FastLoop direct answer (27B) | 1-3s | standard (12K) | Moderate context for question + answer |
-| FastLoop code review (27B) | 3-10s | standard/extended | Small diff=standard, large diff=extended |
-| FastLoop voice filter (27B) | 0.5-1s | compact (4K) | Minimal context, short rewrite |
+| FastLoop triage (35B-A3B) | 0.5-1.5s | compact (4K) | ~5x faster than fixed 32K due to reduced prefill; MoE (3B active) is blazing fast |
+| FastLoop direct answer (35B-A3B) | 1-3s | standard (12K) | Moderate context for question + answer |
+| FastLoop code review (35B-A3B) | 3-10s | standard/extended | Small diff=standard, large diff=extended |
+| FastLoop voice filter (35B-A3B) | 0.5-1s | compact (4K) | Minimal context, short rewrite |
 | DeepLoop planning (122B) | 10-30s | standard/extended | Set once at task start, no mid-task resize |
 | DeepLoop tool call (122B) | 5-15s per turn | (inherited from task) | Same tier for entire task duration |
-| Coder dispatch | 3-15s | compact/standard | Sized to actual prompt content |
+| DeepLoop code generation (122B) | 5-20s | (inherited from task) | Same tier for entire task duration |
 | TaskBoard read | <1ms | — | SQLite synchronous read |
 | TaskBoard write | <1ms | — | SQLite synchronous write |
 
 ### 25.2 Throughput
 
-- **FastLoop**: Can process ~20-30 user messages per minute (limited by 27B generation speed)
-- **DeepLoop**: ~1-3 tasks per hour (depending on complexity)
-- **Coder**: ~10-20 code generations per hour (focused, short prompts)
+- **FastLoop**: Can process ~20-30 user messages per minute (limited by 35B-A3B generation speed; MoE sparsity helps here)
+- **DeepLoop**: ~1-3 tasks per hour (depending on complexity; includes code generation)
 
 ### 25.3 Memory Steady State
 
-After all three models are loaded and warm:
-- Ollama model weights: ~112 GB (three models in unified memory)
-- Ollama KV caches: ~2-5 GB (depends on active context tiers — see Section 28.6)
-  - Typical (FastLoop compact + DeepLoop standard): ~1.9 GB
-  - Worst case (all loops at extended): ~4.8 GB
+After both models are loaded and warm:
+- Ollama model weights: ~105 GB (two models in unified memory)
+- Ollama KV caches: ~1-4 GB (depends on active context tiers — see Section 28.6)
+  - Typical (FastLoop compact + DeepLoop standard): ~1.8 GB
+  - Worst case (both loops at extended): ~3.7 GB
   - With `OLLAMA_FLASH_ATTENTION=1`: roughly half the above
 - Node.js heap: ~200-400 MB (TaskBoard, state stores, conversation history)
 - SQLite WAL: ~1-10 MB (depending on active task count)
-- Total system: ~115-117 GB typical (well within 128 GB budget)
+- Total system: ~107-110 GB typical (well within 128 GB budget, ~18-21 GB headroom)
 
 ---
 
@@ -1423,16 +1377,14 @@ Tyrion Status (Dual-Loop)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FastLoop:  ● Running  (last heartbeat: 1.2s ago)
 DeepLoop:  ● Working  (task: task-m3k8a — "Refactor auth", turn 12/50)
-Coder:     ○ Idle     (last dispatch: 3m ago)
 
 TaskBoard:
   Active: 3    Queued: 1    Reviewing: 1    Done today: 7
 
 Models (Ollama):
-  qwen3.5:27b       ● Loaded  (17.1 GB)  ctx: compact (4K)
-  qwen3.5:122b      ● Loaded  (73.4 GB)  ctx: standard (25K)
-  qwen3-coder-next  ● Loaded  (22.0 GB)  ctx: idle
-  Weights: 112.5 GB  |  KV cache: ~1.9 GB  |  Free: 13.6 GB
+  qwen3.5:35b-a3b   ● Loaded  (24.0 GB)  ctx: compact (4K)
+  qwen3.5:122b      ● Loaded  (81.0 GB)  ctx: standard (25K)
+  Weights: 105.0 GB  |  KV cache: ~1.8 GB  |  Free: 21.2 GB
 ```
 
 ### 26.2 Logging
@@ -1445,8 +1397,8 @@ Both loops log through the existing `getTracer()` debug system with loop-specifi
 [fast-loop] [info] Created task task-m3k8a: "Refactor auth module"
 [deep-loop] [info] Claimed task task-m3k8a
 [deep-loop] [debug] Planning: 5 steps identified
-[deep-loop] [info] Dispatching step 1 to coder
-[deep-loop] [debug] Coder returned 847 chars in 12.3s
+[deep-loop] [info] Generating code for step 1
+[deep-loop] [debug] Code generation returned 847 chars in 12.3s
 [fast-loop] [info] Reviewing task task-m3k8a (3 diffs, 127 lines)
 [fast-loop] [debug] Review: approved (no issues found)
 ```
@@ -1457,13 +1409,13 @@ Track these to tune the dual-loop over time:
 
 | Metric | What It Tells You |
 |--------|------------------|
-| Triage accuracy | Is the 27B classifying correctly? Compare triage vs actual outcome |
+| Triage accuracy | Is the 35B-A3B classifying correctly? Compare triage vs actual outcome |
 | Direct answer satisfaction | Do users follow up with corrections after direct answers? |
-| Review override rate | How often does 122B override 27B reviews? If >50%, reviews may not be useful |
+| Review override rate | How often does 122B override 35B-A3B reviews? If >50%, reviews may not be useful |
 | Preemption frequency | How often are tasks parked? If frequent, adjust priority thresholds |
 | Queue depth over time | Is DeepLoop keeping up? Rising queue = need faster processing |
 | Heartbeat jitter | Is FastLoop responsive? Jitter >5s means it's blocking on something |
-| Coder dispatch success rate | Does Coder output pass review? If <80%, Coder prompts need work |
+| Code generation quality | Does 122B-generated code pass review? If <80%, prompts need work |
 
 ---
 
@@ -1477,14 +1429,9 @@ The FastLoop maintains its own `FastConversation` — a simple ring buffer of th
 - Rolling window (configurable max tokens, default 10K)
 - Append-only during a session (no edits or deletions)
 
-### Q2: Coder warm-up context → Yes, use a persistent system prompt
+### Q2: Code generation warm-up context → Handled naturally by the 122B
 
-Each Coder dispatch includes a **preamble** loaded once and cached:
-- The project's coding style (extracted from existing code patterns)
-- The repo map (top-level file/symbol index, already built by `coding/modes/`)
-- Any relevant `.editorconfig` or linting rules
-
-This preamble is built once per DeepLoop startup and reused across dispatches. Cost: ~2K tokens of the Coder's 32K context, saving significant per-dispatch overhead.
+Since the 122B handles code generation within its own ReAct loop, the full task context (plan, file contents, style notes) is already available. No separate warm-up or preamble is needed — the 122B has the richest context of any model in the system.
 
 ### Q3: Dream cycles → Run inside DeepLoop, status visible to FastLoop
 
@@ -1496,7 +1443,7 @@ Dream cycles run as low-priority tasks in the DeepLoop. When a dream cycle is du
 
 ### Q4: Voice filter → FastLoop handles it (resolved in Section 18)
 
-The FastLoop applies the voice filter using the 27B. This is a natural fit.
+The FastLoop applies the voice filter using the 35B-A3B. This is a natural fit.
 
 ### Q5: SQLite dependency → Use better-sqlite3 (resolved in Section 21)
 
@@ -1519,17 +1466,16 @@ this.llmProvider = new OllamaProvider({
 
 This is wasteful. When the FastLoop sends a 2K-token triage prompt, Ollama still allocates a 40K-token KV cache. That KV cache consumes real memory (proportional to `num_ctx × num_layers × hidden_dim × 2`) and slows down inference (attention computation scales with context length).
 
-With three models sharing 128 GB and weights consuming ~112 GB, the remaining ~16 GB is the **KV cache budget**. Fixed allocation wastes this budget:
+With two models sharing 128 GB and weights consuming ~105 GB, the remaining ~23 GB is the **KV cache budget**. Fixed allocation wastes this budget:
 
 | Scenario | Fixed `num_ctx` | KV Cache Allocated | KV Cache Actually Needed |
 |----------|----------------|-------------------|-------------------------|
-| FastLoop triage (2K tokens) | 32,768 | ~1.5 GB | ~0.1 GB |
-| FastLoop code review (10K tokens) | 32,768 | ~1.5 GB | ~0.5 GB |
+| FastLoop triage (2K tokens) | 32,768 | ~1.6 GB | ~0.1 GB |
+| FastLoop code review (10K tokens) | 32,768 | ~1.6 GB | ~0.5 GB |
 | DeepLoop planning (25K tokens) | 40,960 | ~3.0 GB | ~1.8 GB |
-| Coder dispatch (6K tokens) | 32,768 | ~1.5 GB | ~0.3 GB |
-| **Total (all active)** | — | **~7.5 GB** | **~2.7 GB** |
+| **Total (both active)** | — | **~6.2 GB** | **~2.4 GB** |
 
-That's **~5 GB of wasted KV cache** in a typical concurrent workload — nearly a third of our 16 GB headroom.
+That's **~4 GB of wasted KV cache** in a typical concurrent workload.
 
 ### 28.2 Key Insight: Per-Call Sizing is Free for Most Operations
 
@@ -1545,7 +1491,6 @@ This maps perfectly onto our dual-loop architecture:
 |------|-------------|----------------|-------------------|
 | **FastLoop** | Independent calls (each triage/review/status is fresh) | No reuse between calls | **Zero** — size freely per-call |
 | **DeepLoop** | Multi-turn ReAct loop (context accumulates over turns) | Reused across turns | **Expensive** — only size at task start |
-| **Coder** | Independent dispatches (scoped prompt each time) | No reuse between dispatches | **Zero** — size freely per-dispatch |
 
 ### 28.3 Design: Three-Tier Context Sizing
 
@@ -1577,23 +1522,17 @@ Per-model tier values:
 # config/autonomous.yaml — addition to dual_loop section
 dual_loop:
   context_tiers:
-    # FastLoop (qwen3.5:27b)
+    # FastLoop (qwen3.5:35b-a3b)
     fast:
       compact: 4096       # Triage, voice filter, acknowledgment, simple Q&A
       standard: 12288     # Code review (small-medium), status with rich context
       extended: 24576     # Large diff review (200+ lines), batched multi-message triage
 
-    # DeepLoop (qwen3.5:122b)
+    # DeepLoop (qwen3.5:122b) — also handles code generation
     deep:
       compact: 8192       # Quick event handling, simple tool calls
-      standard: 24576     # Standard task planning and multi-step execution
+      standard: 24576     # Standard task planning, multi-step execution, and code generation
       extended: 40960     # Cross-module refactors, deep reasoning, resumed parked tasks
-
-    # Coder (qwen3-coder-next)
-    coder:
-      compact: 8192       # Single-file focused code generation
-      standard: 16384     # Multi-file code generation with context
-      extended: 32768     # Large refactors with extensive file context (rare)
 ```
 
 ### 28.4 Tier Selection Logic
@@ -1673,30 +1612,9 @@ function selectDeepTier(task: Task): keyof ContextTierConfig {
 2. **Token tracking already exists**: The AgentLoop tracks cumulative token usage via `estimateTokens(text.length / 3.5)`. If tracked usage exceeds 80% of the current tier's capacity, the DeepLoop logs a warning. This is observability, not dynamic resizing — it tells us if the tiers are misconfigured.
 3. **Tier upgrade on retry**: If a task fails with `stopReason: 'max_tokens'` or the stall detector fires, and the task was at `standard`, it can be re-queued at `extended`. This is a per-task retry, not a mid-conversation resize.
 
-#### 28.4.3 Coder Tier Selection
+#### 28.4.3 Code Generation Context
 
-The Coder receives a scoped prompt every time — file contents + plan step + style notes. We know the exact content before calling the model, so we can **measure** instead of estimate:
-
-```typescript
-function selectCoderTier(
-  stepPrompt: string,
-  fileContents: string,
-  preamble: string,
-): keyof ContextTierConfig {
-  const estimatedTokens = Math.ceil(
-    (stepPrompt.length + fileContents.length + preamble.length) / 3.5
-  );
-
-  // Add buffer for response generation (the model needs room to write code)
-  const withBuffer = estimatedTokens + 2000; // ~2K tokens response budget
-
-  if (withBuffer < 6000) return 'compact';
-  if (withBuffer < 14000) return 'standard';
-  return 'extended';
-}
-```
-
-This is the most precise tier selection — it's based on measured content, not operation type heuristics. The 2K response buffer is conservative; adjust via `coder.response_buffer_tokens: 2000`.
+Since the 122B now handles code generation within its ReAct loop, there is no separate coder tier selection. Code generation inherits the DeepLoop's tier for the current task. This simplifies the system: the DeepLoop's `standard` or `extended` tier provides sufficient context for both reasoning and code generation in a single model.
 
 ### 28.5 Implementation: How `num_ctx` Flows Through the System
 
@@ -1727,7 +1645,6 @@ export interface ContextTierConfig {
 export interface ContextTiersConfig {
   fast: ContextTierConfig;
   deep: ContextTierConfig;
-  coder: ContextTierConfig;
 }
 
 export type ContextTier = keyof ContextTierConfig;
@@ -1736,7 +1653,6 @@ export type ContextTier = keyof ContextTierConfig;
 
 export function selectFastTier(operation: FastOperation): ContextTier { /* ... */ }
 export function selectDeepTier(task: Task): ContextTier { /* ... */ }
-export function selectCoderTier(promptLength: number): ContextTier { /* ... */ }
 
 // --- num_ctx resolution ---
 
@@ -1838,7 +1754,7 @@ Per-request `providerOptions.num_ctx` already overrides the instance-level `this
 
 #### 28.5.6 Changes to ConcurrentProvider (`src/providers/concurrent.ts`)
 
-No changes needed. The `ConcurrentProvider.generate()` passes the full `GenerateRequest` (including `providerOptions`) through to the underlying provider. The tier-selected `num_ctx` flows through transparently.
+No changes needed. The `ConcurrentProvider.generate()` passes the full `GenerateRequest` (including `providerOptions`) through to the underlying provider. The tier-selected `num_ctx` flows through transparently. With only two models registered, the ConcurrentProvider's role is simpler.
 
 ### 28.6 Memory Impact
 
@@ -1848,54 +1764,50 @@ KV cache memory depends on model architecture. For Qwen-family models with group
 
 | Model | KV Cache per 1K Tokens (est.) | Compact | Standard | Extended |
 |-------|------------------------------|---------|----------|----------|
-| qwen3.5:27b | ~45 MB/1K | 0.18 GB | 0.55 GB | 1.11 GB |
-| qwen3.5:122b-a10b | ~70 MB/1K | 0.57 GB | 1.72 GB | 2.87 GB |
-| qwen3-coder-next | ~50 MB/1K | 0.41 GB | 0.82 GB | 1.64 GB |
+| qwen3.5:35b-a3b | ~50 MB/1K | 0.20 GB | 0.61 GB | 1.23 GB |
+| qwen3.5:122b | ~70 MB/1K | 0.57 GB | 1.72 GB | 2.87 GB |
 
-*Note: These are estimates. Actual values depend on num_kv_heads, head_dim, and quantization. Measure with `ollama ps` after deployment.*
+*Note: The 35B-A3B is MoE (35B total, 3B active) so its KV cache is relatively small despite the larger total param count. These are estimates. Actual values depend on num_kv_heads, head_dim, and quantization. Measure with `ollama ps` after deployment.*
 
 #### 28.6.2 Typical Workload Comparison
 
 **Scenario A: Fixed `num_ctx` (current design)**
 
-All three models at their fixed maximum context:
+Both models at their fixed maximum context:
 ```
-27B at 32K:     ~1.47 GB
+35B-A3B at 32K: ~1.60 GB
 122B at 41K:    ~2.87 GB
-Coder at 32K:   ~1.64 GB
-Total KV:       ~5.98 GB
-Free:           128 - 112 - 5.98 = 10.02 GB headroom
+Total KV:       ~4.47 GB
+Free:           128 - 105 - 4.47 = 18.53 GB headroom
 ```
 
 **Scenario B: Tiered `num_ctx` (typical mixed workload)**
 
-FastLoop triaging (compact), DeepLoop planning (standard), Coder idle:
+FastLoop triaging (compact), DeepLoop planning (standard):
 ```
-27B at 4K:      ~0.18 GB
+35B-A3B at 4K:  ~0.20 GB
 122B at 25K:    ~1.72 GB
-Coder idle:     0 GB
-Total KV:       ~1.90 GB
-Free:           128 - 112 - 1.90 = 14.10 GB headroom
+Total KV:       ~1.92 GB
+Free:           128 - 105 - 1.92 = 21.08 GB headroom
 ```
 
-**Scenario C: Tiered `num_ctx` (all loops active, worst case)**
+**Scenario C: Tiered `num_ctx` (both loops active, worst case)**
 
-FastLoop reviewing large diff (extended), DeepLoop planning (extended), Coder generating (standard):
+FastLoop reviewing large diff (extended), DeepLoop planning (extended):
 ```
-27B at 25K:     ~1.11 GB
+35B-A3B at 25K: ~1.23 GB
 122B at 41K:    ~2.87 GB
-Coder at 16K:   ~0.82 GB
-Total KV:       ~4.80 GB
-Free:           128 - 112 - 4.80 = 11.20 GB headroom
+Total KV:       ~4.10 GB
+Free:           128 - 105 - 4.10 = 18.90 GB headroom
 ```
 
 | Metric | Fixed (A) | Typical Tiered (B) | Worst Tiered (C) |
 |--------|-----------|-------------------|------------------|
-| **KV cache total** | 5.98 GB | 1.90 GB | 4.80 GB |
-| **Free headroom** | 10.02 GB | 14.10 GB | 11.20 GB |
-| **vs. Fixed** | baseline | -4.08 GB (68% less) | -1.18 GB (20% less) |
+| **KV cache total** | 4.47 GB | 1.92 GB | 4.10 GB |
+| **Free headroom** | 18.53 GB | 21.08 GB | 18.90 GB |
+| **vs. Fixed** | baseline | -2.55 GB (57% less) | -0.37 GB (8% less) |
 
-The typical case recovers **~4 GB** of headroom. The worst case is still better than fixed allocation.
+The typical case recovers **~2.5 GB** of KV cache. The worst case is still better than fixed allocation. With the two-model architecture, headroom is generous in all scenarios (~19-21 GB).
 
 ### 28.7 Latency Impact (The Bigger Win)
 
@@ -1904,7 +1816,7 @@ Context length affects inference speed in two ways:
 1. **Prompt processing** (prefill): Time to process the input tokens. Scales roughly linearly with token count.
 2. **Per-token generation**: Each output token attends to all preceding tokens. Longer contexts mean slower generation.
 
-Estimated latency impact for the 27B (FastLoop's model):
+Estimated latency impact for the 35B-A3B (FastLoop's model — MoE with 3B active params):
 
 | Operation | Fixed 32K `num_ctx` | Compact 4K `num_ctx` | Speedup |
 |-----------|--------------------|--------------------|---------|
@@ -1914,7 +1826,7 @@ Estimated latency impact for the 27B (FastLoop's model):
 
 For the FastLoop's 2-second heartbeat target, the difference between 0.5s and 3s first-token is the difference between **feeling instant** and **feeling slow**. Compact triage at 4K context puts the FastLoop comfortably within its responsiveness target.
 
-The DeepLoop benefits less (it's doing long-running work), but the Coder benefits significantly — compact dispatch at 8K is measurably faster than fixed 32K for small code generation tasks.
+The DeepLoop benefits less (it's doing long-running work), but the combined effect of MoE sparsity plus compact context tiers makes the FastLoop exceptionally responsive.
 
 ### 28.8 Configuration
 
@@ -1951,13 +1863,6 @@ dual_loop:
       # If tracked tokens exceed this fraction of num_ctx, log a warning
       context_pressure_warning_threshold: 0.80
 
-    coder:
-      compact: 8192
-      standard: 16384
-      extended: 32768
-      # Tokens reserved for response generation (added to prompt estimate)
-      response_buffer_tokens: 2000
-
   # Ollama environment recommendation (set in shell or systemd unit):
   # OLLAMA_FLASH_ATTENTION=1  — reduces KV cache memory ~2x with GQA models
   # This should be enabled regardless of whether tiers are used.
@@ -1981,9 +1886,6 @@ const contextTiersConfigSchema = z.object({
   }),
   deep: contextTierSchema.extend({
     context_pressure_warning_threshold: z.number().min(0.5).max(0.99).default(0.80),
-  }),
-  coder: contextTierSchema.extend({
-    response_buffer_tokens: z.number().int().min(500).default(2000),
   }),
 });
 ```
@@ -2034,11 +1936,11 @@ This is observability, not control flow. It tells us when the tier configuration
 
 #### 28.9.3 ReasoningScaler (bestOfN)
 
-The `ReasoningScaler` uses `ConcurrentProvider.bestOfN()` for hard problems, dispatching multiple Coder generations in parallel. Each generation inherits the `providerOptions` from the `GenerateRequest` — including the tier-selected `num_ctx`. No change needed. All candidates in a bestOfN batch get the same `num_ctx` (appropriate, since they're solving the same problem with the same context).
+The `ReasoningScaler` uses `ConcurrentProvider.bestOfN()` for hard problems, dispatching multiple generations in parallel via the 122B. Each generation inherits the `providerOptions` from the `GenerateRequest` — including the tier-selected `num_ctx`. No change needed. All candidates in a bestOfN batch get the same `num_ctx` (appropriate, since they're solving the same problem with the same context).
 
 #### 28.9.4 Voice Filter
 
-The voice filter currently uses the 122B (`voice_filter.model: qwen3.5:122b`). In the dual-loop, it moves to the 27B (Section 18). With dynamic tiers, the voice filter always uses the **compact** tier — it's a short text rewrite (~500 tokens in, ~500 out). This is handled by `selectFastTier('voice_filter')` returning `'compact'`.
+The voice filter currently uses the 122B (`voice_filter.model: qwen3.5:122b`). In the dual-loop, it moves to the 35B-A3B (Section 18). With dynamic tiers, the voice filter always uses the **compact** tier — it's a short text rewrite (~500 tokens in, ~500 out). This is handled by `selectFastTier('voice_filter')` returning `'compact'`.
 
 #### 28.9.5 Dream Cycles
 
@@ -2054,7 +1956,7 @@ The dream cycle task's `planSteps` count drives tier selection via the normal `s
 
 #### 28.10.1 Ollama Ignores `num_ctx` on Warm KV Cache Hit
 
-**Scenario:** The 27B processes a triage at `num_ctx: 4096`. Next request is a code review at `num_ctx: 12288`. Ollama has the 27B's KV cache still warm from the triage.
+**Scenario:** The 35B-A3B processes a triage at `num_ctx: 4096`. Next request is a code review at `num_ctx: 12288`. Ollama has the 35B-A3B's KV cache still warm from the triage.
 
 **Behavior:** When `num_ctx` changes between requests to the same model, Ollama invalidates the warm KV cache and allocates a new one at the requested size. This is expected and correct — the FastLoop doesn't reuse context between calls anyway.
 
@@ -2074,15 +1976,9 @@ The dream cycle task's `planSteps` count drives tier selection via the normal `s
 
 #### 28.10.3 Multiple Concurrent Requests with Different `num_ctx`
 
-**Scenario:** The FastLoop sends a triage at `num_ctx: 4096` to the 27B at the same instant the DeepLoop sends a planning request at `num_ctx: 40960` to the 122B.
+**Scenario:** The FastLoop sends a triage at `num_ctx: 4096` to the 35B-A3B at the same instant the DeepLoop sends a planning request at `num_ctx: 40960` to the 122B.
 
-**Behavior:** No conflict — they're different models. Ollama allocates independent KV caches per model. The 27B gets a 4K cache, the 122B gets a 41K cache. Total memory is within budget because we sized the tiers with concurrent usage in mind (Section 28.6.2, Scenario C).
-
-**Scenario B:** Two requests to the *same* model with different `num_ctx` (e.g., DeepLoop dispatches to Coder at `num_ctx: 8192`, then immediately dispatches again at `num_ctx: 16384` before the first completes).
-
-**Behavior:** Ollama handles this with its internal request queue (`OLLAMA_NUM_PARALLEL`). Each request gets its own KV cache at its requested size. With `OLLAMA_NUM_PARALLEL=2`, both run concurrently. With `OLLAMA_NUM_PARALLEL=1`, the second queues behind the first.
-
-**Risk:** If `OLLAMA_NUM_PARALLEL > 1`, both KV caches exist simultaneously. Two Coder requests at `extended` (32K each) would allocate ~3.3 GB of KV cache for the Coder alone. This is fine within our budget but worth monitoring.
+**Behavior:** No conflict — they're different models. Ollama allocates independent KV caches per model. The 35B-A3B gets a 4K cache, the 122B gets a 41K cache. Total memory is within budget because we sized the tiers with concurrent usage in mind (Section 28.6.2, Scenario C). With only two models, there is no risk of triple-model KV cache pressure.
 
 #### 28.10.4 Config Validation: Tiers Must Be Ordered
 
@@ -2137,7 +2033,7 @@ Every LLM call logs the selected tier and `num_ctx`:
 [fast-loop] [debug] Tier: compact (num_ctx=4096) for operation=triage
 [deep-loop] [debug] Tier: standard (num_ctx=24576) for task=task-m3k8a
 [deep-loop] [warn]  Context pressure: 0.83 of num_ctx=24576 (estimated 20398 tokens)
-[coder]     [debug] Tier: compact (num_ctx=8192) for step="Add JWT validation"
+[deep-loop] [debug] Code gen: standard (num_ctx=24576) for step="Add JWT validation"
 ```
 
 #### 28.11.2 Metrics for Tuning
@@ -2156,7 +2052,7 @@ After deployment, observe for 1-2 weeks, then tune:
 
 1. **If FastLoop feels sluggish on triage**: Verify it's using `compact`. If yes, the model may need a smaller context or the prompt is too long. Check prompt token count.
 2. **If DeepLoop context pressure warnings are frequent**: Bump `standard` from 24576 to 28672, or improve warm tier eviction to be more aggressive on stale entries.
-3. **If Coder generates truncated code**: The `response_buffer_tokens` may be too low for the types of code being generated. Increase to 3000-4000.
+3. **If 122B generates truncated code**: The DeepLoop's context tier may need to be bumped to `extended` for code-heavy tasks. Adjust `selectDeepTier()` heuristics.
 4. **If memory usage is consistently low**: You can afford to raise tier values or add more headroom to `standard`.
 
 ### 28.12 Implementation Order
@@ -2181,7 +2077,6 @@ This feature integrates into the existing Phase 2 (FastLoop) and Phase 3 (DeepLo
 - Wire `selectDeepTier()` into `planAndExecute()` and task claim
 - Pass `providerOptions` through to `AgentLoop` config
 - Add `setContextWindow()` to `ContextManager`
-- Wire Coder dispatch through `selectCoderTier()`
 - Write unit tests: tier selection for various task shapes, context pressure flow
 
 #### Step 4: Validation (during Phase 5 — LoopCoordinator)
@@ -2201,7 +2096,7 @@ This feature integrates into the existing Phase 2 (FastLoop) and Phase 3 (DeepLo
 | 4 | Logging through safe-logger | Yes | Tier logging uses existing `getTracer()`. No raw user content logged. |
 | 5 | Config validated at startup | Yes | Zod schema validates tier ordering and ranges. |
 | 6 | Model selection task-based | Yes | Tier selection is operation-based, extending the same principle. |
-| 7 | Agent loop shared execution path | Yes | Both loops use the same `AgentLoop` class, same `providerOptions` mechanism. |
+| 7 | Agent loop shared execution path | Yes | Both loops use the same `AgentLoop` class, same `providerOptions` mechanism. Two models, one execution interface. |
 | 8 | Journal append-only | Yes | No journal changes. |
 | 9 | Delegation transparent | Yes | Tier selection is logged and auditable. |
 

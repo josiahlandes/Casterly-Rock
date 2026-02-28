@@ -21,10 +21,9 @@ Casterly uses YAML configuration files validated at load time by Zod schemas. Al
 ```yaml
 local:
   provider: ollama
-  model: qwen3.5:122b                   # Primary: reasoning + conversation
-  codingModel: qwen3-coder-next:latest   # Coding: code gen + review
+  model: qwen3.5:122b                   # DeepLoop: reasoning, planning, AND code generation
   baseUrl: http://localhost:11434
-  timeoutMs: 120000                      # 2 min (70B models need longer)
+  timeoutMs: 120000                      # 2 min (large models need longer)
 ```
 
 **Schema** (`src/config/schema.ts`):
@@ -33,7 +32,7 @@ local:
 |-------|------|----------|-------------|
 | `provider` | `'ollama'` | Yes | Always `ollama` (local-only) |
 | `model` | `string` | Yes | Primary Ollama model name |
-| `codingModel` | `string?` | No | Separate coding model (creates a second provider if different from `model`) |
+| `codingModel` | `string?` | No | Separate coding model (unused in current two-model architecture -- 122b handles coding directly) |
 | `baseUrl` | URL | Yes | Ollama API endpoint |
 | `timeoutMs` | `number?` | No | Request timeout in milliseconds |
 
@@ -135,7 +134,7 @@ This is the largest config file, controlling all 7 phases of the autonomous syst
 | Key | Default | Description |
 |-----|---------|-------------|
 | `autonomous.enabled` | `true` | Master switch |
-| `autonomous.model` | `qwen3-coder-next:latest` | Model for autonomous improvement |
+| `autonomous.model` | `qwen3.5:122b` | Model for autonomous improvement |
 | `autonomous.cycle_interval_minutes` | `60` | Time between improvement cycles |
 | `autonomous.max_cycles_per_day` | `12` | Daily cycle limit |
 | `autonomous.quiet_hours.start` | `06:00` | Quiet hours start (stop working) |
@@ -176,7 +175,7 @@ This is the largest config file, controlling all 7 phases of the autonomous syst
 | `agent_loop.max_tokens_per_cycle` | `500000` | Soft token limit for user/goal cycles. Local inference has no cost — set high to allow deep reflection. |
 | `agent_loop.max_tokens_per_cycle_background` | `100000` | Moderate budget for background (scheduled/event) cycles |
 | `agent_loop.reasoning_model` | `qwen3.5:122b` | Reasoning/planning model |
-| `agent_loop.coding_model` | `qwen3-coder-next:latest` | Code generation model |
+| `agent_loop.coding_model` | `qwen3.5:122b` | Code generation model (same as reasoning model in two-model architecture) |
 | `agent_loop.think_tool_enabled` | `true` | Enable explicit reasoning tool |
 | `agent_loop.delegation_enabled` | `true` | Enable sub-model delegation |
 | `agent_loop.temperature` | `0.2` | Reasoning temperature |
@@ -269,9 +268,9 @@ Defines per-role model assignments and routing:
 
 | Role | Model | Temperature | Purpose |
 |------|-------|-------------|---------|
-| `coding` | `qwen3-coder-next:latest` | 0.1 | Code gen, refactoring, bug fixes |
-| `primary` | `qwen3.5:122b` | 0.6 | Reasoning, planning, conversation |
-| `autonomous` | `qwen3-coder-next:latest` | 0.2 | Improvement cycles |
+| `primary` | `qwen3.5:122b` | 0.6 | DeepLoop: reasoning, planning, code generation, conversation |
+| `fast` | `qwen3.5:35b-a3b` | 0.3 | FastLoop: triage, review, acknowledgment (MoE: 35B total, 3B active) |
+| `autonomous` | `qwen3.5:122b` | 0.2 | Improvement cycles |
 | `specialist` | `tyrion-specialist:latest` | 0.2 | Self-distilled model (Phase 6, disabled) |
 
 ### Task-to-Model Routing
@@ -295,7 +294,7 @@ routing:
 hardware:
   platform: mac-studio-m4-max
   memory_gb: 128
-  max_concurrent_models: 3
+  max_concurrent_models: 2
   target_memory_usage_pct: 70  # Leave 30% headroom
 ```
 

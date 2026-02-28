@@ -269,7 +269,7 @@ export class AutonomousLoop {
       baseUrl: process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434',
       model: config.model,
       timeoutMs: 300_000, // 5 min — local inference can be slow
-      numCtx: 40_960,     // qwen3-coder-next supports 262K; use 40K as practical max with 128GB unified memory
+      numCtx: 40_960,     // qwen3.5 supports 256K; use 40K as practical max with 128GB unified memory
     });
 
     this.git = new GitOperations(projectRoot, config.git);
@@ -1088,7 +1088,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
   return {
     enabled: true, // Always active — no master switch (see docs/vision.md)
     provider: 'ollama',
-    model: raw.autonomous?.model ?? 'qwen3-coder-next:latest',
+    model: raw.autonomous?.model ?? 'qwen3.5:122b',
     cycleIntervalMinutes: raw.autonomous?.cycle_interval_minutes ?? 60,
     maxCyclesPerDay: raw.autonomous?.max_cycles_per_day ?? 12,
     quietHours: raw.autonomous?.quiet_hours

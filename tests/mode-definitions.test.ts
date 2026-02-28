@@ -67,8 +67,8 @@ describe('CODE_MODE', () => {
     expect(CODE_MODE.forbiddenTools).toHaveLength(0);
   });
 
-  it('prefers qwen3-coder-next', () => {
-    expect(CODE_MODE.preferredModel).toContain('qwen3-coder');
+  it('prefers qwen3.5:122b', () => {
+    expect(CODE_MODE.preferredModel).toBe('qwen3.5:122b');
   });
 });
 
@@ -143,8 +143,8 @@ describe('REVIEW_MODE', () => {
     expect(REVIEW_MODE.canBash).toBe(false);
   });
 
-  it('prefers qwen3-coder-next for code review', () => {
-    expect(REVIEW_MODE.preferredModel).toContain('qwen3-coder');
+  it('prefers qwen3.5:122b for code review', () => {
+    expect(REVIEW_MODE.preferredModel).toBe('qwen3.5:122b');
   });
 });
 

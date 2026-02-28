@@ -1,5 +1,5 @@
 /**
- * Fast Tools — Filtered toolkit for the FastLoop (27B).
+ * Fast Tools — Filtered toolkit for the FastLoop (35B-A3B).
  *
  * The FastLoop does NOT get the full 96-tool toolkit. It gets a minimal set
  * of TaskBoard-aware tools that enable it to coordinate with the DeepLoop:
@@ -11,7 +11,7 @@
  *   - write_review: Write a review result on a task
  *   - think: Reason without side effects (from existing toolkit)
  *
- * This keeps the 27B's context overhead minimal (~2K for tool schemas
+ * This keeps the 35B-A3B's context overhead minimal (~2K for tool schemas
  * vs ~50K for the full toolkit).
  *
  * See docs/dual-loop-architecture.md Section 9.

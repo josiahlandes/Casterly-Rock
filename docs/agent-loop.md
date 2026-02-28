@@ -245,7 +245,7 @@ The agent can spawn sub-tasks to a different model via the `delegate` tool:
 {
   "name": "delegate",
   "input": {
-    "model": "qwen3-coder-next:latest",
+    "model": "qwen3.5:35b-a3b",
     "task": "Review this code for security issues",
     "context_files": ["src/security/validator.ts"]
   }
@@ -339,7 +339,7 @@ Configurable via `config/autonomous.yaml` under the `voice_filter` section.
   maxTokensPerCycle: 500_000,
   maxTokensPerCycleBackground: 100_000,
   reasoningModel: 'qwen3.5:122b',
-  codingModel: 'qwen3-coder-next:latest',
+  fastModel: 'qwen3.5:35b-a3b',
   thinkToolEnabled: true,
   delegationEnabled: true,
   userMessagingEnabled: false,

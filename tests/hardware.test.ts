@@ -355,7 +355,7 @@ describe('ReasoningScaler — Scaled Solving', () => {
     const codingProvider = createMockProvider('ollama', 'coder', 'Easy fix');
     const reasoningProvider = createMockProvider('ollama', 'reasoner', 'Reasoning');
     const providers = new Map<string, LlmProvider>([
-      ['qwen3-coder-next:latest', codingProvider],
+      ['qwen3.5:122b', codingProvider],
       ['hermes3:70b', reasoningProvider],
     ]);
     const cp = createConcurrentProvider(providers);
@@ -365,7 +365,7 @@ describe('ReasoningScaler — Scaled Solving', () => {
 
     expect(result.difficulty).toBe('easy');
     expect(result.candidatesGenerated).toBe(1);
-    expect(result.response.model).toBe('qwen3-coder-next:latest');
+    expect(result.response.model).toBe('qwen3.5:122b');
     expect(codingProvider.generateWithTools).toHaveBeenCalledOnce();
     expect(reasoningProvider.generateWithTools).not.toHaveBeenCalled();
   });
@@ -374,7 +374,7 @@ describe('ReasoningScaler — Scaled Solving', () => {
     const codingProvider = createMockProvider('ollama', 'coder', 'Code solution');
     const reasoningProvider = createMockProvider('ollama', 'reasoner', 'Reasoning solution with more detail');
     const providers = new Map<string, LlmProvider>([
-      ['qwen3-coder-next:latest', codingProvider],
+      ['qwen3.5:122b', codingProvider],
       ['hermes3:70b', reasoningProvider],
     ]);
     const cp = createConcurrentProvider(providers);
@@ -393,7 +393,7 @@ describe('ReasoningScaler — Scaled Solving', () => {
     const codingProvider = createMockProvider('ollama', 'coder', 'Coding answer');
     const reasoningProvider = createMockProvider('ollama', 'reasoner', 'Select candidate 1 because it is correct.');
     const providers = new Map<string, LlmProvider>([
-      ['qwen3-coder-next:latest', codingProvider],
+      ['qwen3.5:122b', codingProvider],
       ['hermes3:70b', reasoningProvider],
     ]);
     const cp = createConcurrentProvider(providers);
@@ -409,7 +409,7 @@ describe('ReasoningScaler — Scaled Solving', () => {
   it('falls back to single generation when disabled', async () => {
     const codingProvider = createMockProvider('ollama', 'coder', 'Answer');
     const providers = new Map<string, LlmProvider>([
-      ['qwen3-coder-next:latest', codingProvider],
+      ['qwen3.5:122b', codingProvider],
       ['hermes3:70b', createMockProvider('ollama', 'reasoner')],
     ]);
     const cp = createConcurrentProvider(providers);

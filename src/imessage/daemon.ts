@@ -340,7 +340,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
       const fastProvider = new OllamaProvider({
         baseUrl,
-        model: 'qwen3.5:27b',
+        model: 'qwen3.5:35b-a3b',
         timeoutMs: 30_000,
       });
       const deepProvider = new OllamaProvider({
@@ -349,17 +349,11 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         timeoutMs: 300_000,
         numCtx: 40_960,
       });
-      const coderProvider = new OllamaProvider({
-        baseUrl,
-        model: 'qwen3-coder-next:latest',
-        timeoutMs: 300_000,
-      });
 
       const concurrentProvider = new ConcurrentProvider(
         new Map([
           ['qwen3.5:122b', deepProvider],
-          ['qwen3-coder-next:latest', coderProvider],
-          ['qwen3.5:27b', fastProvider],
+          ['qwen3.5:35b-a3b', fastProvider],
         ]),
       );
 
@@ -379,7 +373,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       autonomousController.start();
 
       safeLogger.info('Dual-loop controller initialized', {
-        fastModel: 'qwen3.5:27b',
+        fastModel: 'qwen3.5:35b-a3b',
         deepModel: 'qwen3.5:122b',
       });
     } else {

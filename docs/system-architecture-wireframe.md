@@ -68,9 +68,9 @@ A visual reference for the full system. Each module is numbered for cross-refere
 │  ┌──────────────────────────────┐    ┌──────────────────────────────────────┐   │
 │  │  [16] Voice Filter           │    │  [17] Model Selection & Routing     │   │
 │  │  Personality rewrite before  │    │                                      │   │
-│  │  message delivery. Reasoning │    │  qwen3.5:122b ◀── reasoning/general │   │
-│  │  stays neutral; Tyrion's     │    │  qwen3-coder  ◀── code generation   │   │
-│  │  voice applied at output     │    │  Embedding    ◀── semantic search   │   │
+│  │  message delivery. Reasoning │    │  qwen3.5:122b   ◀── reasoning/code   │   │
+│  │  stays neutral; Tyrion's     │    │  qwen3.5:35b-a3b ◀── fast triage   │   │
+│  │  voice applied at output     │    │  Embedding       ◀── semantic search│   │
 │  │  boundary only.              │    │                                      │   │
 │  └──────────────────────────────┘    │  LLM decides routing via delegate   │   │
 │                                      └──────────────────────────────────────┘   │
@@ -144,7 +144,7 @@ A visual reference for the full system. Each module is numbered for cross-refere
 │  ┌──────────▼──────────┐  ┌────────────▼────────┐  ┌──────▼──────────────┐     │
 │  │  [37] Ollama        │  │  [38] Concurrent    │  │  [39] Embedding     │     │
 │  │  Provider           │  │  Provider           │  │  Provider           │     │
-│  │  (primary + coding) │  │  (parallel/bestOfN) │  │  (semantic search)  │     │
+│  │  (deep + fast)      │  │  (parallel/bestOfN) │  │  (semantic search)  │     │
 │  └──────────┬──────────┘  └────────────┬────────┘  └──────┬──────────────┘     │
 │             └──────────────────────────┼───────────────────┘                    │
 │                                        ▼                                        │
@@ -152,7 +152,7 @@ A visual reference for the full system. Each module is numbered for cross-refere
 │                           │  [40] Ollama Server    │                            │
 │                           │  localhost:11434        │                            │
 │                           │  qwen3.5:122b (81GB)   │                            │
-│                           │  + qwen3-coder-next    │                            │
+│                           │  + qwen3.5:35b-a3b     │                            │
 │                           │  + embedding model     │                            │
 │                           └────────────────────────┘                            │
 │                                                                                 │
@@ -297,11 +297,11 @@ A visual reference for the full system. Each module is numbered for cross-refere
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
 │  │  Ollama Server (localhost:11434)                                        │    │
 │  │                                                                         │    │
-│  │  [85] qwen3.5:122b (81GB)  ◀── primary reasoning (40K context)         │    │
-│  │  [86] qwen3-coder-next     ◀── code generation                         │    │
+│  │  [85] qwen3.5:122b (81GB)  ◀── reasoning + code gen (40K context)      │    │
+│  │  [86] qwen3.5:35b-a3b (24GB) ◀── fast triage/review (MoE, 3B active)  │    │
 │  │  [87] Embedding model      ◀── semantic search                          │    │
 │  │                                                                         │    │
-│  │  ~90GB model memory · ~38GB headroom for OS + KV cache                  │    │
+│  │  ~105GB model memory · ~23GB headroom for OS + KV cache                 │    │
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                 │
 │  Economics: all tokens free → maximize LLM calls → self-correction,            │
@@ -335,7 +335,7 @@ A visual reference for the full system. Each module is numbered for cross-refere
 | 14 | Identity Builder | Builds the operational identity prompt from live state: character prompt (neutral voice), world model summary, goal stack, issue log, self-model, crystals, constitution, and handoff note. ~4000 chars. |
 | 15 | Context Manager | 4-tier memory hierarchy. Hot (~2K tokens, always present), Warm (~20K, session working memory), Cool (30 days, searchable), Cold (archive, searchable). Auto-populates from significant tool results. |
 | 16 | Voice Filter | Post-processing personality rewrite. After the agent loop produces a response, a single LLM call rewrites it in Tyrion's voice before `sendMessage()`. Reasoning stays neutral; personality applied only at the output boundary. Skips text <10 chars or on provider failure (graceful fallback). |
-| 17 | Model Selection & Routing | Two-model setup: qwen3.5:122b (reasoning/planning) + qwen3-coder-next (code generation). Hardcoded task-type routing deprecated — the LLM decides via the `delegate` tool at runtime. |
+| 17 | Model Selection & Routing | Two-model setup: qwen3.5:122b (reasoning/planning/code generation) + qwen3.5:35b-a3b (fast triage/review, MoE with 3B active params). Hardcoded task-type routing deprecated — the LLM decides via the `delegate` tool at runtime. |
 | **Tool System** | | |
 | 18 | Tool System | Registry, schemas, orchestrator. Manages 96 tools across 15+ categories. Formats tool schemas for Ollama wire format. |
 | 19 | Core Tools | File operations: `read_file`, `write_file`, `list_files`, `search_files`, `read_document`, `bash`. |
@@ -357,10 +357,10 @@ A visual reference for the full system. Each module is numbered for cross-refere
 | 35 | Bash Safety Gates | Three-tier command safety: BLOCKED (rm -rf /, mkfs, fork bomb, dd), APPROVAL_REQUIRED (rm, sudo, chmod, kill, shutdown), SAFE (echo, cat, ls, grep, curl). Tool output sanitization strips injection patterns. |
 | **Provider Layer** | | |
 | 36 | LlmProvider Interface | Stable contract: `generateWithTools(request, tools, prevResults)`. Supports multi-turn tool calling, streaming, and response normalization. |
-| 37 | Ollama Provider | Primary provider. HTTP client to `localhost:11434/api/chat`. Normalizes tool call formats, handles multi-turn threading. 5-minute timeout for local inference. |
+| 37 | Ollama Provider | Primary provider. HTTP client to `localhost:11434/api/chat`. Normalizes tool call formats, handles multi-turn threading. 5-minute timeout for local inference. max_concurrent_models: 2. |
 | 38 | Concurrent Provider | Parallel inference across registered models. Supports `bestOfN` and `parallel` strategies. Powers the `parallel_reason` agent tool. |
 | 39 | Embedding Provider | On-device embeddings for semantic memory search. Does not compete for memory with inference models. |
-| 40 | Ollama Server | Local inference server. Hosts qwen3.5:122b (~81GB), qwen3-coder-next, and embedding model concurrently on 128GB unified memory. 40,960 token context window (practical max for 128GB with 81GB model + KV cache). |
+| 40 | Ollama Server | Local inference server. Hosts qwen3.5:122b (~81GB) and qwen3.5:35b-a3b (~24GB) plus embedding model on 128GB unified memory (~105GB total, ~23GB headroom). 40,960 token context window. max_concurrent_models: 2. |
 | **Security Perimeter** | | |
 | 41 | Security Perimeter | Defense-in-depth with 5 layers. All data stays local — no cloud path exists. |
 | 42 | Input Guard | Pre-LLM: size limit (10K chars), control char stripping, rate limiting (20/60s), injection detection (11 pattern categories). |
@@ -411,8 +411,8 @@ A visual reference for the full system. Each module is numbered for cross-refere
 | 83 | Security Scan | `npm audit` + console.log enforcement (no direct console.log outside 9 allowed files). |
 | **Hardware** | | |
 | 84 | Hardware Platform | Mac Studio M4 Max with 128GB unified memory and NVMe SSD. All inference local. |
-| 85 | qwen3.5:122b | Primary reasoning model. 81GB at Q4_K_M quantization. 40,960 token context window. |
-| 86 | qwen3-coder-next | Coding-specialized model for code generation, review, and file operations. |
+| 85 | qwen3.5:122b | Primary reasoning and code generation model. 81GB at Q4_K_M quantization. 40,960 token context window. Benchmarks: 72.0 SWE-bench. |
+| 86 | qwen3.5:35b-a3b | FastLoop model for triage, review, and acknowledgment. 24GB MoE (35B total params, 3B active per token). Blazing fast inference. |
 | 87 | Embedding Model | On-device embeddings for semantic memory search. Separate from inference memory budget. |
 
 ---

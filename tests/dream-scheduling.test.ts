@@ -79,7 +79,7 @@ autonomous:
     const fp = writeYaml('coexist.yaml', `
 autonomous:
   enabled: true
-  model: qwen3-coder-next:latest
+  model: qwen3.5:122b
   cycle_interval_minutes: 45
 dream_cycles:
   consolidation_interval_hours: 12

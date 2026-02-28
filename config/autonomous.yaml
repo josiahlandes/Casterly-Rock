@@ -12,7 +12,7 @@ autonomous:
 
   # Provider: Always ollama (local inference)
   provider: ollama
-  model: qwen3-coder-next:latest  # Coding model for code analysis and implementation
+  model: qwen3.5:122b  # Primary model handles both reasoning and coding
 
   # ─────────────────────────────────────────────────────────────────────────────
   # TIMING
@@ -117,7 +117,7 @@ agent_loop:
   reasoning_model: qwen3.5:122b
 
   # Model used for code generation and analysis
-  coding_model: qwen3-coder-next:latest
+  coding_model: qwen3.5:122b
 
   # Enable the 'think' tool for explicit reasoning steps
   think_tool_enabled: true
@@ -132,7 +132,7 @@ agent_loop:
   max_response_tokens: 4096
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# DUAL-LOOP ARCHITECTURE (Three-model concurrent system)
+# DUAL-LOOP ARCHITECTURE (Two-model concurrent system)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 dual_loop:
@@ -141,7 +141,7 @@ dual_loop:
   # used internally by the DeepLoop for ReAct execution.
   enabled: true    # Dual-loop mode active
 
-  # FastLoop settings (27B model — triage, review, delivery)
+  # FastLoop settings (35B-A3B MoE — triage, review, delivery)
   fast:
     heartbeat_ms: 2000
     triage_timeout_ms: 10000
@@ -152,7 +152,7 @@ dual_loop:
   # DeepLoop settings (122B model — planning, execution)
   deep:
     model: qwen3.5:122b
-    coder_model: qwen3-coder-next:latest
+    coder_model: qwen3.5:122b
     max_turns_per_task: 50
     max_revision_rounds: 3
     preempt_check_interval_turns: 5

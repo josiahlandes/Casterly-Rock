@@ -1,10 +1,10 @@
 /**
- * Deep Loop — The 122B reasoning engine.
+ * Deep Loop — The 122B reasoning and coding engine.
  *
  * Runs continuously, pulling tasks from the TaskBoard and executing them
  * via the existing AgentLoop (ReAct pattern). The DeepLoop:
  *   - Claims queued tasks and plans the approach
- *   - Dispatches code generation to the Coder model
+ *   - Generates code directly (122B handles both reasoning and coding)
  *   - Addresses review feedback from the FastLoop
  *   - Handles preemption (higher-priority tasks interrupt current work)
  *   - Runs autonomous work from the goal stack during idle periods
@@ -65,7 +65,7 @@ interface PlanResult {
 
 const DEFAULT_CONFIG: DeepLoopConfig = {
   model: 'qwen3.5:122b',
-  coderModel: 'qwen3-coder-next:latest',
+  coderModel: 'qwen3.5:122b',
   maxTurnsPerTask: 50,
   maxRevisionRounds: 3,
   preemptCheckIntervalTurns: 5,

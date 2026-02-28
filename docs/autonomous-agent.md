@@ -167,7 +167,7 @@ Blocked patterns: `rm -rf`, `mkfs`, `dd`, `shutdown`, `reboot`, `sudo rm`, `git 
 
 | Tool | Description |
 |------|-------------|
-| `delegate` | Send a sub-task to a specific model. `qwen3.5:122b` for reasoning/planning, `qwen3-coder-next:latest` for code generation. Optionally includes file contents as context. |
+| `delegate` | Send a sub-task to a specific model. `qwen3.5:122b` for reasoning/planning/code generation, `qwen3.5:35b-a3b` for fast triage/review. Optionally includes file contents as context. |
 
 ### Communication (1)
 
@@ -593,7 +593,7 @@ Turn 9: LLM returns text summary (no tools) → cycle complete
   maxTokensPerCycle: 500_000,
   maxTokensPerCycleBackground: 100_000,
   reasoningModel: 'qwen3.5:122b',
-  codingModel: 'qwen3-coder-next:latest',
+  fastModel: 'qwen3.5:35b-a3b',
   thinkToolEnabled: true,
   delegationEnabled: true,
   userMessagingEnabled: false,
