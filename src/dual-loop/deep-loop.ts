@@ -71,7 +71,7 @@ const DEFAULT_CONFIG: DeepLoopConfig = {
   model: 'qwen3.5:122b',
   coderModel: 'qwen3.5:122b',
   maxTurnsPerTask: 50,
-  maxTurnsPerStep: 10,
+  maxTurnsPerStep: 15,
   maxRevisionRounds: 3,
   preemptCheckIntervalTurns: 5,
   idleSleepMs: 10_000,

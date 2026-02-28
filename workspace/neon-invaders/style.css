@@ -1,0 +1,247 @@
+/* Neon Invaders - Retro Space Shooter Styles */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #000;
+  color: #fff;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#game-container {
+  position: relative;
+  width: 800px;
+  height: 600px;
+}
+
+#gameCanvas {
+  background: #000;
+  border: 2px solid #0ff;
+  box-shadow: 0 0 20px #0ff, inset 0 0 20px rgba(0, 255, 255, 0.1);
+  display: block;
+}
+
+/* HUD - Heads Up Display */
+#hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 18px;
+  font-weight: bold;
+  text-shadow: 0 0 10px #0ff;
+  z-index: 10;
+}
+
+#hud div {
+  color: #0ff;
+}
+
+#score-display, #high-score-display {
+  color: #0ff;
+}
+
+#lives-display {
+  color: #f0f;
+}
+
+#level-display {
+  color: #ff0;
+}
+
+/* Screens (Start, Game Over, Pause) */
+.screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 100;
+}
+
+.glow-text {
+  color: #0ff;
+  text-shadow: 0 0 10px #0ff, 0 0 20px #0ff, 0 0 30px #0ff;
+  font-size: 48px;
+  margin-bottom: 20px;
+  text-align: center;
+  letter-spacing: 4px;
+}
+
+.subtitle {
+  color: #f0f;
+  text-shadow: 0 0 10px #f0f;
+  font-size: 24px;
+  margin-bottom: 40px;
+  text-align: center;
+}
+
+.instructions {
+  text-align: center;
+  margin-bottom: 40px;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.instructions p {
+  margin: 8px 0;
+  text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+}
+
+.glow-btn {
+  background: transparent;
+  border: 2px solid #0ff;
+  color: #0ff;
+  padding: 15px 40px;
+  font-size: 20px;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 10px #0ff, inset 0 0 10px rgba(0, 255, 255, 0.1);
+}
+
+.glow-btn:hover {
+  background: #0ff;
+  color: #000;
+  box-shadow: 0 0 20px #0ff, 0 0 40px #0ff;
+}
+
+.glow-btn:active {
+  transform: scale(0.95);
+}
+
+/* Game Over Screen Specifics */
+#game-over-screen h1 {
+  color: #f00;
+  text-shadow: 0 0 10px #f00, 0 0 20px #f00, 0 0 30px #f00;
+}
+
+#final-score {
+  color: #ff0;
+  font-size: 24px;
+  text-shadow: 0 0 10px #ff0;
+}
+
+#new-high-score {
+  margin-top: 20px;
+  font-size: 20px;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Pause Screen */
+#pause-screen h1 {
+  color: #ff0;
+  text-shadow: 0 0 10px #ff0, 0 0 20px #ff0;
+}
+
+#pause-screen p {
+  color: #fff;
+  font-size: 18px;
+  margin-top: 20px;
+}
+
+/* Wave Notification */
+.notification {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.8);
+  padding: 40px 60px;
+  border: 2px solid #ff0;
+  box-shadow: 0 0 20px #ff0, inset 0 0 20px rgba(255, 255, 0, 0.1);
+  z-index: 50;
+  text-align: center;
+}
+
+.notification h2 {
+  color: #ff0;
+  text-shadow: 0 0 10px #ff0, 0 0 20px #ff0;
+  font-size: 36px;
+  letter-spacing: 4px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 850px) {
+  #game-container {
+    width: 100vw;
+    height: 100vh;
+  }
+  
+  #gameCanvas {
+    width: 100%;
+    height: 100%;
+  }
+  
+  .glow-text {
+    font-size: 32px;
+  }
+  
+  .subtitle {
+    font-size: 18px;
+  }
+  
+  #hud {
+    font-size: 14px;
+  }
+}
+
+/* Scanline effect overlay */
+#game-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.1),
+    rgba(0, 0, 0, 0.1) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* CRT flicker effect */
+@keyframes flicker {
+  0% { opacity: 0.97; }
+  5% { opacity: 0.95; }
+  10% { opacity: 0.98; }
+  15% { opacity: 0.96; }
+  20% { opacity: 0.99; }
+  50% { opacity: 0.95; }
+  80% { opacity: 0.97; }
+  100% { opacity: 0.98; }
+}
+
+#gameCanvas {
+  animation: flicker 0.15s infinite;
+}

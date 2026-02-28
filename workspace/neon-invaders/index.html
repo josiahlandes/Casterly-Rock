@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neon Invaders</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    
+    <!-- HUD -->
+    <div id="hud">
+      <div id="score-display">SCORE: <span id="score">0</span></div>
+      <div id="lives-display">LIVES: <span id="lives">3</span></div>
+      <div id="level-display">LEVEL: <span id="level">1</span></div>
+      <div id="high-score-display">HIGH SCORE: <span id="high-score">0</span></div>
+    </div>
+    
+    <!-- Start Screen -->
+    <div id="start-screen" class="screen">
+      <h1 class="glow-text">NEON INVADERS</h1>
+      <p class="subtitle">A Retro Space Shooter</p>
+      <div class="instructions">
+        <p>Arrow Keys or WASD to move</p>
+        <p>SPACE to shoot</p>
+        <p>P to pause</p>
+      </div>
+      <button id="start-btn" class="glow-btn">START GAME</button>
+    </div>
+    
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="screen" style="display: none;">
+      <h1 class="glow-text">GAME OVER</h1>
+      <p>Final Score: <span id="final-score">0</span></p>
+      <p id="new-high-score" style="display: none; color: #0ff;">NEW HIGH SCORE!</p>
+      <button id="restart-btn" class="glow-btn">PLAY AGAIN</button>
+    </div>
+    
+    <!-- Pause Screen -->
+    <div id="pause-screen" class="screen" style="display: none;">
+      <h1 class="glow-text">PAUSED</h1>
+      <p>Press P to resume</p>
+    </div>
+    
+    <!-- Wave Notification -->
+    <div id="wave-notification" class="notification" style="display: none;">
+      <h2 class="glow-text">WAVE <span id="wave-number">1</span></h2>
+    </div>
+  </div>
+  
+  <script type="module" src="game.js"></script>
+</body>
+</html>

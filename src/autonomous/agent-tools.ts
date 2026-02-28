@@ -255,7 +255,7 @@ const DEFAULT_CONFIG: AgentToolkitConfig = {
   projectRoot: process.cwd(),
   maxOutputChars: 10_000,
   commandTimeoutMs: 120_000,
-  allowedDirectories: ['src/', 'scripts/', 'tests/', 'config/', 'skills/'],
+  allowedDirectories: ['src/', 'scripts/', 'tests/', 'config/', 'skills/', 'workspace/'],
   forbiddenPatterns: ['**/*.env*', '**/credentials*', '**/secrets*', '**/.git/**'],
   delegationEnabled: true,
 };
@@ -351,7 +351,16 @@ function isPathAllowed(
   if (allowedDirectories.length === 0) {
     return true;
   }
-  return allowedDirectories.some((dir) => filePath.startsWith(dir));
+
+  // For relative paths, also check if they would fall under an absolute allowed dir
+  // (callers may pass [projectRoot] as an absolute path while the file path is relative)
+  return allowedDirectories.some((dir) => {
+    if (filePath.startsWith(dir)) return true;
+    // If the allowed dir is absolute and the file path is relative,
+    // the relative path is implicitly under projectRoot — allow it.
+    if (dir.startsWith('/') && !filePath.startsWith('/')) return true;
+    return false;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2838,7 +2847,10 @@ function buildExecutors(
     const filePath = pathResult.value;
 
     if (!isPathAllowed(filePath, config.allowedDirectories, config.forbiddenPatterns)) {
-      return failureResult(call.id, `Path not allowed for file creation: ${filePath}`);
+      tracer.log('agent-loop', 'warn', `create_file path rejected: "${filePath}"`, {
+        allowedDirectories: config.allowedDirectories,
+      });
+      return failureResult(call.id, `Path not allowed for file creation: ${filePath}. Allowed directories: ${config.allowedDirectories.join(', ')}`);
     }
 
     return tracer.withSpan('agent-loop', `create_file:${filePath}`, async () => {
