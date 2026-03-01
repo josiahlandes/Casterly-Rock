@@ -100,12 +100,92 @@ const DEFAULT_CONFIG: DeepLoopConfig = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// JSON Extraction (for parsing LLM responses that include <think> blocks)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Extract a JSON object from an LLM response that may contain `<think>` blocks,
+ * markdown fences, or other surrounding text.
+ *
+ * Strategy (in order):
+ *   1. Strip `<think>...</think>` blocks (qwen3.5 thinking output)
+ *   2. Strip markdown ```json ... ``` fences
+ *   3. Try JSON.parse on the cleaned text
+ *   4. Fallback: extract the first balanced `{...}` block and parse that
+ *
+ * Returns `{ json, thinking }` where `thinking` is the extracted `<think>`
+ * content (if any) for logging/debugging.
+ */
+export function extractJsonFromResponse(raw: string): {
+  json: Record<string, unknown>;
+  thinking: string | null;
+} {
+  // 1. Extract and remove <think> blocks
+  let thinking: string | null = null;
+  let cleaned = raw;
+
+  const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/);
+  if (thinkMatch) {
+    thinking = thinkMatch[1]!.trim();
+    cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  }
+
+  // 2. Strip markdown fences (```json ... ``` or ``` ... ```)
+  cleaned = cleaned.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+
+  // 3. Try direct parse
+  try {
+    return { json: JSON.parse(cleaned) as Record<string, unknown>, thinking };
+  } catch {
+    // continue to fallback
+  }
+
+  // 4. Fallback: find the first balanced { ... } block
+  const startIdx = cleaned.indexOf('{');
+  if (startIdx >= 0) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = startIdx; i < cleaned.length; i++) {
+      const ch = cleaned[i]!;
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\' && inString) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          const block = cleaned.slice(startIdx, i + 1);
+          return { json: JSON.parse(block) as Record<string, unknown>, thinking };
+        }
+      }
+    }
+  }
+
+  // Nothing worked
+  throw new Error(`No valid JSON found in response (length=${raw.length})`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // System Prompts
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PLANNING_SYSTEM_PROMPT = `You are a software engineering planner. Given a user request and optional triage notes, create a concrete execution plan.
 
-Respond with a JSON object:
+You MUST respond with ONLY a valid JSON object (no additional text outside the JSON):
 {
   "plan": "High-level description of the approach",
   "steps": [
@@ -114,17 +194,42 @@ Respond with a JSON object:
   ]
 }
 
-Guidelines:
-- Keep plans concise: 2-5 steps for most tasks.
-- Each step should be a single, testable action.
+## Step Sizing Guidelines
+
+Choose the right number of steps for the task complexity:
+
+**1 step** — Research, queries, simple lookups:
+  "Find all usages of X", "What does Y do?", "List files matching Z".
+  The executor has tools (grep, read_file, glob) and works best when it can
+  freely search in one continuous loop. Single-step plans preserve context
+  across all tool calls.
+
+**2-5 steps** — Bug fixes, small features, refactors:
+  - Bug fixes: diagnose → fix → test.
+  - Features: read context → implement → test.
+  - Refactors: analyze → transform → verify.
+
+**5-12 steps** — Multi-file projects (games, apps, full features):
+  When creating multiple files, give each logical module its OWN step.
+  This is critical: each step has a turn budget, and cramming too many
+  files into one step risks timeout or incomplete output.
+
+  Example for a multi-file web project:
+  Step 1: Create project structure and configuration (index.html, config.js)
+  Step 2: Implement core module A (player.js, input.js)
+  Step 3: Implement core module B (enemies.js, collision.js)
+  Step 4: Implement supporting systems (particles.js, audio.js, hud.js)
+  Step 5: Implement entry point that wires modules together (main.js)
+  Step 6: Test and verify the project runs correctly
+
+## Rules
+
+- Each step should produce tangible, testable output.
+- Order steps by dependency: foundational modules first, entry point last.
+- The entry point / main file that imports everything should ALWAYS be its own step, done LAST.
 - Include a test/verify step at the end.
-- For bug fixes: diagnose → fix → test.
-- For features: read context → implement → test.
-- For research/query tasks (e.g., "find all X", "what does Y do", "list Z"):
-  Use a SINGLE step. The executor has tools (grep, read_file, glob) and works
-  best when it can freely search and read in one continuous loop rather than
-  being forced through rigid sub-steps. Single-step plans preserve context
-  across all tool calls.`;
+- Every file that will exist must appear in at least one step description.
+- Do not create steps that only "plan" or "outline" — every step must DO something.`;
 
 const REVISION_SYSTEM_PROMPT = `You are addressing code review feedback. The reviewer has identified issues that need to be fixed.
 
@@ -344,16 +449,28 @@ export class DeepLoop {
       task.parkedState?.contextSnapshot ? `\n## Previous Progress\n\n${task.parkedState.contextSnapshot}` : '',
     ].join('');
 
+    let rawResponse: string | null = null;
+
     try {
-      const response = await this.callWithTier(tier, {
+      // Thinking is left ON — planning benefits from chain-of-thought reasoning.
+      // We extract the <think> block separately and parse only the JSON output.
+      rawResponse = await this.callWithTier(tier, {
         prompt,
         systemPrompt: PLANNING_SYSTEM_PROMPT,
         temperature: 0.2,
-        maxTokens: 2048,
+        maxTokens: 4096,
       });
 
-      // Parse the plan
-      const parsed = JSON.parse(response) as Record<string, unknown>;
+      // Extract JSON from response (strips <think> blocks, markdown fences)
+      const { json: parsed, thinking } = extractJsonFromResponse(rawResponse);
+
+      // Log thinking for plan introspection / debugging
+      if (thinking) {
+        tracer.log('deep-loop', 'debug', `Plan thinking for ${task.id}`, {
+          thinking: thinking.slice(0, 1000),
+        });
+      }
+
       const plan = String(parsed['plan'] ?? '');
       const rawSteps = (parsed['steps'] as Array<Record<string, unknown>>) ?? [];
 
@@ -365,7 +482,11 @@ export class DeepLoop {
       tracer.log('deep-loop', 'info', `Plan created for ${task.id}: ${steps.length} steps`);
       return { plan, steps };
     } catch (error) {
-      tracer.log('deep-loop', 'warn', `Plan parsing failed for ${task.id}, creating single-step plan`);
+      // Log the raw response so we can diagnose why parsing failed
+      tracer.log('deep-loop', 'warn', `Plan parsing failed for ${task.id}, creating single-step plan`, {
+        error: error instanceof Error ? error.message : String(error),
+        ...(rawResponse ? { rawResponseHead: rawResponse.slice(0, 500) } : {}),
+      });
       // Fallback: single-step plan
       return {
         plan: task.triageNotes ?? task.originalMessage ?? 'Execute the requested task',

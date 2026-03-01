@@ -83,5 +83,6 @@ hardware:
 # Ollama settings
 ollama:
   base_url: http://localhost:11434
-  timeout_ms: 300000  # 5 minutes for long generations
-  keep_alive: -1       # Never unload — both models stay hot
+  timeout_ms: 600000         # 10 minutes — default for all tasks
+  coding_timeout_ms: 1800000 # 30 minutes — coding tasks (multi-file generation can be slow at 131K context)
+  keep_alive: -1              # Never unload — both models stay hot

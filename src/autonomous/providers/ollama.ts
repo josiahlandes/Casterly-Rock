@@ -65,7 +65,7 @@ export class OllamaAutonomousProvider extends BaseAutonomousProvider {
     super(config);
     this.model = config.model;
     this.baseUrl = process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434';
-    this.timeoutMs = 300_000; // 5 minutes for local inference (can be slow)
+    this.timeoutMs = 600_000; // 10 minutes for local inference (can be slow)
   }
 
   // --------------------------------------------------------------------------

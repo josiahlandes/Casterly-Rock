@@ -344,14 +344,13 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       const fastProvider = new OllamaProvider({
         baseUrl,
         model: 'qwen3.5:35b-a3b',
-        timeoutMs: 30_000,
+        timeoutMs: 60_000,
         think: false, // Disable thinking for triage/review — we need plain JSON output
       });
       const deepProvider = new OllamaProvider({
         baseUrl,
         model: 'qwen3.5:122b',
-        timeoutMs: 300_000,
-        numCtx: 40_960,
+        timeoutMs: 1_800_000, // 30 min — coding tasks with 131K context can be slow
       });
 
       const concurrentProvider = new ConcurrentProvider(

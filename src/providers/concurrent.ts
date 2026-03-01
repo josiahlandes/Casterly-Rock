@@ -81,7 +81,7 @@ export interface BestOfNResult {
 
 const DEFAULT_CONFIG: ConcurrentProviderConfig = {
   maxConcurrent: 3,
-  requestTimeoutMs: 300_000,
+  requestTimeoutMs: 1_800_000,
   maxParallelGenerations: 4,
 };
 

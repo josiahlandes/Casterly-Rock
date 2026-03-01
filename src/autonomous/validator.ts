@@ -56,7 +56,7 @@ export class Validator {
   ) {
     this.projectRoot = projectRoot;
     this.invariants = config?.invariants || DEFAULT_INVARIANTS;
-    this.timeoutMs = config?.timeoutMs || 300_000; // 5 minutes default
+    this.timeoutMs = config?.timeoutMs || 600_000; // 10 minutes default
   }
 
   /**

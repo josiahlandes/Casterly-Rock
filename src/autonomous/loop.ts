@@ -268,8 +268,8 @@ export class AutonomousLoop {
     this.llmProvider = new OllamaProvider({
       baseUrl: process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434',
       model: config.model,
-      timeoutMs: 300_000, // 5 min — local inference can be slow
-      numCtx: 40_960,     // qwen3.5 supports 256K; use 40K as practical max with 128GB unified memory
+      timeoutMs: 1_800_000, // 30 min — coding tasks with 131K context can be slow
+      numCtx: 131_072,     // qwen3.5 supports 256K; 131K is practical max with 128GB unified memory
     });
 
     this.git = new GitOperations(projectRoot, config.git);

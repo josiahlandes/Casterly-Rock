@@ -65,6 +65,7 @@ const args = parseArgs({
     debug: { type: 'boolean', short: 'd', default: false },
     'no-tools': { type: 'boolean', default: false },
     'no-dual-loop': { type: 'boolean', default: false },
+    'prompt-file': { type: 'string', short: 'f' },
     workspace: { type: 'string', short: 'w' },
     'max-iterations': { type: 'string', short: 'm' },
     help: { type: 'boolean', short: 'h', default: false },
@@ -82,6 +83,7 @@ OPTIONS:
   -d, --debug              Show debug output (tool calls, iterations, tokens)
   --no-tools               Disable tool execution (standard pipeline only)
   --no-dual-loop           Use standard pipeline instead of dual-loop
+  -f, --prompt-file <path> Send file contents as a single message, then exit
   -w, --workspace <path>   Override workspace path
   -m, --max-iterations <n> Max tool iterations per message (default: 200)
   -h, --help               Show this help
@@ -268,14 +270,13 @@ async function main(): Promise<void> {
     const fastProvider = new OllamaProvider({
       baseUrl,
       model: 'qwen3.5:35b-a3b',
-      timeoutMs: 30_000,
+      timeoutMs: 60_000,
       think: false, // Disable thinking for triage/review — we need plain JSON output
     });
     const deepProvider = new OllamaProvider({
       baseUrl,
       model: 'qwen3.5:122b',
-      timeoutMs: 300_000,
-      numCtx: 40_960,
+      timeoutMs: 1_800_000, // 30 min — coding tasks with 131K context can be slow
     });
 
     const concurrentProvider = new ConcurrentProvider(
@@ -379,6 +380,48 @@ async function main(): Promise<void> {
 
     console.log('\n\x1b[1mCasterly Terminal REPL\x1b[0m');
     console.log('\x1b[90mType a message to talk to Tyrion. Use /help for commands.\x1b[0m\n');
+
+    // ── Prompt-file mode: send file as single message, wait, exit ──
+    const promptFilePath = args.values['prompt-file'];
+    if (promptFilePath) {
+      const { readFileSync } = await import('node:fs');
+      const promptContent = readFileSync(promptFilePath, 'utf8').trim();
+      console.log(`\x1b[90mSending prompt from ${promptFilePath} (${promptContent.length} chars)...\x1b[0m\n`);
+
+      try {
+        const trigger = triggerFromMessage(promptContent, 'Developer (terminal)');
+        const outcome = await controller.runTriggeredCycle(trigger);
+        if (outcome.summary) {
+          console.log(`\x1b[36m${outcome.summary}\x1b[0m`);
+        }
+      } catch (error) {
+        printError(error);
+      }
+
+      // Wait for DeepLoop to finish all work
+      const pollForCompletion = (): Promise<void> =>
+        new Promise((resolve) => {
+          const check = (): void => {
+            if (!hasActiveDeepWork()) {
+              resolve();
+            } else {
+              setTimeout(check, 5000);
+            }
+          };
+          // Give time for the task to be queued and claimed
+          setTimeout(check, 10000);
+        });
+
+      await pollForCompletion();
+
+      // Give deliverFn a moment to print the final response
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      console.log('\n\x1b[90mPrompt-file execution complete.\x1b[0m');
+      controller.stop();
+      rl.close();
+      process.exit(0);
+    }
 
     // ── Dual-loop REPL Loop ──────────────────────────────────────────
     rl.setPrompt('\x1b[1mtyrion>\x1b[0m ');
