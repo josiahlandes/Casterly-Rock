@@ -22,7 +22,10 @@ import type { AgentToolkit } from '../autonomous/tools/types.js';
 import type { ToolResultMessage } from '../tools/schemas/types.js';
 import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
-import type { Task, TaskArtifact, PlanStep } from './task-board-types.js';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { Task, TaskArtifact, PlanStep, FileOperation } from './task-board-types.js';
+import { detectProjectDir, writeProjectMd } from './project-store.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
 import { selectDeepTier, selectCoderTier, resolveNumCtx, buildProviderOptions } from './context-tiers.js';
 import { runIdleCheck } from './deep-loop-events.js';
@@ -61,16 +64,6 @@ export interface DeepLoopConfig {
 interface PlanResult {
   plan: string;
   steps: PlanStep[];
-}
-
-/**
- * Tracks a file created or modified by tool calls within a step.
- * Accumulated across steps to form the workspace manifest.
- */
-export interface FileOperation {
-  path: string;
-  action: 'created' | 'modified';
-  lines?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,13 +215,23 @@ Choose the right number of steps for the task complexity:
   Step 5: Implement entry point that wires modules together (main.js)
   Step 6: Test and verify the project runs correctly
 
+## Directory Structure
+
+Before writing steps, choose ONE consistent directory structure and state it in the plan field.
+- **Code projects** (games, apps, tools, websites): ALWAYS place all files under \`projects/<slug>/\`
+  where <slug> is a short kebab-case name (e.g., \`projects/neon-invaders/\`, \`projects/todo-app/\`).
+- All files of the same type (e.g., JavaScript modules) should go in the SAME directory unless the spec explicitly requires otherwise.
+- Do NOT split files between root and a subdirectory (e.g., config.js at root AND js/config.js is WRONG).
+- The FIRST step should establish the directory structure and create foundational/config files.
+- Use explicit relative paths in step descriptions (e.g., "Create projects/neon-invaders/player.js" not "Create player module").
+
 ## Rules
 
 - Each step should produce tangible, testable output.
 - Order steps by dependency: foundational modules first, entry point last.
 - The entry point / main file that imports everything should ALWAYS be its own step, done LAST.
 - Include a test/verify step at the end.
-- Every file that will exist must appear in at least one step description.
+- Every file that will exist must appear in at least one step description with its FULL relative path.
 - Do not create steps that only "plan" or "outline" — every step must DO something.`;
 
 const REVISION_SYSTEM_PROMPT = `You are addressing code review feedback. The reviewer has identified issues that need to be fixed.
@@ -253,6 +256,10 @@ export class DeepLoop {
   private revisionCounts: Map<string, number> = new Map();
   /** File operations tracked during the current executeWithTools call */
   private stepFileOps: FileOperation[] = [];
+  /** Rich export summaries keyed by file path — survives across steps within a task */
+  private exportSummaries: Map<string, string> = new Map();
+  /** Reference to the full workspace manifest for import validation across steps */
+  private currentManifest: FileOperation[] = [];
 
   constructor(
     provider: LlmProvider,
@@ -412,12 +419,41 @@ export class DeepLoop {
         return;
       }
 
-      // Submit for review
+      // Write or update PROJECT.md for the project (non-fatal)
+      const projectDir = task.projectDir
+        ?? (outcome.workspaceManifest ? detectProjectDir(outcome.workspaceManifest) : null);
+      if (projectDir && outcome.workspaceManifest && outcome.workspaceManifest.length > 0) {
+        try {
+          const planned = this.taskBoard.get(task.id);
+          await writeProjectMd({
+            projectRoot: process.cwd(),
+            projectDir,
+            isUpdate: !!task.projectDir,  // Pre-set from triage = continuing existing project
+            ...(task.originalMessage ? { originalMessage: task.originalMessage } : {}),
+            ...(planned?.plan ? { plan: planned.plan } : {}),
+            ...(planned?.planSteps ? { planSteps: planned.planSteps } : {}),
+            manifest: outcome.workspaceManifest,
+            ...(outcome.userFacing ? { userFacing: outcome.userFacing } : {}),
+            taskId: task.id,
+          });
+          tracer.log('deep-loop', 'info', `PROJECT.md written for ${projectDir}`);
+        } catch (err) {
+          tracer.log('deep-loop', 'warn', `Failed to write PROJECT.md for ${projectDir}`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Submit for review (include workspace manifest for reviewer context)
       this.taskBoard.update(task.id, {
         status: 'reviewing',
         owner: null,
         userFacing: outcome.userFacing,
         implementationNotes: outcome.notes,
+        ...(outcome.workspaceManifest && outcome.workspaceManifest.length > 0
+          ? { workspaceManifest: outcome.workspaceManifest }
+          : {}),
+        ...(projectDir ? { projectDir } : {}),
       });
 
       tracer.log('deep-loop', 'info', `Task ${task.id} submitted for review`, {
@@ -443,10 +479,23 @@ export class DeepLoop {
     const tracer = getTracer();
     const tier = selectDeepTier(task);
 
+    // If continuing an existing project, inject its PROJECT.md as context
+    let existingProjectContext = '';
+    if (task.projectDir) {
+      try {
+        const content = await readFile(join(process.cwd(), task.projectDir, 'PROJECT.md'), 'utf8');
+        existingProjectContext = `\n## Existing Project\n\n${content.slice(0, 3000)}`;
+        tracer.log('deep-loop', 'debug', `Injected PROJECT.md context for ${task.projectDir}`);
+      } catch {
+        // New project or missing file — no context to inject
+      }
+    }
+
     const prompt = [
       `## User Request\n\n${task.originalMessage ?? '(no message)'}`,
       task.triageNotes ? `\n## Triage Notes\n\n${task.triageNotes}` : '',
       task.parkedState?.contextSnapshot ? `\n## Previous Progress\n\n${task.parkedState.contextSnapshot}` : '',
+      existingProjectContext,
     ].join('');
 
     let rawResponse: string | null = null;
@@ -505,6 +554,7 @@ export class DeepLoop {
     preempted: boolean;
     stepsCompleted: number;
     artifacts: TaskArtifact[];
+    workspaceManifest?: FileOperation[];
     userFacing?: string;
     notes?: string;
     error?: string;
@@ -519,6 +569,7 @@ export class DeepLoop {
     // This gives each step awareness of what earlier steps produced,
     // preventing naming inconsistencies and import mismatches.
     const workspaceManifest: FileOperation[] = [];
+    this.exportSummaries.clear();
 
     // Find the first pending step (supports resuming parked tasks)
     let startIdx = steps.findIndex((s) => s.status === 'pending');
@@ -561,30 +612,50 @@ export class DeepLoop {
 
       // Reset per-step file operation tracking
       this.stepFileOps = [];
+      this.currentManifest = workspaceManifest;
 
       try {
         // Collect completed step outputs for context continuity
         const priorSteps = steps.slice(0, i).filter((s) => s.status === 'done' && s.output);
-        const result = await this.executeStep(task, step, priorSteps, steps.length, workspaceManifest);
+        const result = await this.executeStep(task, step, priorSteps, steps.length, workspaceManifest, steps, i);
 
         // Merge file operations tracked during this step into the manifest
         for (const op of this.stepFileOps) {
           const existing = workspaceManifest.find((f) => f.path === op.path);
           if (existing) {
             if (op.lines !== undefined) existing.lines = op.lines;
+            if (op.exports) existing.exports = op.exports; // Update exports on overwrite
           } else {
             workspaceManifest.push(op);
           }
         }
 
         if (workspaceManifest.length > 0) {
+          const collisions = this.detectBaseNameCollisions(workspaceManifest);
           tracer.log('deep-loop', 'debug', `Workspace manifest: ${workspaceManifest.length} files tracked`, {
             files: workspaceManifest.map((f) => f.path),
+            ...(collisions.length > 0 ? { collisions } : {}),
           });
+          if (collisions.length > 0) {
+            tracer.log('deep-loop', 'warn', `Basename collisions detected after step ${i + 1}`, {
+              collisions,
+            });
+          }
+        }
+
+        // Detect files mentioned in the step description but not created
+        const missingFromStep = this.detectMissingStepFiles(step.description, this.stepFileOps);
+        if (missingFromStep.length > 0) {
+          tracer.log('deep-loop', 'warn', `Step ${i + 1} may have missed files`, { missing: missingFromStep });
         }
 
         step.status = 'done';
         step.output = result.output;
+
+        // Append missing-file warnings to step output so next step sees them
+        if (missingFromStep.length > 0) {
+          step.output += `\n⚠ FILES NOT CREATED: ${missingFromStep.join(', ')} — mentioned in step description but not found in workspace.`;
+        }
 
         if (result.artifact) {
           artifacts.push(result.artifact);
@@ -597,10 +668,17 @@ export class DeepLoop {
         });
       } catch (error) {
         step.status = 'failed';
-        step.output = error instanceof Error ? error.message : String(error);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const errStack = error instanceof Error ? error.stack?.split('\n').slice(0, 3).join(' ') : undefined;
+        const errCause = error instanceof Error && 'cause' in error && error.cause instanceof Error
+          ? error.cause.message : undefined;
+        step.output = errCause ? `${errMsg} (cause: ${errCause})` : errMsg;
         this.taskBoard.update(task.id, { planSteps: steps });
 
-        tracer.log('deep-loop', 'error', `Step ${i + 1} failed: ${step.output}`);
+        tracer.log('deep-loop', 'error', `Step ${i + 1} failed: ${step.output}`, {
+          ...(errStack ? { stack: errStack } : {}),
+          ...(errCause ? { cause: errCause } : {}),
+        });
         return {
           success: false,
           preempted: false,
@@ -619,6 +697,7 @@ export class DeepLoop {
       preempted: false,
       stepsCompleted,
       artifacts,
+      ...(workspaceManifest.length > 0 ? { workspaceManifest } : {}),
       userFacing,
       notes: `Completed ${stepsCompleted} steps, produced ${artifacts.length} artifacts`,
     };
@@ -635,19 +714,28 @@ export class DeepLoop {
     priorSteps: PlanStep[] = [],
     totalSteps: number = 1,
     manifest: FileOperation[] = [],
+    allSteps: PlanStep[] = [],
+    stepIndex: number = 0,
   ): Promise<{ output: string; artifact?: TaskArtifact }> {
-    // Build prior step context — most recent step gets full output,
-    // older steps get truncated to keep the prompt manageable.
+    // Build structured handoff from prior steps
     let priorContext = '';
     if (priorSteps.length > 0) {
       const sections = priorSteps.map((s, idx) => {
-        const isRecent = idx >= priorSteps.length - 2; // last 2 steps get full output
+        const isRecent = idx >= priorSteps.length - 1; // last 1 step gets full output
         const output = isRecent
           ? s.output!
-          : s.output!.slice(0, 500) + (s.output!.length > 500 ? '\n...(truncated)' : '');
+          : s.output!.slice(0, 300) + (s.output!.length > 300 ? '\n...(truncated)' : '');
         return `### Step ${idx + 1}: ${s.description}\n${output}`;
       });
       priorContext = `## Previous Step Results\n${sections.join('\n\n')}`;
+    }
+
+    // Build "upcoming steps" summary so the model knows what's coming
+    let upcomingContext = '';
+    const remainingSteps = allSteps.slice(stepIndex + 1).filter((s) => s.status === 'pending');
+    if (remainingSteps.length > 0) {
+      const upcoming = remainingSteps.map((s, idx) => `${stepIndex + 2 + idx}. ${s.description}`);
+      upcomingContext = `## Upcoming Steps\n${upcoming.join('\n')}\nDo NOT implement these yet — but be aware of future needs when designing APIs and exports.`;
     }
 
     // Inject workspace manifest so the model knows what files exist
@@ -658,8 +746,10 @@ export class DeepLoop {
       `## Plan: ${task.plan ?? '(no plan)'}`,
       manifestContext,
       priorContext,
-      `## Current Step: ${step.description}`,
+      `## Current Step (${stepIndex + 1}/${allSteps.length}): ${step.description}`,
+      upcomingContext,
       task.triageNotes ? `## Context: ${task.triageNotes}` : '',
+      `## Instructions\nComplete ALL work described in the current step before stopping. Create every file mentioned, write complete implementations (not stubs), and verify imports match existing files in the workspace manifest.`,
     ].filter(Boolean).join('\n\n');
 
     // Single-step tasks get the full task budget; multi-step get per-step cap
@@ -720,7 +810,7 @@ export class DeepLoop {
         prompt,
         systemPrompt: REVISION_SYSTEM_PROMPT,
         temperature: 0.2,
-        maxTokens: 4096,
+        maxTokens: 8192,
       }, true); // useTools — revisions need file access
 
       // Create a new artifact from the revision
@@ -806,28 +896,41 @@ export class DeepLoop {
    */
   async dispatchToCoder(prompt: string, fileContents: string, maxTurns?: number): Promise<string> {
     const totalChars = prompt.length + fileContents.length;
-    const tier = selectCoderTier(totalChars, this.config.coderTiers);
+    const baseTier = selectCoderTier(totalChars, this.config.coderTiers);
+    // Force extended tier when multi-turn tool loops are expected — the initial
+    // prompt size underestimates actual context usage after 10+ tool turns of
+    // accumulated conversation history, read_file results, and create_file contents.
+    const tier = (maxTurns ?? this.config.maxTurnsPerStep) > 5 ? 'extended' as const : baseTier;
     const providerOptions = buildProviderOptions(this.config.coderTiers, tier);
 
     const request: GenerateRequest = {
       prompt: fileContents ? `${prompt}\n\n---\n\n${fileContents}` : prompt,
       systemPrompt: this.toolkit
-        ? `You are a code implementation assistant with access to tools (read_file, grep, glob, bash, etc.).
+        ? `You are a code implementation assistant with access to tools (create_file, edit_file, read_file, grep, glob, bash).
 
-Rules:
-- Use tools to read files, search code, run commands, and complete the task.
+CRITICAL RULES:
+- You MUST use create_file or edit_file tools to write code. Writing code in your text response does NOT create files on disk. The ONLY way to create or modify files is through tool calls.
+- Use create_file for new files. If the file already exists, pass overwrite: true to replace it. Use edit_file for small modifications to existing files.
+- File paths must be FULL relative paths from the project root (e.g., "projects/neon-invaders/js/config.js", NOT "js/config.js").
+- NEVER output a complete file as text. Always use create_file with the content.
+
+IMPORT/EXPORT RULES:
+- The Workspace Manifest shows export types: [default] = use \`import Name from './file.js'\`, [named] = use \`import { Name } from './file.js'\`.
+- Before writing a file that imports from another, use read_file on the dependency to verify its exact exports and constructor parameters.
+- NEVER guess an import path or export name — check the manifest or read the file first.
+- When the manifest shows constructor params like \`class Player(x, y)\`, use EXACTLY those parameters when constructing.
+
+Other rules:
 - Tool results are returned to you directly — analyze them and use the data.
-- Focus on source files (src/), not build artifacts (dist/) or test output.
-- When you have the answer, state it clearly with the specific data found.
-- Be precise and minimal. Do not describe the tool output format — extract the actual information.
-- When using grep, always set file_pattern (e.g., "*.ts") to filter results. Use simple substring patterns, not complex regex.
-- If grep doesn't find what you need after 2 tries, switch to read_file on specific files instead.
+- Be precise and minimal. Do not describe tool output — extract the actual information.
+- When using grep, set file_pattern (e.g., "*.ts"). Use simple substring patterns, not complex regex.
+- If grep doesn't find what you need after 2 tries, switch to read_file on specific files.
 - Do NOT repeat the same tool call with the same arguments — try a different approach.
-- When a Workspace Manifest is provided, use the EXACT file paths listed. Do NOT guess or vary file names — read existing files with read_file to check their exports before importing.
+- When a Workspace Manifest is provided, use the EXACT file paths listed.
 - Maintain consistent naming conventions (camelCase, PascalCase, kebab-case) with files already created.`
         : 'You are a code implementation assistant. Write the code changes requested. Be precise and minimal.',
       temperature: 0.1,
-      maxTokens: 4096,
+      maxTokens: 8192,
       providerOptions,
     };
 
@@ -907,6 +1010,36 @@ Rules:
       lastText = response.text;
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
+        // Detect code-in-text: the model output code fences instead of calling
+        // create_file. Two detection modes:
+        //   1. Never used file tools AND output any code fences
+        //   2. Output 2+ substantial code blocks (10+ lines each) — even if file
+        //      tools were used in earlier turns, the model is dumping file contents
+        const hasCodeFences = (lastText.match(/```/g) ?? []).length >= 2;
+        const usedCreateFile = conversationHistory.some((h) =>
+          h.toolCalls?.some((tc) => tc.name === 'create_file' || tc.name === 'edit_file'),
+        );
+        const neverUsedTools = hasCodeFences && !usedCreateFile;
+
+        // Count substantial code blocks (10+ lines) — these are likely complete files
+        const codeBlocks = lastText.match(/```[\s\S]*?```/g) ?? [];
+        const substantialBlocks = codeBlocks.filter((b) => b.split('\n').length >= 10);
+        const dumpedFiles = substantialBlocks.length >= 1;
+
+        if ((neverUsedTools || dumpedFiles) && turn < maxTurns - 1) {
+          tracer.log('deep-loop', 'warn',
+            `Code-in-text detected — ${neverUsedTools ? 'no file tool calls yet' : `${substantialBlocks.length} substantial code blocks dumped as text`}`,
+          );
+          // Record this text-only turn in history so the model sees what it wrote
+          conversationHistory.push({ text: response.text, toolCalls: [] });
+          // Inject a correction as a synthetic tool result
+          allToolResults.push({
+            callId: `nudge-${turn}`,
+            result: '[SYSTEM] You wrote code in your text response, but that does NOT create files on disk. You MUST call create_file for each file. Re-read your text above and call create_file with the correct path and content for each file you intended to create.',
+            isError: true,
+          });
+          continue; // Don't break — let the model retry with tools
+        }
         break;
       }
 
@@ -927,14 +1060,19 @@ Rules:
       // Execute tools and accumulate ALL results
       for (const call of response.toolCalls) {
         const result = await this.toolkit.execute(call);
+        let resultText = result.output ?? result.error ?? '(no output)';
+
+        // Track file operations for the workspace manifest + validate imports
+        const importWarnings = await this.trackFileOperation(call.name, call.input, result.output, result.success);
+        if (importWarnings.length > 0) {
+          resultText += `\n⚠ IMPORT WARNINGS: This file ${importWarnings.join('; ')}. Check the Workspace Manifest for available files and create missing dependencies first.`;
+        }
+
         allToolResults.push({
           callId: call.id,
-          result: result.output ?? result.error ?? '(no output)',
+          result: resultText,
           isError: !result.success,
         });
-
-        // Track file operations for the workspace manifest
-        this.trackFileOperation(call.name, call.input, result.output, result.success);
       }
     }
 
@@ -1019,36 +1157,182 @@ Rules:
   }
 
   /**
+   * Extract constructor parameter names for a class from source content.
+   * Returns comma-separated param names, or null if no constructor found.
+   */
+  private extractConstructorParams(content: string, className: string): string | null {
+    const classStart = content.indexOf(`class ${className}`);
+    if (classStart < 0) return null;
+
+    const afterClass = content.slice(classStart);
+    const constructorMatch = afterClass.match(/constructor\s*\(([^)]*)\)/);
+    if (!constructorMatch?.[1]) return null;
+
+    const params = constructorMatch[1]
+      .split(',')
+      .map((p) => p.trim().split(/[\s=:]/)[0]!.trim())
+      .filter(Boolean);
+
+    return params.length > 0 ? params.join(', ') : null;
+  }
+
+  /**
+   * Extract exported symbol names from JavaScript/TypeScript file content.
+   * Uses regex matching — no AST parser needed.
+   * Returns { names, summary } where summary shows [default]/[named] tags
+   * and constructor params for classes.
+   */
+  private extractExports(content: string): { names: string[]; summary: string } {
+    const allNames = new Set<string>();
+    const defaultParts: string[] = [];
+    const namedParts: string[] = [];
+
+    // Strip comments and string literals to avoid false positives
+    const stripped = content
+      .replace(/\/\/[^\n]*/g, '')          // single-line comments
+      .replace(/\/\*[\s\S]*?\*\//g, '')    // multi-line comments
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""') // double-quoted strings
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''"); // single-quoted strings
+
+    // Named exports: export const/let/var/function NAME (not default)
+    for (const m of stripped.matchAll(/\bexport\s+(?:const|let|var|function)\s+(\w+)/g)) {
+      allNames.add(m[1]!);
+      namedParts.push(m[1]!);
+    }
+
+    // Named export class: export class NAME (not default)
+    for (const m of stripped.matchAll(/\bexport\s+class\s+(\w+)/g)) {
+      // Verify this is not "export default class" by checking preceding text
+      const before = stripped.slice(Math.max(0, m.index! - 15), m.index!);
+      if (before.includes('default')) continue;
+      allNames.add(m[1]!);
+      const params = this.extractConstructorParams(stripped, m[1]!);
+      namedParts.push(params ? `class ${m[1]!}(${params})` : `class ${m[1]!}`);
+    }
+
+    // Export default class NAME
+    for (const m of stripped.matchAll(/\bexport\s+default\s+class\s+(\w+)/g)) {
+      allNames.add(m[1]!);
+      const params = this.extractConstructorParams(stripped, m[1]!);
+      defaultParts.push(params ? `class ${m[1]!}(${params})` : `class ${m[1]!}`);
+    }
+
+    // Export default function NAME
+    for (const m of stripped.matchAll(/\bexport\s+default\s+function\s+(\w+)/g)) {
+      allNames.add(m[1]!);
+      defaultParts.push(m[1]!);
+    }
+
+    // Bare export default: export default NAME (not class/function/new/null/etc.)
+    for (const m of stripped.matchAll(/\bexport\s+default\s+(?!class\b|function\b|new\b|null\b|true\b|false\b|undefined\b|\{|\[|\()(\w+)/g)) {
+      if (!allNames.has(m[1]!)) {
+        allNames.add(m[1]!);
+        defaultParts.push(m[1]!);
+      }
+    }
+
+    // Re-exports / named export list: export { A, B, C }
+    for (const m of stripped.matchAll(/\bexport\s*\{([^}]+)\}/g)) {
+      for (const name of m[1]!.split(',')) {
+        const clean = name.trim().split(/\s+as\s+/).pop()!.trim();
+        if (clean && /^\w+$/.test(clean)) {
+          allNames.add(clean);
+          namedParts.push(clean);
+        }
+      }
+    }
+
+    // CommonJS: module.exports = { A, B, C }
+    for (const m of stripped.matchAll(/module\.exports\s*=\s*\{([^}]+)\}/g)) {
+      for (const name of m[1]!.split(',')) {
+        const clean = name.trim().split(/\s*:/)[0]!.trim();
+        if (clean && /^\w+$/.test(clean)) {
+          allNames.add(clean);
+          namedParts.push(clean);
+        }
+      }
+    }
+
+    // Build summary with [default]/[named] tags
+    const parts: string[] = [];
+    if (defaultParts.length > 0) {
+      parts.push(`[default] ${defaultParts.join(', ')}`);
+    }
+    if (namedParts.length > 0) {
+      parts.push(`[named] ${namedParts.join(', ')}`);
+    }
+
+    return {
+      names: [...allNames].slice(0, 20), // Cap at 20 to avoid prompt bloat
+      summary: parts.join(' | ') || '[no exports]',
+    };
+  }
+
+  /**
    * Track file operations from create_file / edit_file tool calls.
    * Called during executeWithTools to build the workspace manifest.
+   * Returns import validation warnings (if any) for injection into tool results.
    */
-  private trackFileOperation(
+  private async trackFileOperation(
     callName: string,
     callInput: Record<string, unknown>,
     resultOutput: string | undefined,
     success: boolean,
-  ): void {
-    if (!success) return;
-    if (callName !== 'create_file' && callName !== 'edit_file') return;
+  ): Promise<string[]> {
+    if (!success) return [];
+    if (callName !== 'create_file' && callName !== 'edit_file') return [];
 
     const path = String(callInput['path'] ?? '');
-    if (!path) return;
+    if (!path) return [];
 
     const action: 'created' | 'modified' = callName === 'create_file' ? 'created' : 'modified';
     const linesMatch = resultOutput?.match(/\((\d+) lines?\)/);
     const lines = linesMatch ? parseInt(linesMatch[1]!, 10) : undefined;
 
-    // Deduplicate: if the same path was already tracked, update line count
+    // Extract exports from file content
+    let exports: string[] | undefined;
+    let fileContent: string | undefined;
+    if (callName === 'create_file' && typeof callInput['content'] === 'string') {
+      fileContent = callInput['content'];
+    } else if (callName === 'edit_file') {
+      // For edit_file, re-read the file from disk to get current exports
+      try {
+        const fullPath = path.startsWith('/') ? path : join(process.cwd(), path);
+        fileContent = await readFile(fullPath, 'utf8');
+      } catch {
+        // File read failed — skip export extraction
+      }
+    }
+    if (fileContent) {
+      const extracted = this.extractExports(fileContent);
+      if (extracted.names.length > 0) {
+        exports = extracted.names;
+        this.exportSummaries.set(path, extracted.summary);
+      }
+    }
+
+    // Deduplicate: if the same path was already tracked, update
     const existing = this.stepFileOps.find((f) => f.path === path);
     if (existing) {
       // Keep original action (created stays created even if later modified)
-      if (lines !== undefined) {
-        existing.lines = lines;
-      }
-      return;
+      if (lines !== undefined) existing.lines = lines;
+      if (exports) existing.exports = exports; // Update exports on overwrite
+    } else {
+      this.stepFileOps.push({
+        path,
+        action,
+        ...(lines !== undefined ? { lines } : {}),
+        ...(exports ? { exports } : {}),
+      });
     }
 
-    this.stepFileOps.push({ path, action, ...(lines !== undefined ? { lines } : {}) });
+    // Validate imports against the workspace manifest + current step's files
+    if (fileContent && callName === 'create_file') {
+      const allKnown = [...this.currentManifest, ...this.stepFileOps];
+      return this.validateImportsAgainstManifest(path, fileContent, allKnown);
+    }
+
+    return [];
   }
 
   /**
@@ -1058,19 +1342,213 @@ Rules:
   private formatWorkspaceManifest(manifest: FileOperation[]): string {
     if (manifest.length === 0) return '';
 
-    const entries = manifest.map(
-      (f) => `- ${f.path} (${f.action}${f.lines !== undefined ? `, ${f.lines} lines` : ''})`,
-    );
+    const entries = manifest.map((f) => {
+      const base = `- ${f.path} (${f.action}${f.lines !== undefined ? `, ${f.lines} lines` : ''})`;
+      // Prefer rich summary (with [default]/[named] tags) over flat name list
+      const summary = this.exportSummaries.get(f.path);
+      if (summary) {
+        return `${base} → ${summary}`;
+      }
+      if (f.exports && f.exports.length > 0) {
+        return `${base} → exports: ${f.exports.join(', ')}`;
+      }
+      return base;
+    });
+
+    const collisionWarnings = this.detectBaseNameCollisions(manifest);
 
     return [
       `## Workspace Manifest`,
       `Files created/modified in previous steps:`,
       ...entries,
       ``,
+      ...collisionWarnings,
+      ...(collisionWarnings.length > 0 ? [''] : []),
       `IMPORTANT: Use these EXACT file paths when importing or referencing files.`,
-      `Use read_file to check a file's exports or contents before importing from it.`,
+      `IMPORT GUIDE: [default] → import Name from './file.js' | [named] → import { Name } from './file.js'`,
+      `Use read_file to check a file's exports or constructor params before importing from it.`,
       `Maintain consistent naming conventions (case, separators) with existing files.`,
     ].join('\n');
+  }
+
+  /**
+   * Detect basename collisions in the workspace manifest.
+   * Returns warnings for each basename that appears at multiple paths
+   * (e.g., "config.js" at both "/" and "js/").
+   */
+  private detectBaseNameCollisions(manifest: FileOperation[]): string[] {
+    const byBaseName = new Map<string, string[]>();
+
+    for (const file of manifest) {
+      const parts = file.path.split('/');
+      const baseName = parts[parts.length - 1] ?? file.path;
+      const existing = byBaseName.get(baseName);
+      if (existing) {
+        existing.push(file.path);
+      } else {
+        byBaseName.set(baseName, [file.path]);
+      }
+    }
+
+    const warnings: string[] = [];
+
+    // Exact basename collisions
+    for (const [baseName, paths] of byBaseName) {
+      if (paths.length > 1) {
+        warnings.push(
+          `WARNING: Basename collision — "${baseName}" exists at multiple paths: ${paths.join(', ')}. Use only ONE location.`,
+        );
+      }
+    }
+
+    // Singular/plural near-misses (e.g., particle.js vs particles.js)
+    const baseNames = [...byBaseName.keys()];
+    for (let i = 0; i < baseNames.length; i++) {
+      for (let j = i + 1; j < baseNames.length; j++) {
+        const a = baseNames[i]!;
+        const b = baseNames[j]!;
+        const aNoExt = a.replace(/\.\w+$/, '');
+        const bNoExt = b.replace(/\.\w+$/, '');
+        if (
+          aNoExt + 's' === bNoExt ||
+          bNoExt + 's' === aNoExt
+        ) {
+          const pathsA = byBaseName.get(a)!;
+          const pathsB = byBaseName.get(b)!;
+          warnings.push(
+            `WARNING: Naming conflict — "${a}" (${pathsA.join(', ')}) and "${b}" (${pathsB.join(', ')}) are singular/plural variants. Use ONLY the one already in the manifest. Delete the other.`,
+          );
+        }
+      }
+    }
+
+    return warnings;
+  }
+
+  /**
+   * Detect files mentioned in a step description that weren't actually created.
+   * Extracts filenames like "config.js", "Player.js" from natural language
+   * and checks them against the step's file operations.
+   */
+  private detectMissingStepFiles(
+    stepDescription: string,
+    stepOps: FileOperation[],
+  ): string[] {
+    // Extract plausible filenames from the step description (e.g., "config.js", "Player.ts")
+    const mentionedFiles = stepDescription.match(/\b[\w-]+\.\w{1,4}\b/g) ?? [];
+    if (mentionedFiles.length === 0) return [];
+
+    // Filter to code-file extensions only
+    const codeExtensions = new Set(['js', 'ts', 'jsx', 'tsx', 'mjs', 'cjs', 'css', 'html']);
+    const expectedFiles = mentionedFiles.filter((f) => {
+      const ext = f.split('.').pop()?.toLowerCase() ?? '';
+      return codeExtensions.has(ext);
+    });
+
+    if (expectedFiles.length === 0) return [];
+
+    // Check which mentioned files were NOT in this step's file operations
+    const createdBaseNames = new Set(
+      stepOps.map((op) => {
+        const parts = op.path.split('/');
+        return parts[parts.length - 1] ?? '';
+      }),
+    );
+
+    return expectedFiles.filter((f) => !createdBaseNames.has(f));
+  }
+
+  /**
+   * Extract import targets from file content.
+   * Returns the relative paths/module names that this file imports from.
+   */
+  private extractImportTargets(content: string): string[] {
+    const targets: string[] = [];
+
+    // Strip comments and string literals (same as extractExports preprocessing)
+    const stripped = content
+      .replace(/\/\/[^\n]*/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/"(?:[^"\\]|\\.)*"/g, (match) => match) // keep string content for import detection
+      .replace(/'(?:[^'\\]|\\.)*'/g, (match) => match);
+
+    // ES module imports: import ... from './path.js' or import ... from "./path.js"
+    for (const m of stripped.matchAll(/\bimport\s+[\s\S]*?\s+from\s+['"]([^'"]+)['"]/g)) {
+      targets.push(m[1]!);
+    }
+
+    // Dynamic imports: import('./path.js')
+    for (const m of stripped.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      targets.push(m[1]!);
+    }
+
+    // CommonJS require: require('./path.js')
+    for (const m of stripped.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      targets.push(m[1]!);
+    }
+
+    // Only keep relative imports (start with . or /)
+    return targets.filter((t) => t.startsWith('.') || t.startsWith('/'));
+  }
+
+  /**
+   * Validate that all import targets in a newly created file exist in the manifest.
+   * Returns warnings for imports referencing non-existent files.
+   */
+  private validateImportsAgainstManifest(
+    filePath: string,
+    content: string,
+    manifest: FileOperation[],
+  ): string[] {
+    const importTargets = this.extractImportTargets(content);
+    if (importTargets.length === 0) return [];
+
+    // Build a set of all known file basenames and full paths from the manifest
+    const knownPaths = new Set(manifest.map((f) => f.path));
+    const knownBaseNames = new Set(
+      manifest.map((f) => {
+        const parts = f.path.split('/');
+        return parts[parts.length - 1] ?? '';
+      }),
+    );
+
+    const warnings: string[] = [];
+    for (const target of importTargets) {
+      // Extract the basename from the import path (e.g., './bullets.js' → 'bullets.js')
+      const parts = target.split('/');
+      const baseName = parts[parts.length - 1] ?? '';
+      if (!baseName) continue;
+
+      // Check if the import target exists in the manifest (by basename or full path)
+      const fullPath = this.resolveImportPath(filePath, target);
+      if (!knownPaths.has(fullPath) && !knownBaseNames.has(baseName)) {
+        warnings.push(`imports '${target}' but no matching file exists in the workspace`);
+      }
+    }
+
+    return warnings;
+  }
+
+  /**
+   * Resolve a relative import path against the importing file's directory.
+   * E.g., resolveImportPath('projects/game/js/main.js', './config.js')
+   *       → 'projects/game/js/config.js'
+   */
+  private resolveImportPath(fromFile: string, importTarget: string): string {
+    const fromParts = fromFile.split('/');
+    fromParts.pop(); // remove filename, keep directory
+    const targetParts = importTarget.split('/');
+
+    const resolved = [...fromParts];
+    for (const part of targetParts) {
+      if (part === '.') continue;
+      if (part === '..') {
+        resolved.pop();
+      } else {
+        resolved.push(part);
+      }
+    }
+    return resolved.join('/');
   }
 
   private sleep(ms: number): Promise<void> {

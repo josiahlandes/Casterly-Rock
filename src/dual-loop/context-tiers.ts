@@ -103,8 +103,8 @@ export const DEFAULT_CONTEXT_TIERS: ContextTiersConfig = {
   },
   coder: {
     compact: 8192,
-    standard: 16384,
-    extended: 65536,
+    standard: 32768,
+    extended: 131072,
     responseBufferTokens: 2000,
   },
 };

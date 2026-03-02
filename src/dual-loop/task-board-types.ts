@@ -75,6 +75,17 @@ export interface TaskArtifact {
 }
 
 /**
+ * Tracks a file created or modified by tool calls within a step.
+ * Accumulated across steps to form the workspace manifest.
+ */
+export interface FileOperation {
+  path: string;
+  action: 'created' | 'modified';
+  lines?: number;
+  exports?: string[];  // Exported symbol names, e.g. ['CONFIG', 'Player', 'InputHandler']
+}
+
+/**
  * State preserved when a task is parked (preempted by higher-priority work).
  */
 export interface ParkedState {
@@ -118,6 +129,8 @@ export interface Task {
   // ── Implementation (written by DeepLoop) ──────────────────────────────────
   artifacts?: TaskArtifact[] | undefined;
   implementationNotes?: string | undefined;
+  workspaceManifest?: FileOperation[] | undefined;
+  projectDir?: string | undefined;           // e.g. "projects/neon-invaders"
 
   // ── Review (written by FastLoop) ──────────────────────────────────────────
   reviewResult?: ReviewResult | undefined;
@@ -151,6 +164,8 @@ export interface CreateTaskOptions {
   userFacing?: string | undefined;
   /** Pre-set status (e.g., 'answered_directly' for simple/conversational) */
   status?: TaskStatus | undefined;
+  /** Project directory relative to projectRoot (e.g., "projects/neon-invaders") */
+  projectDir?: string | undefined;
 }
 
 /**
@@ -165,6 +180,8 @@ export interface UpdateTaskFields {
   planSteps?: PlanStep[] | undefined;
   artifacts?: TaskArtifact[] | undefined;
   implementationNotes?: string | undefined;
+  workspaceManifest?: FileOperation[] | undefined;
+  projectDir?: string | undefined;
   reviewResult?: ReviewResult | undefined;
   reviewNotes?: string | undefined;
   reviewFeedback?: string | undefined;

@@ -116,13 +116,13 @@ describe('Context Tiers', () => {
     });
 
     it('returns standard for medium prompts', () => {
-      // ~20000 chars → ~5714 tokens + 2000 buffer = 7714 > 6144, < 0.75 * 16384 = 12288
+      // ~20000 chars → ~5714 tokens + 2000 buffer = 7714 > 6144, < 0.75 * 32768 = 24576
       expect(selectCoderTier(20000, config)).toBe('standard');
     });
 
     it('returns extended for large prompts', () => {
-      // ~50000 chars → ~14286 tokens + 2000 buffer = 16286 > 12288
-      expect(selectCoderTier(50000, config)).toBe('extended');
+      // ~90000 chars → ~25714 tokens + 2000 buffer = 27714 > 24576
+      expect(selectCoderTier(90000, config)).toBe('extended');
     });
   });
 
@@ -149,7 +149,7 @@ describe('Context Tiers', () => {
     });
 
     it('resolves extended tier', () => {
-      expect(resolveNumCtx(DEFAULT_CONTEXT_TIERS.coder, 'extended')).toBe(65536);
+      expect(resolveNumCtx(DEFAULT_CONTEXT_TIERS.coder, 'extended')).toBe(131072);
     });
   });
 

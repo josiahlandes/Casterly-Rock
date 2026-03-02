@@ -78,6 +78,49 @@ import type { GraphMemory, NodeType, EdgeType } from './memory/graph-memory.js';
 const execFileAsync = promisify(execFile);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Export Extraction (for overwrite loss detection)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Simple regex-based export name extractor for JS/TS files.
+ * Used by the create_file executor to detect lost exports on overwrite.
+ */
+function extractExportNames(content: string): string[] {
+  const names = new Set<string>();
+
+  // Strip comments and string literals
+  const stripped = content
+    .replace(/\/\/[^\n]*/g, '')          // single-line comments
+    .replace(/\/\*[\s\S]*?\*\//g, '')    // multi-line comments
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""') // double-quoted strings
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''"); // single-quoted strings
+
+  for (const m of stripped.matchAll(/\bexport\s+(?:const|let|var|function|class)\s+(\w+)/g)) {
+    names.add(m[1]!);
+  }
+  for (const m of stripped.matchAll(/\bexport\s+default\s+(?:class|function)\s+(\w+)/g)) {
+    names.add(m[1]!);
+  }
+  for (const m of stripped.matchAll(/\bexport\s+default\s+(?!class\b|function\b|new\b|null\b|true\b|false\b|undefined\b|\{|\[|\()(\w+)/g)) {
+    names.add(m[1]!);
+  }
+  for (const m of stripped.matchAll(/\bexport\s*\{([^}]+)\}/g)) {
+    for (const name of m[1]!.split(',')) {
+      const clean = name.trim().split(/\s+as\s+/).pop()!.trim();
+      if (clean && /^\w+$/.test(clean)) names.add(clean);
+    }
+  }
+  for (const m of stripped.matchAll(/module\.exports\s*=\s*\{([^}]+)\}/g)) {
+    for (const name of m[1]!.split(',')) {
+      const clean = name.trim().split(/\s*:/)[0]!.trim();
+      if (clean && /^\w+$/.test(clean)) names.add(clean);
+    }
+  }
+
+  return [...names];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -444,7 +487,7 @@ If the string appears multiple times, include more surrounding context to make i
 
 const CREATE_FILE_SCHEMA: ToolSchema = {
   name: 'create_file',
-  description: 'Create a new file with the given content. Creates parent directories if needed. Fails if the file already exists.',
+  description: 'Create a new file with the given content. Creates parent directories if needed. By default fails if the file already exists — set overwrite to true to replace existing files.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -455,6 +498,10 @@ const CREATE_FILE_SCHEMA: ToolSchema = {
       content: {
         type: 'string',
         description: 'Content to write to the file.',
+      },
+      overwrite: {
+        type: 'boolean',
+        description: 'Set to true to overwrite an existing file. Defaults to false.',
       },
     },
     required: ['path', 'content'],
@@ -2845,6 +2892,7 @@ function buildExecutors(
     if ('error' in contentResult) return contentResult.error;
 
     const filePath = pathResult.value;
+    const overwrite = call.input['overwrite'] === true;
 
     if (!isPathAllowed(filePath, config.allowedDirectories, config.forbiddenPatterns)) {
       tracer.log('agent-loop', 'warn', `create_file path rejected: "${filePath}"`, {
@@ -2859,26 +2907,52 @@ function buildExecutors(
           ? filePath
           : `${config.projectRoot}/${filePath}`;
 
-        // Check if file already exists
-        try {
-          await readFile(fullPath, 'utf8');
-          return failureResult(call.id, `File already exists: ${filePath}. Use edit_file to modify it.`);
-        } catch {
-          // File doesn't exist — good, we can create it
+        // Read old file for export loss detection (only on overwrite)
+        let oldExports: string[] = [];
+        let oldLineCount: number | undefined;
+        if (overwrite) {
+          try {
+            const oldContent = await readFile(fullPath, 'utf8');
+            oldExports = extractExportNames(oldContent);
+            oldLineCount = oldContent.split('\n').length;
+          } catch {
+            // File doesn't exist yet — nothing to compare
+          }
+        } else {
+          // Check if file already exists
+          try {
+            await readFile(fullPath, 'utf8');
+            return failureResult(call.id, `File already exists: ${filePath}. Use edit_file to modify it, or set overwrite: true to replace.`);
+          } catch {
+            // File doesn't exist — good, we can create it
+          }
         }
 
         await mkdir(dirname(fullPath), { recursive: true });
         await writeFile(fullPath, contentResult.value, 'utf8');
 
         const lineCount = contentResult.value.split('\n').length;
-        tracer.logIO('agent-loop', 'create', filePath, 0, {
+        const verb = overwrite ? 'overwrote' : 'create';
+        tracer.logIO('agent-loop', verb, filePath, 0, {
           success: true,
           bytesOrLines: lineCount,
         });
 
+        const action = overwrite ? 'Overwrote' : 'Created';
+        let resultMsg = `${action} ${filePath} (${lineCount} lines)`;
+
+        // Detect lost exports on overwrite
+        if (overwrite && oldExports.length > 0) {
+          const newExports = extractExportNames(contentResult.value);
+          const lost = oldExports.filter((e) => !newExports.includes(e));
+          if (lost.length > 0) {
+            resultMsg += `\nWARNING: Previous version (${oldLineCount} lines) exported [${oldExports.join(', ')}]. New version exports [${newExports.join(', ')}]. LOST exports: [${lost.join(', ')}]. Other files may depend on these — add them back or verify they are intentionally removed.`;
+          }
+        }
+
         return successResult(
           call.id,
-          `Created ${filePath} (${lineCount} lines)`,
+          resultMsg,
           config.maxOutputChars,
         );
       } catch (err) {
