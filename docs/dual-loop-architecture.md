@@ -2127,3 +2127,33 @@ These ideas are noted for potential future work but are explicitly **out of scop
 3. **Mid-conversation tier upgrade with context replay**: If the DeepLoop hits context pressure, pause the ReAct loop, serialize the essential context (plan + key findings), resize to `extended`, and replay the serialized context as a fresh prompt. This is a softer version of the rejected continuous resizing — it only happens on detected pressure, and it uses a curated summary instead of replaying the full conversation. Feasible but complex. Defer until context pressure warnings prove to be a real operational problem.
 
 4. **Per-turn `num_ctx` within the DeepLoop**: Instead of one tier per task, adjust per-turn. Early turns (reading files) need more context; later turns (running tests) need less. Requires deep integration with the ReAct loop and incurs KV cache invalidation on every tier change. Not worth the complexity.
+
+
+## 32.1 Reliability Hardening Updates (Implemented)
+
+The production implementation includes several safeguards beyond the initial draft:
+
+1. **Bounded event draining preserves backlog**
+   - `EventBus.drain(maxEvents)` now supports partial draining.
+   - `drainEventsToTasks()` uses bounded draining so events beyond `maxEventsPerCheck` remain queued for later idle checks (instead of being dropped).
+
+2. **Review failure no longer auto-approves**
+   - If FastLoop review generation fails, the task is moved to `revision` with deterministic feedback.
+   - This preserves quality and safety expectations by avoiding silent approvals on reviewer outages.
+
+3. **Delivered-response idempotency persists across restarts**
+   - TaskBoard persistence now stores delivered task IDs.
+   - Completed tasks already delivered are not re-delivered after process restart.
+
+4. **FastLoop triage timeout is enforced**
+   - `triageTimeoutMs` now wraps the triage LLM call.
+   - Timeout defaults to escalation (`complex`) rather than guessing.
+
+5. **DeepLoop context pressure threshold is active**
+   - `contextPressureWarningThreshold` is now enforced via prompt-size estimation before DeepLoop calls.
+   - Warnings are emitted when estimated prompt pressure exceeds threshold.
+
+6. **TaskBoard active-capacity guard is enforced**
+   - `maxActiveTasks` is now enforced at task creation time.
+   - When capacity is exceeded, the oldest active task is failed with explicit resolution before admitting the new task.
+

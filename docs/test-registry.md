@@ -33,6 +33,12 @@ npx vitest run --reporter=json
 | `autonomous-provider.test.ts` | `src/autonomous/provider.ts` | Provider abstraction, prompts, token usage |
 | `autonomous-reflector.test.ts` | `src/autonomous/reflector.ts` | Reflection storage, statistics, memory entries |
 | `autonomous-report.test.ts` | `src/autonomous/report.ts` | Daily report formatting, token counts, truncation |
+| `dual-loop-fast-loop.test.ts` | `src/dual-loop/fast-loop.ts` | Triage timeout fallback and review-failure revision routing |
+| `dual-loop-context-tiers.test.ts` | `src/dual-loop/context-tiers.ts` | Tier selection and provider option resolution |
+| `dual-loop-controller.test.ts` | `src/dual-loop/dual-loop-controller.ts` | Controller compatibility and trigger routing behavior |
+| `dual-loop-events.test.ts` | `src/dual-loop/deep-loop-events.ts` | Event/goal conversion and idle check behavior |
+| `dual-loop-prompts.test.ts` | `src/dual-loop/{triage-prompt.ts,review-prompt.ts}` | Prompt construction and response parsing |
+| `dual-loop-task-board.test.ts` | `src/dual-loop/task-board.ts` | Task lifecycle, ownership, persistence, capacity guard |
 | `autonomous-validator.test.ts` | `src/autonomous/validator.ts` | Invariant checks, test running, validation results |
 | `git-operations.test.ts` | `src/autonomous/git.ts` | Branch management, commits, merges, reverts |
 | `test-parser.test.ts` | `src/autonomous/test-parser.ts` | Vitest JSON parsing, coverage parsing, failure conversion |

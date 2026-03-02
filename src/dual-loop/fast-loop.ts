@@ -324,12 +324,16 @@ export class FastLoop {
     const userPrompt = buildTriagePrompt({ message, sender, taskBoardSummary: boardSummary });
 
     try {
-      const response = await this.callWithTier(tier, {
-        prompt: userPrompt,
-        systemPrompt: TRIAGE_SYSTEM_PROMPT,
-        temperature: 0.1,
-        maxTokens: 512,
-      });
+      const response = await this.withTimeout(
+        this.callWithTier(tier, {
+          prompt: userPrompt,
+          systemPrompt: TRIAGE_SYSTEM_PROMPT,
+          temperature: 0.1,
+          maxTokens: 512,
+        }),
+        this.config.triageTimeoutMs,
+        'Triage timed out',
+      );
 
       return parseTriageResponse(response);
     } catch (error) {
@@ -395,17 +399,17 @@ export class FastLoop {
         tier,
       });
     } catch (error) {
-      tracer.log('fast-loop', 'error', `Review failed for ${task.id}, auto-approving`, {
+      tracer.log('fast-loop', 'error', `Review failed for ${task.id}, routing to revision`, {
         error: error instanceof Error ? error.message : String(error),
       });
 
-      // On review failure, approve — don't block the pipeline
+      // On review failure, request revision with deterministic feedback.
       this.taskBoard.update(task.id, {
-        reviewResult: 'approved',
-        reviewNotes: 'Review auto-approved (LLM call failed)',
-        status: 'done',
+        reviewResult: 'changes_requested',
+        reviewNotes: 'Review failed because the reviewer model call errored',
+        reviewFeedback: 'Re-run implementation and include a concise correctness and safety self-check in implementation notes before re-review.',
+        status: 'revision',
         owner: null,
-        resolvedAt: new Date().toISOString(),
       });
     }
   }
@@ -506,6 +510,28 @@ export class FastLoop {
       tracer.log('fast-loop', 'info', `Undelivered response for ${sender}`, {
         textLength: text.length,
       });
+    }
+  }
+
+
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    errorMessage: string,
+  ): Promise<T> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new Error(errorMessage));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
   }
 

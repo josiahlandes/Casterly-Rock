@@ -74,14 +74,13 @@ export function drainEventsToTasks(
   config: DeepLoopEventConfig = DEFAULT_EVENT_CONFIG,
 ): number {
   const tracer = getTracer();
-  const events = eventBus.drain();
+  const events = eventBus.drain(config.maxEventsPerCheck);
 
   if (events.length === 0) return 0;
 
   let created = 0;
-  const limit = Math.min(events.length, config.maxEventsPerCheck);
 
-  for (let i = 0; i < limit; i++) {
+  for (let i = 0; i < events.length; i++) {
     const event = events[i]!;
 
     // Skip events the dual-loop handles elsewhere

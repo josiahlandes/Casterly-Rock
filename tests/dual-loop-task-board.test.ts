@@ -325,4 +325,35 @@ describe('TaskBoard', () => {
       expect(board.isDirty()).toBe(true);
     });
   });
+
+  describe('delivery idempotency persistence', () => {
+    it('persists delivered task IDs across save/load', async () => {
+      const dbPath = `/tmp/test-taskboard-${Date.now()}.json`;
+      const board = createTaskBoard({ dbPath });
+      const id = board.create(makeTask());
+      board.update(id, { status: 'done', userFacing: 'Delivered once' });
+      board.markDelivered(id);
+      await board.save();
+
+      const reloaded = createTaskBoard({ dbPath });
+      await reloaded.load();
+      expect(reloaded.getCompletedWithResponse()).toBeNull();
+    });
+  });
+
+  describe('capacity guard', () => {
+    it('fails the oldest active task when maxActiveTasks is reached', () => {
+      const board = createTaskBoard({ dbPath: `/tmp/test-taskboard-${Date.now()}.json`, maxActiveTasks: 2 });
+      const first = board.create(makeTask({ originalMessage: 'first' }));
+      const second = board.create(makeTask({ originalMessage: 'second' }));
+      const third = board.create(makeTask({ originalMessage: 'third' }));
+
+      const firstTask = board.get(first)!;
+      expect(firstTask.status).toBe('failed');
+      expect(firstTask.resolution).toContain('capacity reached');
+      expect(board.get(second)!.status).toBe('queued');
+      expect(board.get(third)!.status).toBe('queued');
+    });
+  });
+
 });

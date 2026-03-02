@@ -39,10 +39,11 @@ import type {
 interface TaskBoardData {
   version: number;
   tasks: Task[];
+  deliveredTaskIds: string[];
 }
 
 function createEmptyData(): TaskBoardData {
-  return { version: 1, tasks: [] };
+  return { version: 1, tasks: [], deliveredTaskIds: [] };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +113,14 @@ export class TaskBoard {
         const parsed = JSON.parse(raw) as unknown;
 
         if (parsed && typeof parsed === 'object' && 'version' in parsed) {
-          this.data = parsed as TaskBoardData;
+          const loaded = parsed as Partial<TaskBoardData>;
+          this.data = {
+            version: typeof loaded.version === 'number' ? loaded.version : 1,
+            tasks: Array.isArray(loaded.tasks) ? loaded.tasks : [],
+            deliveredTaskIds: Array.isArray(loaded.deliveredTaskIds) ? loaded.deliveredTaskIds : [],
+          };
+          this.delivered.clear();
+          for (const id of this.data.deliveredTaskIds) this.delivered.add(id);
           this.dirty = false;
 
           tracer.logIO('task-board', 'read', resolvedPath, Date.now() - startMs, {
@@ -187,6 +195,19 @@ export class TaskBoard {
     const tracer = getTracer();
     const now = new Date().toISOString();
     const id = `task-${randomUUID().slice(0, 8)}`;
+
+    if (this.getActive().length >= this.config.maxActiveTasks) {
+      const oldestActive = this.getActive()
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+      if (oldestActive) {
+        oldestActive.status = 'failed';
+        oldestActive.owner = null;
+        oldestActive.resolution = `Task board capacity reached (${this.config.maxActiveTasks} active tasks)`;
+        oldestActive.resolvedAt = now;
+        oldestActive.updatedAt = now;
+        tracer.log('task-board', 'warn', `Task board capacity reached; failed oldest active task ${oldestActive.id}`);
+      }
+    }
 
     const task: Task = {
       id,
@@ -338,7 +359,12 @@ export class TaskBoard {
 
   /** Mark a task's response as delivered */
   markDelivered(id: string): void {
+    if (this.delivered.has(id)) return;
     this.delivered.add(id);
+    if (!this.data.deliveredTaskIds.includes(id)) {
+      this.data.deliveredTaskIds.push(id);
+      this.dirty = true;
+    }
   }
 
   /** Get a queued, unclaimed task with higher priority (lower number) than the threshold */

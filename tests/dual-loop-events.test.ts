@@ -198,19 +198,25 @@ describe('Deep Loop Events', () => {
 
       const config: DeepLoopEventConfig = { ...DEFAULT_EVENT_CONFIG, maxEventsPerCheck: 3 };
       const created = drainEventsToTasks(bus, board, config);
-      expect(created).toBeLessThanOrEqual(3);
+      expect(created).toBe(3);
+      expect(bus.getQueueSize()).toBe(7);
     });
 
-    it('drains the event bus (events are consumed)', () => {
+    it('drains processed events while preserving backlog for later cycles', () => {
       const bus = makeEventBus();
       const board = makeBoard();
 
+      const config: DeepLoopEventConfig = { ...DEFAULT_EVENT_CONFIG, maxEventsPerCheck: 1 };
       emitTestFailed(bus);
-      drainEventsToTasks(bus, board);
+      emitTestFailed(bus);
 
-      // Second drain should find nothing
-      const second = drainEventsToTasks(bus, board);
-      expect(second).toBe(0);
+      const first = drainEventsToTasks(bus, board, config);
+      expect(first).toBe(1);
+      expect(bus.getQueueSize()).toBe(1);
+
+      const second = drainEventsToTasks(bus, board, config);
+      expect(second).toBe(1);
+      expect(bus.getQueueSize()).toBe(0);
     });
 
     it('sets event origin and complex classification on created tasks', () => {
