@@ -16,7 +16,6 @@ import {
   removeContact,
   getAllowedPhones,
   isAdmin,
-  findContactByPhone,
   type AddressBook,
 } from '../interface/index.js';
 import { wrapError, formatErrorForUser } from '../errors/index.js';
@@ -75,11 +74,11 @@ async function processMessage(
     }
   }
 
-  const contact = findContactByPhone(sender);
-  const senderLabel = contact ? `${contact.name} (${sender})` : sender;
 
   try {
-    const trigger = triggerFromMessage(message.text, senderLabel);
+    // Keep routing sender as the raw handle/phone so downstream delivery
+    // targets a valid iMessage recipient (FastLoop reuses trigger.sender).
+    const trigger = triggerFromMessage(message.text, sender);
     const outcome = await autonomousController.runTriggeredCycle(trigger);
 
     // When summary is empty the response is being delivered
