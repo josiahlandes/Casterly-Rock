@@ -306,17 +306,43 @@ export class EventBus {
   }
 
   /**
-   * Drain the event queue: returns all events sorted by priority and
-   * clears the queue. This is the main consumption method — the agent
-   * loop calls this at the start of each cycle.
+   * Drain the event queue.
+   *
+   * - Without `maxEvents`: returns all events sorted by priority and clears
+   *   the queue.
+   * - With `maxEvents`: returns up to that many highest-priority events and
+   *   removes only those from the queue, leaving the remainder for future
+   *   cycles.
    */
-  drain(): SystemEvent[] {
+  drain(maxEvents?: number): SystemEvent[] {
     const tracer = getTracer();
     const events = [...this.queue].sort(compareEventPriority);
-    this.queue.length = 0;
 
-    tracer.log('events', 'debug', `Drained ${events.length} events from queue`);
-    return events;
+    if (maxEvents === undefined) {
+      this.queue.length = 0;
+      tracer.log('events', 'debug', `Drained ${events.length} events from queue`);
+      return events;
+    }
+
+    const limit = Math.max(0, Math.floor(maxEvents));
+    const selected = events.slice(0, limit);
+
+    if (selected.length === 0) {
+      tracer.log('events', 'debug', 'Drained 0 events from queue (bounded drain)');
+      return selected;
+    }
+
+    const selectedSet = new Set(selected);
+    this.queue.splice(
+      0,
+      this.queue.length,
+      ...this.queue.filter((event) => !selectedSet.has(event)),
+    );
+
+    tracer.log('events', 'debug', `Drained ${selected.length} events from queue (bounded drain)`, {
+      remaining: this.queue.length,
+    });
+    return selected;
   }
 
   /**

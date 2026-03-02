@@ -115,6 +115,20 @@ describe('EventBus — Emit and Queue', () => {
     expect(bus.getQueueSize()).toBe(0);
   });
 
+
+  it('drain(maxEvents) returns a bounded set and preserves the remainder', () => {
+    bus.emit(makeScheduledEvent());
+    bus.emit(makeUserEvent());
+    bus.emit(makeFileEvent());
+
+    const events = bus.drain(2);
+    expect(events).toHaveLength(2);
+    expect(events[0]!.type).toBe('user_message');
+    expect(events[1]!.type).toBe('file_changed');
+    expect(bus.getQueueSize()).toBe(1);
+    expect(bus.peek()?.type).toBe('scheduled');
+  });
+
   it('peek() returns highest-priority event without removing', () => {
     bus.emit(makeScheduledEvent());
     bus.emit(makeTestFailedEvent());

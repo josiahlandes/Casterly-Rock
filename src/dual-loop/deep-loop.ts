@@ -628,7 +628,21 @@ export class DeepLoop {
     tier: ContextTier,
     request: Omit<GenerateRequest, 'providerOptions'>,
   ): Promise<string> {
+    const tracer = getTracer();
     const numCtx = resolveNumCtx(this.config.tiers, tier);
+    const estimatedPromptTokens = Math.ceil((request.prompt.length + (request.systemPrompt?.length ?? 0)) / 3.5);
+    const pressure = estimatedPromptTokens / numCtx;
+
+    if (pressure >= this.config.tiers.contextPressureWarningThreshold) {
+      tracer.log('deep-loop', 'warn', 'Context pressure threshold reached', {
+        tier,
+        estimatedPromptTokens,
+        numCtx,
+        pressure,
+        threshold: this.config.tiers.contextPressureWarningThreshold,
+      });
+    }
+
     const response = await this.provider.generateWithTools(
       { ...request, providerOptions: { num_ctx: numCtx } },
       [],
