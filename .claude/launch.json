@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "neon-invaders",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["projects/neon-invaders/serve.mjs"],
+      "port": 8085
+    }
+  ]
+}

@@ -689,6 +689,70 @@ export class DeepLoop {
       }
     }
 
+    // ── Cross-file API validation ──────────────────────────────────────
+    // After all plan steps complete, programmatically check that every
+    // method/property call on imported objects actually exists in the
+    // source module. If mismatches are found, inject a targeted fix step.
+    if (workspaceManifest.length >= 2) {
+      const maxFixRounds = 2;
+      for (let fixRound = 0; fixRound < maxFixRounds; fixRound++) {
+        const apiIssues = await this.crossValidateAPIs(workspaceManifest);
+        if (apiIssues.length === 0) {
+          tracer.log('deep-loop', 'info', `API validation passed${fixRound > 0 ? ` (after ${fixRound} fix round(s))` : ''}`);
+          break;
+        }
+
+        tracer.log('deep-loop', 'warn', `API validation found ${apiIssues.length} issues (fix round ${fixRound + 1})`, {
+          issues: apiIssues.slice(0, 15),
+        });
+
+        // Inject a fix step with the specific issues listed
+        const issueList = apiIssues.slice(0, 20).join('\n');
+        const fixStep: PlanStep = {
+          description: `Validate and fix cross-file API mismatches:\n${issueList}`,
+          status: 'in_progress',
+        };
+        steps.push(fixStep);
+        this.taskBoard.update(task.id, { planSteps: steps });
+
+        // Reset per-step tracking
+        this.stepFileOps = [];
+        this.currentManifest = workspaceManifest;
+
+        try {
+          const priorSteps = steps.slice(0, steps.length - 1).filter((s) => s.status === 'done' && s.output);
+          const result = await this.executeStep(
+            task, fixStep, priorSteps, steps.length, workspaceManifest, steps, steps.length - 1,
+          );
+
+          // Merge file operations from the fix step
+          for (const op of this.stepFileOps) {
+            const existing = workspaceManifest.find((f) => f.path === op.path);
+            if (existing) {
+              if (op.lines !== undefined) existing.lines = op.lines;
+              if (op.exports) existing.exports = op.exports;
+            } else {
+              workspaceManifest.push(op);
+            }
+          }
+
+          fixStep.status = 'done';
+          fixStep.output = result.output;
+          if (result.artifact) artifacts.push(result.artifact);
+          stepsCompleted++;
+          this.taskBoard.update(task.id, { planSteps: steps, artifacts });
+        } catch (error) {
+          fixStep.status = 'failed';
+          fixStep.output = error instanceof Error ? error.message : String(error);
+          this.taskBoard.update(task.id, { planSteps: steps });
+          tracer.log('deep-loop', 'error', `API fix step failed (round ${fixRound + 1})`, {
+            error: fixStep.output,
+          });
+          break; // Don't retry on failure
+        }
+      }
+    }
+
     // All steps done — generate user-facing summary
     const userFacing = await this.generateSummary(task, artifacts);
 
@@ -749,13 +813,19 @@ export class DeepLoop {
       `## Current Step (${stepIndex + 1}/${allSteps.length}): ${step.description}`,
       upcomingContext,
       task.triageNotes ? `## Context: ${task.triageNotes}` : '',
-      `## Instructions\nComplete ALL work described in the current step before stopping. Create every file mentioned, write complete implementations (not stubs), and verify imports match existing files in the workspace manifest.`,
+      `## Instructions\nComplete ALL work described in the current step before stopping. Create every file mentioned, write complete implementations (not stubs), and verify imports match existing files in the workspace manifest. If files already exist from a prior step, read them and verify cross-file API compatibility: every method/property call on an imported object must exist in that module's source code. Fix mismatches using edit_file.`,
     ].filter(Boolean).join('\n\n');
 
     // Single-step tasks get the full task budget; multi-step get per-step cap
-    const maxTurns = totalSteps <= 1
+    let maxTurns = totalSteps <= 1
       ? this.config.maxTurnsPerTask
       : this.config.maxTurnsPerStep;
+
+    // Review/verify/test/fix steps get double the turn budget so the model
+    // has room to read dependencies, cross-check APIs, and apply fixes.
+    if (/\b(test|verify|review|validate|integration|fix)\b/i.test(step.description)) {
+      maxTurns = Math.min(maxTurns * 2, this.config.maxTurnsPerTask);
+    }
     const response = await this.dispatchToCoder(prompt, '', maxTurns);
 
     // Create an artifact from the response if it contains code
@@ -919,6 +989,9 @@ IMPORT/EXPORT RULES:
 - Before writing a file that imports from another, use read_file on the dependency to verify its exact exports and constructor parameters.
 - NEVER guess an import path or export name — check the manifest or read the file first.
 - When the manifest shows constructor params like \`class Player(x, y)\`, use EXACTLY those parameters when constructing.
+- After writing or editing a file, verify every obj.method() call on an imported object actually exists as a method in that module. If unsure, use read_file to check.
+- Config property names must EXACTLY match the config file. Read config before using any config.PROP access.
+- When a step says "verify" or "test", systematically: (1) read each file, (2) for each import, read the dependency, (3) confirm every method/property call exists in the source, (4) fix mismatches with edit_file.
 
 Other rules:
 - Tool results are returned to you directly — analyze them and use the data.
@@ -1551,9 +1624,335 @@ Other rules:
     return resolved.join('/');
   }
 
+  /**
+   * Cross-validate APIs across all files in the workspace manifest.
+   * Reads files from disk, extracts import bindings and member accesses,
+   * then checks that every member access exists in the source module's API surface.
+   * Returns specific issue strings for any mismatches found.
+   */
+  private async crossValidateAPIs(manifest: FileOperation[]): Promise<string[]> {
+    const issues: string[] = [];
+
+    // 1. Read all files from disk
+    const fileContents = new Map<string, string>();
+    for (const file of manifest) {
+      try {
+        const fullPath = file.path.startsWith('/')
+          ? file.path
+          : join(process.cwd(), file.path);
+        const content = await readFile(fullPath, 'utf8');
+        fileContents.set(file.path, content);
+      } catch {
+        // File missing or unreadable — skip (tracked elsewhere)
+      }
+    }
+
+    // 2. For each file, extract import bindings and validate member accesses
+    for (const [filePath, content] of fileContents) {
+      const bindings = extractImportBindings(content);
+
+      for (const binding of bindings) {
+        // 3. Resolve the source path
+        const resolvedSource = this.resolveImportPath(filePath, binding.source);
+
+        // Find source content (try exact path, then basename match)
+        let sourceContent = fileContents.get(resolvedSource);
+        if (!sourceContent) {
+          const targetBaseName = resolvedSource.split('/').pop() ?? '';
+          for (const [p, c] of fileContents) {
+            if (p.endsWith(`/${targetBaseName}`) || p === targetBaseName) {
+              sourceContent = c;
+              break;
+            }
+          }
+        }
+        if (!sourceContent) continue; // External or missing
+
+        // 4. Extract member accesses on this binding
+        const memberAccesses = extractMemberAccesses(content, binding.localName);
+        if (memberAccesses.length === 0) continue;
+
+        // 5. Build the available API surface
+        const apiSurface = extractAPISurface(sourceContent);
+
+        // 6. For named imports, also check object property names
+        const objProps = extractObjectPropertyNames(sourceContent, binding.localName);
+        const allAvailable = new Set(apiSurface);
+        for (const prop of objProps) {
+          allAvailable.add(prop);
+        }
+
+        // 7. Cross-reference: find missing members
+        const missing = memberAccesses.filter((m) => !allAvailable.has(m));
+        if (missing.length > 0) {
+          const sourceBaseName = resolvedSource.split('/').pop() ?? resolvedSource;
+          const fileBaseName = filePath.split('/').pop() ?? filePath;
+          const availableList = [...allAvailable].sort().slice(0, 20).join(', ');
+          for (const m of missing) {
+            issues.push(
+              `${fileBaseName}: calls ${binding.localName}.${m}() but '${m}' not found in ${sourceBaseName} (available: ${availableList})`,
+            );
+          }
+        }
+      }
+    }
+
+    return issues;
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-File API Validation Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Binding entry: a local variable name mapped to the source file it was imported from. */
+export interface ImportBinding {
+  localName: string;
+  source: string;
+  isDefault: boolean;
+}
+
+/**
+ * Parse import statements and map each local binding name to the source file path.
+ * Only returns relative imports (starting with . or /).
+ */
+export function extractImportBindings(content: string): ImportBinding[] {
+  const bindings: ImportBinding[] = [];
+
+  // Strip comments to avoid false positives
+  const stripped = content
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // Combined default + named: import Foo, { A, B } from './bar.js'
+  for (const m of stripped.matchAll(
+    /\bimport\s+(\w+)\s*,\s*\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]/g,
+  )) {
+    const source = m[3]!;
+    bindings.push({ localName: m[1]!, source, isDefault: true });
+    for (const name of m[2]!.split(',')) {
+      const trimmed = name.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split(/\s+as\s+/);
+      const local = (parts.length > 1 ? parts[1] : parts[0])!.trim();
+      if (local) bindings.push({ localName: local, source, isDefault: false });
+    }
+  }
+
+  // Default import: import Foo from './bar.js'
+  // Must NOT match combined imports (already handled above)
+  for (const m of stripped.matchAll(
+    /\bimport\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g,
+  )) {
+    // Skip if this was already captured as a combined import
+    const alreadyCaptured = bindings.some(
+      (b) => b.localName === m[1]! && b.source === m[2]!,
+    );
+    if (!alreadyCaptured) {
+      bindings.push({ localName: m[1]!, source: m[2]!, isDefault: true });
+    }
+  }
+
+  // Named imports: import { A, B as C } from './config.js'
+  // Must NOT match combined imports
+  for (const m of stripped.matchAll(
+    /\bimport\s*\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]/g,
+  )) {
+    const source = m[2]!;
+    // Skip if already captured from combined
+    const existingForSource = bindings.filter((b) => b.source === source && !b.isDefault);
+    if (existingForSource.length > 0) continue;
+
+    for (const name of m[1]!.split(',')) {
+      const trimmed = name.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split(/\s+as\s+/);
+      const local = (parts.length > 1 ? parts[1] : parts[0])!.trim();
+      if (local) bindings.push({ localName: local, source, isDefault: false });
+    }
+  }
+
+  // Namespace import: import * as Foo from './bar.js'
+  for (const m of stripped.matchAll(
+    /\bimport\s*\*\s*as\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g,
+  )) {
+    bindings.push({ localName: m[1]!, source: m[2]!, isDefault: false });
+  }
+
+  // Only keep relative imports
+  return bindings.filter((b) => b.source.startsWith('.') || b.source.startsWith('/'));
+}
+
+/**
+ * Find all `identifier.memberName` patterns in file content.
+ * Returns deduplicated member names.
+ */
+export function extractMemberAccesses(content: string, identifier: string): string[] {
+  const members = new Set<string>();
+
+  // Strip comments
+  const stripped = content
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const escaped = identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`\\b${escaped}\\.(\\w+)`, 'g');
+  for (const m of stripped.matchAll(regex)) {
+    members.add(m[1]!);
+  }
+  return [...members];
+}
+
+/** Keywords that look like method definitions but aren't. */
+const METHOD_EXCLUDE = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'constructor',
+  'return', 'throw', 'new', 'typeof', 'delete', 'void',
+]);
+
+/**
+ * Extract the publicly-accessible API surface from a module's source code.
+ * Returns a set of method/property/function names.
+ */
+export function extractAPISurface(content: string): Set<string> {
+  const api = new Set<string>();
+
+  // Strip comments
+  const stripped = content
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // Exported functions: export (default )?(async )?function name(
+  for (const m of stripped.matchAll(
+    /\bexport\s+(?:default\s+)?(?:async\s+)?function\s+(\w+)/g,
+  )) {
+    api.add(m[1]!);
+  }
+
+  // Exported variables: export (const|let|var) name
+  for (const m of stripped.matchAll(
+    /\bexport\s+(?:const|let|var)\s+(\w+)/g,
+  )) {
+    api.add(m[1]!);
+  }
+
+  // Re-exports: export { A, B }
+  for (const m of stripped.matchAll(/\bexport\s*\{([^}]+)\}/g)) {
+    for (const name of m[1]!.split(',')) {
+      const trimmed = name.trim().split(/\s+as\s+/);
+      const exported = (trimmed.length > 1 ? trimmed[1] : trimmed[0])!.trim();
+      if (exported) api.add(exported);
+    }
+  }
+
+  // Class methods — find class bodies and extract method definitions
+  // Track brace depth to isolate class body
+  const classStarts = [...stripped.matchAll(/\bclass\s+\w+[^{]*\{/g)];
+  for (const classMatch of classStarts) {
+    const startIdx = classMatch.index! + classMatch[0].length;
+    let depth = 1;
+    let classEnd = startIdx;
+    for (let i = startIdx; i < stripped.length && depth > 0; i++) {
+      if (stripped[i] === '{') depth++;
+      else if (stripped[i] === '}') {
+        depth--;
+        if (depth === 0) classEnd = i;
+      }
+    }
+
+    const classBody = stripped.slice(startIdx, classEnd);
+
+    // Method definitions at class body level (depth 0 within class)
+    // Match: methodName( or async methodName(
+    for (const m of classBody.matchAll(
+      /^\s+(?:async\s+)?(\w+)\s*\(/gm,
+    )) {
+      const name = m[1]!;
+      if (!METHOD_EXCLUDE.has(name)) {
+        api.add(name);
+      }
+    }
+
+    // Getters and setters: get name( / set name(
+    for (const m of classBody.matchAll(/^\s+(?:get|set)\s+(\w+)\s*\(/gm)) {
+      api.add(m[1]!);
+    }
+  }
+
+  // Default export of instantiated class: export default new ClassName()
+  // The API is the class's methods — already captured above if class is in same file
+  for (const m of stripped.matchAll(
+    /\bexport\s+default\s+new\s+(\w+)/g,
+  )) {
+    // Class methods already captured — just note the class name for reference
+    api.add(m[1]!);
+  }
+
+  return api;
+}
+
+/**
+ * For config-like modules, extract top-level property keys from an object literal
+ * assigned to the given variable name.
+ * e.g., `export const ENEMIES = { baseSpeed: 50, rows: 5 }` → ['baseSpeed', 'rows']
+ */
+export function extractObjectPropertyNames(content: string, varName: string): string[] {
+  // Strip comments
+  const stripped = content
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const assignMatch = stripped.match(
+    new RegExp(`(?:export\\s+)?(?:const|let|var)\\s+${escaped}\\s*=\\s*\\{`),
+  );
+  if (!assignMatch) return [];
+
+  const startIdx = assignMatch.index! + assignMatch[0].length - 1; // position of '{'
+
+  // Find balanced closing brace
+  let depth = 0;
+  let endIdx = startIdx;
+  for (let i = startIdx; i < stripped.length; i++) {
+    if (stripped[i] === '{') depth++;
+    else if (stripped[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        endIdx = i;
+        break;
+      }
+    }
+  }
+
+  if (endIdx <= startIdx) return [];
+
+  const body = stripped.slice(startIdx + 1, endIdx);
+
+  // Extract top-level property keys (only lines at depth 0 within this body)
+  // We need to track nested braces to only get top-level keys
+  const keys: string[] = [];
+  let innerDepth = 0;
+  for (const line of body.split('\n')) {
+    // Extract keys BEFORE counting braces so that `player: {` is captured at depth 0
+    // but `width: 40` inside the nested object (depth 1) is skipped
+    if (innerDepth === 0) {
+      const keyMatch = line.match(/^\s*(\w+)\s*:/);
+      if (keyMatch) {
+        keys.push(keyMatch[1]!);
+      }
+    }
+
+    // Count braces on this line for depth tracking (after key extraction)
+    for (const ch of line) {
+      if (ch === '{' || ch === '[' || ch === '(') innerDepth++;
+      else if (ch === '}' || ch === ']' || ch === ')') innerDepth--;
+    }
+  }
+
+  return keys;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
