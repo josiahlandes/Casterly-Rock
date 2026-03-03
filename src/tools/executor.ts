@@ -6,8 +6,15 @@
  */
 
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { safeLogger } from '../logging/safe-logger.js';
 import type { NativeToolCall, NativeToolResult, NativeToolExecutor } from './schemas/types.js';
+
+const DEFAULT_SHELL = existsSync('/bin/zsh')
+  ? '/bin/zsh'
+  : existsSync('/bin/bash')
+    ? '/bin/bash'
+    : '/bin/sh';
 
 /** Commands that are always blocked for safety */
 const BLOCKED_COMMANDS = [
@@ -136,7 +143,7 @@ function executeCommand(command: string, timeoutMs = 30000): NativeToolResult & 
       encoding: 'utf-8',
       timeout: timeoutMs,
       maxBuffer: 1024 * 1024, // 1MB
-      shell: '/bin/zsh',
+      shell: DEFAULT_SHELL,
       env: {
         ...process.env,
         LC_ALL: 'en_US.UTF-8',

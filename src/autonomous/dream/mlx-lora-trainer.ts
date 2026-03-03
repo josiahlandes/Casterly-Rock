@@ -11,7 +11,7 @@
  * See docs/roadmap.md Tier 3, Items 8-10.
  */
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { readFile, writeFile, mkdir, copyFile, access, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { promisify } from 'node:util';
@@ -19,7 +19,7 @@ import { getTracer } from '../debug.js';
 import type { TrainingExample, PreferencePair } from './training-extractor.js';
 import type { LoraTrainingParams } from './lora-trainer.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -219,19 +219,17 @@ export class MlxLoraTrainer {
 
     await mkdir(adapterOutputPath, { recursive: true });
 
-    // Build mlx-lm command
-    const cmd = [
-      this.config.mlxLmBinary,
-      `--model "${this.config.baseModel}"`,
-      `--data "${resolvedDataDir}"`,
-      `--adapter-path "${adapterOutputPath}"`,
-      `--lora-rank ${params.rank}`,
-      `--batch-size ${params.batchSize}`,
-      `--iters ${params.epochs * 100}`, // mlx-lm uses iterations not epochs
-      `--learning-rate ${params.learningRate}`,
-      `--seed ${this.config.seed}`,
+    const args = [
+      '--model', this.config.baseModel,
+      '--data', resolvedDataDir,
+      '--adapter-path', adapterOutputPath,
+      '--lora-rank', String(params.rank),
+      '--batch-size', String(params.batchSize),
+      '--iters', String(params.epochs * 100), // mlx-lm uses iterations not epochs
+      '--learning-rate', String(params.learningRate),
+      '--seed', String(this.config.seed),
       '--train',
-    ].join(' ');
+    ];
 
     tracer.log('dream', 'info', `Starting MLX LoRA training: ${adapterName}`, {
       model: this.config.baseModel,
@@ -241,7 +239,7 @@ export class MlxLoraTrainer {
     });
 
     try {
-      const { stdout, stderr } = await execAsync(cmd, {
+      const { stdout, stderr } = await execFileAsync(this.config.mlxLmBinary, args, {
         timeout: this.config.maxTrainingTimeSec * 1000,
         env: { ...process.env },
       });
@@ -318,7 +316,7 @@ export class MlxLoraTrainer {
    */
   async checkMlxLmAvailable(): Promise<boolean> {
     try {
-      await execAsync(`${this.config.mlxLmBinary} --help`, { timeout: 5000 });
+      await execFileAsync(this.config.mlxLmBinary, ['--help'], { timeout: 5000 });
       return true;
     } catch {
       return false;
