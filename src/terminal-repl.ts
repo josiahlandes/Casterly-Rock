@@ -401,15 +401,24 @@ async function main(): Promise<void> {
       // Wait for DeepLoop to finish all work
       const pollForCompletion = (): Promise<void> =>
         new Promise((resolve) => {
+          let checkCount = 0;
           const check = (): void => {
+            checkCount++;
             if (!hasActiveDeepWork()) {
-              resolve();
+              // Require at least 2 consecutive "no active work" checks
+              // to avoid exiting before the task is queued
+              if (checkCount >= 2) {
+                resolve();
+              } else {
+                setTimeout(check, 5000);
+              }
             } else {
-              setTimeout(check, 5000);
+              checkCount = 0; // Reset — work is active
+              setTimeout(check, 10000);
             }
           };
-          // Give time for the task to be queued and claimed
-          setTimeout(check, 10000);
+          // Give time for triage + task creation + DeepLoop claim
+          setTimeout(check, 30000);
         });
 
       await pollForCompletion();

@@ -356,7 +356,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       const deepProvider = useMlx
         ? new MlxProvider({
             baseUrl: mlxBaseUrl,
-            model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-MLX-4bit',
+            model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-A10B-4bit',
             timeoutMs: 1_800_000,
           })
         : new OllamaProvider({

@@ -27,7 +27,7 @@ PID_FILE="${HOME}/.casterly/mlx/server.pid"
 # ── Configuration ────────────────────────────────────────────────────────────
 # Override these via environment variables if needed.
 
-MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3.5-122B-MLX-4bit}"
+MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3.5-122B-A10B-4bit}"
 MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-8000}"
 
@@ -72,8 +72,8 @@ log_file() {
 }
 
 check_deps() {
-    if ! command -v vllm &>/dev/null; then
-        echo -e "${RED}Error: vllm not found. Install with: pip install vllm-mlx${NC}"
+    if ! command -v vllm-mlx &>/dev/null; then
+        echo -e "${RED}Error: vllm-mlx not found. Install with: uv tool install vllm-mlx${NC}"
         exit 1
     fi
 }
@@ -96,10 +96,13 @@ start_server() {
     echo -e "  Endpoint: ${GREEN}http://$MLX_HOST:$MLX_PORT${NC}"
 
     local CMD=(
-        vllm serve "$MLX_MODEL"
+        vllm-mlx serve "$MLX_MODEL"
         --host "$MLX_HOST"
         --port "$MLX_PORT"
-        --device mps
+        --enable-auto-tool-choice
+        --tool-call-parser qwen
+        --reasoning-parser qwen3
+        --max-tokens 16384
     )
 
     if [ "$use_spec" = true ]; then

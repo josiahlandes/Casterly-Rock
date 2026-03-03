@@ -100,7 +100,7 @@ ollama:
 # See scripts/mlx-server.sh for server launch.
 mlx:
   base_url: http://localhost:8000
-  model: mlx-community/Qwen3.5-122B-MLX-4bit
+  model: mlx-community/Qwen3.5-122B-A10B-4bit
   timeout_ms: 1800000          # 30 minutes — same budget as Ollama coding tasks
 
   # Speculative decoding: draft model generates candidate tokens, main model verifies.
