@@ -41,10 +41,30 @@ import {
   triggerFromMessage,
   type AutonomousController,
 } from '../autonomous/index.js';
+import { parseDualLoopRuntimeConfig } from '../dual-loop/config.js';
+import { ensureMlxServerReady } from '../providers/mlx-health.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
   workspacePath?: string | undefined;
+}
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readBooleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const normalized = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
 }
 
 /**
@@ -297,13 +317,27 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   // Parse voice_filter config from autonomous.yaml and create the filter.
   // The filter rewrites agent responses in Tyrion's voice before sending.
   const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
-  let voiceFilter: VoiceFilter;
-
+  let rawAutonomousYaml: Record<string, unknown> | undefined;
   try {
-    const rawYaml = yaml.parse(await readFile(autonomousConfigPath, 'utf-8'));
-    voiceFilter = createVoiceFilter(rawYaml.voice_filter as Record<string, unknown> | undefined);
-    safeLogger.info('Voice filter initialized', { enabled: rawYaml.voice_filter?.enabled !== false });
+    rawAutonomousYaml = yaml.parse(await readFile(autonomousConfigPath, 'utf-8')) as Record<string, unknown>;
   } catch {
+    rawAutonomousYaml = undefined;
+  }
+
+  let voiceFilter: VoiceFilter;
+  const voiceFilterSection = rawAutonomousYaml?.['voice_filter'];
+  if (
+    typeof voiceFilterSection === 'object'
+    && voiceFilterSection !== null
+    && !Array.isArray(voiceFilterSection)
+  ) {
+    const voiceFilterConfig = voiceFilterSection as Record<string, unknown>;
+    voiceFilter = createVoiceFilter(voiceFilterConfig);
+    safeLogger.info('Voice filter initialized', { enabled: voiceFilterConfig['enabled'] !== false });
+  } else if (rawAutonomousYaml) {
+    voiceFilter = createVoiceFilter(undefined);
+    safeLogger.info('Voice filter initialized', { enabled: false });
+  } else {
     voiceFilter = createVoiceFilter(undefined); // disabled fallback
     safeLogger.warn('Voice filter config not found, disabled');
   }
@@ -315,16 +349,8 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   // If the autonomous module is not configured, the controller stays undefined
   // and autonomous commands will respond with "not configured".
   let autonomousController: AutonomousController | undefined;
-
-  // Read raw YAML for the dual_loop.enabled flag
-  let dualLoopEnabled = false;
-  try {
-    const rawAutoYaml = yaml.parse(await readFile(autonomousConfigPath, 'utf-8')) as Record<string, unknown>;
-    const dualLoopSection = rawAutoYaml['dual_loop'] as Record<string, unknown> | undefined;
-    dualLoopEnabled = dualLoopSection?.['enabled'] === true;
-  } catch {
-    // If config can't be read, fall through to standard path
-  }
+  const dualLoopRuntime = parseDualLoopRuntimeConfig(rawAutonomousYaml);
+  const dualLoopEnabled = dualLoopRuntime.enabled;
 
   try {
     if (dualLoopEnabled) {
@@ -349,14 +375,40 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         think: false, // Disable thinking for triage/review — we need plain JSON output
       });
 
-      // DeepLoop provider: use MLX if available, fall back to Ollama.
+      // DeepLoop provider: use MLX when configured, otherwise Ollama.
       // MLX achieves 50-87% faster inference on Apple Silicon (Tier 2, Item 5).
       const mlxBaseUrl = process.env['MLX_BASE_URL'] || 'http://localhost:8000';
       const useMlx = process.env['CASTERLY_DEEP_PROVIDER'] === 'mlx';
+      if (useMlx) {
+        const readyRetries = readPositiveIntEnv('CASTERLY_MLX_READY_RETRIES', 20);
+        const retryDelayMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_DELAY_MS', 3000);
+        const retryTimeoutMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_TIMEOUT_MS', 5000);
+        const autoStart = readBooleanEnv('CASTERLY_MLX_AUTOSTART', true);
+        const startWithSpec = readBooleanEnv('CASTERLY_MLX_START_WITH_SPEC', false);
+
+        safeLogger.info('Ensuring MLX server readiness', {
+          baseUrl: mlxBaseUrl,
+          retries: readyRetries,
+          retryDelayMs,
+          retryTimeoutMs,
+          autoStart,
+          startWithSpec,
+        });
+
+        await ensureMlxServerReady(mlxBaseUrl, {
+          projectRoot: process.cwd(),
+          maxAttempts: readyRetries,
+          delayMs: retryDelayMs,
+          timeoutMs: retryTimeoutMs,
+          autoStart,
+          startWithSpec,
+        });
+      }
+
       const deepProvider = useMlx
         ? new MlxProvider({
             baseUrl: mlxBaseUrl,
-            model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-A10B-4bit',
+            model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit',
             timeoutMs: 1_800_000,
           })
         : new OllamaProvider({
@@ -400,6 +452,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         eventBus,
         goalStack,
         voiceFilter,
+        coordinatorConfig: dualLoopRuntime.coordinatorConfig,
         sendMessageFn: sendMessage,
         toolkit,
       });

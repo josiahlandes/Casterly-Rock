@@ -419,4 +419,30 @@ describe('MlxProvider', () => {
     expect(body.temperature).toBe(0.7);
     expect(body.max_tokens).toBe(2048);
   });
+
+  it('maps providerOptions.num_ctx to truncate_prompt_tokens', async () => {
+    fetchSpy.mockResolvedValueOnce(mockOpenAIResponse({ content: 'OK' }));
+
+    const provider = new MlxProvider({ baseUrl: 'http://localhost:8000', model: 'test' });
+    await provider.generateWithTools(
+      makeRequest({ providerOptions: { num_ctx: 24576 } }),
+      [],
+    );
+
+    const body = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body.truncate_prompt_tokens).toBe(24576);
+  });
+
+  it('omits truncate_prompt_tokens when providerOptions.num_ctx is invalid', async () => {
+    fetchSpy.mockResolvedValueOnce(mockOpenAIResponse({ content: 'OK' }));
+
+    const provider = new MlxProvider({ baseUrl: 'http://localhost:8000', model: 'test' });
+    await provider.generateWithTools(
+      makeRequest({ providerOptions: { num_ctx: -1 } }),
+      [],
+    );
+
+    const body = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body.truncate_prompt_tokens).toBeUndefined();
+  });
 });

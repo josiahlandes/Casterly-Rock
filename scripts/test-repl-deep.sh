@@ -1,14 +1,40 @@
 #!/bin/bash
 # Test harness for DeepLoop tests — waits longer, shows more detail
-# Usage: ./scripts/test-repl-deep.sh "message"
+# Usage:
+#   ./scripts/test-repl-deep.sh "message"
+#   ./scripts/test-repl-deep.sh --prompt-file workspace/game-spec.md
 
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 \"message\" | --prompt-file <path>"
+  exit 1
+fi
+
+MODE="message"
 MSG="$1"
+PROMPT_FILE=""
 
-echo "━━━ DEEP TEST: $MSG ━━━"
+if [ "$1" = "--prompt-file" ]; then
+  if [ $# -lt 2 ]; then
+    echo "Usage: $0 --prompt-file <path>"
+    exit 1
+  fi
+  MODE="prompt-file"
+  PROMPT_FILE="$2"
+  MSG="prompt-file:$PROMPT_FILE"
+fi
+
+PREVIEW=$(echo "$MSG" | tr '\n' ' ' | cut -c1-180)
+echo "━━━ DEEP TEST: $PREVIEW ━━━"
 echo ""
 
 # Run REPL with debug — DeepLoop needs more time
-OUTPUT=$(echo "$MSG" | npx tsx src/terminal-repl.ts --debug 2>&1)
+if [ "$MODE" = "prompt-file" ]; then
+  OUTPUT=$(npx tsx src/terminal-repl.ts --debug --prompt-file "$PROMPT_FILE" 2>&1)
+else
+  OUTPUT=$(echo "$MSG" | npx tsx src/terminal-repl.ts --debug 2>&1)
+fi
 
 # Extract key info
 CLASSIFICATION=$(echo "$OUTPUT" | grep -o 'Triage result: [a-z]*' | head -1)

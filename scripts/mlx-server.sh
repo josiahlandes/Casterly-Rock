@@ -27,7 +27,7 @@ PID_FILE="${HOME}/.casterly/mlx/server.pid"
 # ── Configuration ────────────────────────────────────────────────────────────
 # Override these via environment variables if needed.
 
-MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3.5-122B-A10B-4bit}"
+MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit}"
 MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-8000}"
 
@@ -78,6 +78,73 @@ check_deps() {
     fi
 }
 
+supports_speculative_decoding() {
+    local help_text
+    help_text="$(vllm-mlx serve --help 2>&1 || true)"
+    [[ "$help_text" == *"--speculative-model"* ]] && [[ "$help_text" == *"--num-speculative-tokens"* ]]
+}
+
+validate_model_compatibility() {
+    if ! command -v python3 &>/dev/null; then
+        echo -e "${YELLOW}Warning: python3 not found; skipping model compatibility check.${NC}"
+        return 0
+    fi
+
+    local config_json=""
+
+    # Local model directory with config.json
+    if [ -f "$MLX_MODEL/config.json" ]; then
+        config_json="$(cat "$MLX_MODEL/config.json")"
+    # HuggingFace repo id (query metadata API; returns JSON reliably)
+    elif [[ "$MLX_MODEL" == */* ]]; then
+        config_json="$(curl -fsSL "https://huggingface.co/api/models/$MLX_MODEL" 2>/dev/null || true)"
+    else
+        echo -e "${YELLOW}Warning: Unknown model format; skipping compatibility check: $MLX_MODEL${NC}"
+        return 0
+    fi
+
+    if [ -z "$config_json" ]; then
+        echo -e "${YELLOW}Warning: Could not fetch model config; skipping compatibility check.${NC}"
+        return 0
+    fi
+
+    if ! MODEL_CONFIG_JSON="$config_json" python3 - <<'PY'
+import json
+import os
+import sys
+
+try:
+    raw = json.loads(os.environ.get("MODEL_CONFIG_JSON", ""))
+except Exception as exc:
+    print(f"invalid config JSON: {exc}", file=sys.stderr)
+    sys.exit(3)
+
+if isinstance(raw, dict) and isinstance(raw.get("config"), dict):
+    cfg = raw["config"]
+else:
+    cfg = raw
+
+vision = cfg.get("vision_config") is not None
+arch = cfg.get("architectures") or []
+cond_gen = any(isinstance(a, str) and "ConditionalGeneration" in a for a in arch)
+
+if vision or cond_gen:
+    reasons = []
+    if vision:
+        reasons.append("vision_config present")
+    if cond_gen:
+        reasons.append("ConditionalGeneration architecture")
+    print(", ".join(reasons), file=sys.stderr)
+    sys.exit(2)
+PY
+    then
+        echo -e "${RED}Error: Model appears multimodal/incompatible for text-only vllm-mlx.${NC}"
+        echo -e "  model: ${YELLOW}$MLX_MODEL${NC}"
+        echo -e "  hint: use a text-only model (e.g. mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit)"
+        return 1
+    fi
+}
+
 start_server() {
     local use_spec=false
     if [[ "${1:-}" == "--spec" ]]; then
@@ -90,6 +157,12 @@ start_server() {
     fi
 
     check_deps
+    validate_model_compatibility || exit 1
+
+    if [ "$use_spec" = true ] && ! supports_speculative_decoding; then
+        echo -e "${YELLOW}Warning: Installed vllm-mlx does not support speculative flags; starting without --spec.${NC}"
+        use_spec=false
+    fi
 
     echo -e "${BLUE}Starting MLX inference server...${NC}"
     echo -e "  Model: ${GREEN}$MLX_MODEL${NC}"

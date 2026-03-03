@@ -116,3 +116,8 @@ export type {
   DeepLoopEventConfig,
   IdleCheckResult,
 } from './deep-loop-events.js';
+
+// ── Runtime Config ───────────────────────────────────────────────────────────
+
+export { parseDualLoopRuntimeConfig } from './config.js';
+export type { DualLoopRuntimeConfig } from './config.js';

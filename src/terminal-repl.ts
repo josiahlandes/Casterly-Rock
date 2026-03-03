@@ -22,6 +22,8 @@ import yaml from 'yaml';
 import { loadConfig } from './config/index.js';
 import { buildProviders } from './providers/index.js';
 import { OllamaProvider } from './providers/ollama.js';
+import { MlxProvider } from './providers/mlx.js';
+import { ensureMlxServerReady } from './providers/mlx-health.js';
 import { ConcurrentProvider } from './providers/concurrent.js';
 import { createSkillRegistry } from './skills/index.js';
 import {
@@ -45,7 +47,7 @@ import {
 import { createModeManager } from './coding/modes/index.js';
 import { processChatMessage, type ChatInput, type ProcessDependencies, type ProcessResult } from './pipeline/index.js';
 import { wrapError, formatErrorForUser } from './errors/index.js';
-import { createDualLoopController } from './dual-loop/index.js';
+import { createDualLoopController, parseDualLoopRuntimeConfig } from './dual-loop/index.js';
 import { EventBus } from './autonomous/events.js';
 import { GoalStack } from './autonomous/goal-stack.js';
 import { createVoiceFilter } from './imessage/voice-filter.js';
@@ -109,6 +111,34 @@ EXAMPLES:
 
 let debugMode = args.values.debug ?? false;
 let dualLoopActive = false;
+
+function getDeepProviderLabel(): string {
+  const useMlx = process.env['CASTERLY_DEEP_PROVIDER'] === 'mlx';
+  if (!useMlx) {
+    return 'ollama:qwen3.5:122b';
+  }
+
+  const mlxModel = process.env['MLX_MODEL'] || 'mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit';
+  return `mlx:${mlxModel}`;
+}
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readBooleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const normalized = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Output Helpers
@@ -205,8 +235,9 @@ function handleSlashCommand(
 
   if (cmd === '/model') {
     if (dualLoopActive) {
+      const deepLabel = getDeepProviderLabel();
       console.log('\x1b[33mMode: dual-loop\x1b[0m');
-      console.log('\x1b[33mDeep: qwen3.5:122b (reasoning + coding)\x1b[0m');
+      console.log(`\x1b[33mDeep: ${deepLabel} (reasoning + coding)\x1b[0m`);
       console.log('\x1b[33mFast: qwen3.5:35b-a3b (triage + review)\x1b[0m');
     } else {
       console.log(`\x1b[33mMode: standard pipeline\x1b[0m`);
@@ -273,11 +304,39 @@ async function main(): Promise<void> {
       timeoutMs: 60_000,
       think: false, // Disable thinking for triage/review — we need plain JSON output
     });
-    const deepProvider = new OllamaProvider({
-      baseUrl,
-      model: 'qwen3.5:122b',
-      timeoutMs: 1_800_000, // 30 min — coding tasks with 131K context can be slow
-    });
+
+    // DeepLoop provider: use MLX when configured, otherwise default to Ollama.
+    const mlxBaseUrl = process.env['MLX_BASE_URL'] || 'http://localhost:8000';
+    const useMlx = process.env['CASTERLY_DEEP_PROVIDER'] === 'mlx';
+    if (useMlx) {
+      const readyRetries = readPositiveIntEnv('CASTERLY_MLX_READY_RETRIES', 20);
+      const retryDelayMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_DELAY_MS', 3000);
+      const retryTimeoutMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_TIMEOUT_MS', 5000);
+      const autoStart = readBooleanEnv('CASTERLY_MLX_AUTOSTART', true);
+      const startWithSpec = readBooleanEnv('CASTERLY_MLX_START_WITH_SPEC', false);
+
+      console.log(`\x1b[90mEnsuring MLX server (${readyRetries} retries, ${retryDelayMs}ms delay)...\x1b[0m`);
+      await ensureMlxServerReady(mlxBaseUrl, {
+        projectRoot: process.cwd(),
+        maxAttempts: readyRetries,
+        delayMs: retryDelayMs,
+        timeoutMs: retryTimeoutMs,
+        autoStart,
+        startWithSpec,
+      });
+    }
+
+    const deepProvider = useMlx
+      ? new MlxProvider({
+          baseUrl: mlxBaseUrl,
+          model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit',
+          timeoutMs: 1_800_000,
+        })
+      : new OllamaProvider({
+          baseUrl,
+          model: 'qwen3.5:122b',
+          timeoutMs: 1_800_000, // 30 min — coding tasks with 131K context can be slow
+        });
 
     const concurrentProvider = new ConcurrentProvider(
       new Map([
@@ -289,14 +348,25 @@ async function main(): Promise<void> {
     const eventBus = new EventBus({ maxQueueSize: 100, logEvents: true });
     const goalStack = new GoalStack();
 
+    const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
+    let rawAutonomousYaml: Record<string, unknown> | undefined;
+    try {
+      rawAutonomousYaml = yaml.parse(await readFile(autonomousConfigPath, 'utf-8')) as Record<string, unknown>;
+    } catch {
+      rawAutonomousYaml = undefined;
+    }
+
+    const dualLoopRuntime = parseDualLoopRuntimeConfig(rawAutonomousYaml);
+
     // Load voice filter config from autonomous.yaml (same as daemon)
     let voiceFilter = createVoiceFilter(undefined);
-    try {
-      const autonomousConfigPath = join(process.cwd(), 'config', 'autonomous.yaml');
-      const rawYaml = yaml.parse(await readFile(autonomousConfigPath, 'utf-8'));
-      voiceFilter = createVoiceFilter(rawYaml.voice_filter as Record<string, unknown> | undefined);
-    } catch {
-      // Disabled fallback
+    const voiceFilterSection = rawAutonomousYaml?.['voice_filter'];
+    if (
+      typeof voiceFilterSection === 'object'
+      && voiceFilterSection !== null
+      && !Array.isArray(voiceFilterSection)
+    ) {
+      voiceFilter = createVoiceFilter(voiceFilterSection as Record<string, unknown>);
     }
 
     // Track pending messages for piped-input shutdown
@@ -309,16 +379,23 @@ async function main(): Promise<void> {
       output: process.stdout,
     });
 
-    // Check if DeepLoop still has work to do by inspecting the status report
-    const hasActiveDeepWork = (): boolean => {
-      if (!controller) return false;
+    // Track deep-work at startup so piped/prompt-file mode can ignore stale
+    // tasks from prior sessions and exit once newly created work is done.
+    let baselineDeepWorkCount = 0;
+
+    const getDeepWorkCount = (): number => {
+      if (!controller) return 0;
       const report = controller.getStatusReport('status');
       // Parse "Tasks: N active, M queued" from the status line
       const activeMatch = report.match(/(\d+)\s*active/);
       const queuedMatch = report.match(/(\d+)\s*queued/);
       const active = activeMatch ? parseInt(activeMatch[1]!, 10) : 0;
       const queued = queuedMatch ? parseInt(queuedMatch[1]!, 10) : 0;
-      return (active + queued) > 0;
+      return active + queued;
+    };
+
+    const hasActiveDeepWork = (): boolean => {
+      return getDeepWorkCount() > baselineDeepWorkCount;
     };
 
     // deliverFn prints to terminal instead of sending iMessage
@@ -366,14 +443,17 @@ async function main(): Promise<void> {
       eventBus,
       goalStack,
       voiceFilter,
+      coordinatorConfig: dualLoopRuntime.coordinatorConfig,
       sendMessageFn,
       toolkit,
     });
 
     controller.start();
+    baselineDeepWorkCount = getDeepWorkCount();
 
+    const deepModelLabel = useMlx ? `mlx:${deepProvider.model}` : 'qwen3.5:122b';
     console.log('\x1b[90mMode: dual-loop\x1b[0m');
-    console.log('\x1b[90mDeep: qwen3.5:122b (reasoning + coding)\x1b[0m');
+    console.log(`\x1b[90mDeep: ${deepModelLabel} (reasoning + coding)\x1b[0m`);
     console.log('\x1b[90mFast: qwen3.5:35b-a3b (triage + review)\x1b[0m');
     console.log(`\x1b[90mDebug: ${debugMode ? 'on' : 'off'}\x1b[0m`);
     console.log(`\x1b[90mProject: ${projectRoot}\x1b[0m`);

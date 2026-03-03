@@ -80,6 +80,7 @@ interface OpenAIChatRequest {
   tool_choice?: 'auto' | 'none';
   temperature?: number;
   max_tokens?: number;
+  truncate_prompt_tokens?: number;
   stream: false;
 }
 
@@ -250,8 +251,15 @@ export class MlxProvider implements LlmProvider {
       }
 
       // ── Build request ───────────────────────────────────────────────
-      // providerOptions for MLX are pass-through; num_ctx is not relevant
-      // (context length is set at server launch time for vllm-mlx).
+      // vllm-mlx accepts truncate_prompt_tokens on each request.
+      // Map Ollama-style num_ctx into that field so dual-loop context tiers
+      // continue to work when DeepLoop runs on MLX.
+      const rawProviderOptions = (request.providerOptions ?? {}) as Record<string, unknown>;
+      const rawNumCtx = rawProviderOptions['num_ctx'];
+      const truncatePromptTokens =
+        typeof rawNumCtx === 'number' && Number.isFinite(rawNumCtx) && rawNumCtx > 0
+          ? Math.floor(rawNumCtx)
+          : undefined;
 
       const chatRequest: OpenAIChatRequest = {
         model: this.model,
@@ -261,6 +269,9 @@ export class MlxProvider implements LlmProvider {
           : {}),
         temperature: request.temperature ?? 0.7,
         max_tokens: request.maxTokens ?? 2048,
+        ...(truncatePromptTokens !== undefined
+          ? { truncate_prompt_tokens: truncatePromptTokens }
+          : {}),
         stream: false,
       };
 
