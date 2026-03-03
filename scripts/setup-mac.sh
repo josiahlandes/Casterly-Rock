@@ -196,7 +196,21 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Step 10: macOS permissions reminder
+# Step 10: Configure Ollama KV cache quantization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+info "Configuring Ollama KV cache quantization..."
+if grep -q "OLLAMA_KV_CACHE_TYPE" "$SHELL_RC" 2>/dev/null; then
+    success "OLLAMA_KV_CACHE_TYPE already set"
+else
+    echo "" >> "$SHELL_RC"
+    echo "# Ollama KV cache quantization (~50% memory reduction, negligible quality impact)" >> "$SHELL_RC"
+    echo "export OLLAMA_KV_CACHE_TYPE=q8_0" >> "$SHELL_RC"
+    success "Set OLLAMA_KV_CACHE_TYPE=q8_0 in $SHELL_RC"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 11: macOS permissions reminder
 # ═══════════════════════════════════════════════════════════════════════════════
 
 info "macOS permissions (manual steps)..."

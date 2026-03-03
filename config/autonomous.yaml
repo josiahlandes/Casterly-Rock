@@ -158,6 +158,16 @@ dual_loop:
     preempt_check_interval_turns: 5
     idle_sleep_ms: 10000
 
+  # Verification cascade: multi-pass review for high-stakes tasks.
+  # Tasks with 3+ files or 3+ plan steps get multiple review passes
+  # with different focuses (correctness → security/robustness).
+  # See docs/roadmap.md Tier 2, Item 7.
+  verification_cascade:
+    # Minimum file count to trigger cascade (3+ files = high-stakes)
+    min_files_for_cascade: 3
+    # Minimum plan steps to trigger cascade
+    min_steps_for_cascade: 3
+
   # TaskBoard persistence
   task_board:
     path: ~/.casterly/taskboard.json
@@ -174,12 +184,14 @@ dual_loop:
     deep:
       compact: 8192
       standard: 24576
-      extended: 131072
-      context_pressure_warning_threshold: 0.80
+      extended: 262144
+      context_pressure_soft_threshold: 0.70     # Inject budget warning to model
+      context_pressure_warning_threshold: 0.80   # Log warning for dream cycle analysis
+      context_pressure_action_threshold: 0.85    # Auto-compress prompt
     coder:
       compact: 8192
-      standard: 16384
-      extended: 65536
+      standard: 65536
+      extended: 262144
       response_buffer_tokens: 2000
 
   # Coordinator settings
@@ -258,7 +270,7 @@ memory_tiers:
   warm_tier_max_tokens: 10000
 
   # Overall context window size in tokens
-  context_window_tokens: 131072
+  context_window_tokens: 262144
 
   # ─────────────────────────────────────────────────────────────────────────────
   # COOL/COLD STORAGE
@@ -535,6 +547,74 @@ advanced_self_improvement:
 
     # Number of benchmark tasks per evaluation
     eval_sample_size: 10
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # DISENTANGLED ADAPTERS (reasoning vs tool-calling)
+  # Separate adapters avoid gradient conflicts between objectives.
+  # See docs/roadmap.md Tier 3, Item 9.
+  # ─────────────────────────────────────────────────────────────────────────────
+  disentangled_adapters:
+    # Enable separate reasoning/tools adapters
+    enabled: true
+
+    # Registry path for disentangled assignments
+    registry_path: ~/.casterly/adapters/disentangled.json
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SPIN SELF-PLAY (Self-Play Fine-Tuning for continuous improvement)
+  # Model plays against its previous iteration using DPO loss.
+  # See docs/roadmap.md Tier 3, Item 10.
+  # ─────────────────────────────────────────────────────────────────────────────
+  spin:
+    # Path to store SPIN state and iteration records
+    spin_path: ~/.casterly/spin
+
+    # Maximum SPIN iterations per dream cycle
+    max_iterations_per_cycle: 2
+
+    # Minimum benchmark tasks required to run SPIN
+    min_benchmarks_required: 5
+
+    # Number of prompts per SPIN iteration
+    prompts_per_iteration: 20
+
+    # P-value threshold for statistical significance (Wilcoxon test)
+    significance_threshold: 0.05
+
+    # Minimum mean score improvement (practical significance)
+    min_score_improvement: 0.02
+
+    # DPO training parameters for SPIN
+    dpo:
+      rank: 16
+      alpha: 32
+      target_modules:
+        - q_proj
+        - v_proj
+      learning_rate: 0.00005
+      epochs: 2
+      batch_size: 4
+      format: preference_dpo
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # MLX LORA TRAINING (QLoRA via mlx-lm on Apple Silicon)
+  # See docs/roadmap.md Tier 3, Item 8.
+  # ─────────────────────────────────────────────────────────────────────────────
+  mlx_training:
+    # Base model for FastLoop fine-tuning
+    base_model: mlx-community/Qwen3.5-3B-A3B-MLX-4bit
+
+    # Path to mlx-lm binary
+    mlx_lm_binary: mlx_lm.lora
+
+    # Maximum training time in seconds (1 hour)
+    max_training_time_sec: 3600
+
+    # Minimum examples required to start training
+    min_examples_for_training: 20
+
+    # Seed for reproducibility
+    seed: 42
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COMMUNICATION (proactive user messaging via MessagePolicy + delivery)

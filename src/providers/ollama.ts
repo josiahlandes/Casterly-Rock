@@ -57,6 +57,8 @@ interface OllamaChatRequest {
   keep_alive?: number | string;
   /** Enable/disable thinking for thinking models (Qwen3, DeepSeek-R1, etc.) */
   think?: boolean;
+  /** Structured output format: 'json' for any JSON, or a JSON Schema object for constrained output. */
+  format?: 'json' | Record<string, unknown>;
   options?: {
     temperature?: number;
     num_predict?: number;
@@ -253,12 +255,17 @@ export class OllamaProvider implements LlmProvider {
         }
       }
 
-      // Support per-request think override via providerOptions.think
-      // (extracted here because `think` is a top-level Ollama field, not inside `options`)
-      const { think: rawRequestThink, ...otherProviderOptions } =
+      // Extract top-level Ollama fields from providerOptions.
+      // `think` and `format` are top-level Ollama fields, not inside `options`.
+      const { think: rawRequestThink, format: rawRequestFormat, ...otherProviderOptions } =
         (request.providerOptions ?? {}) as Record<string, unknown>;
       const requestThink = typeof rawRequestThink === 'boolean' ? rawRequestThink : undefined;
       const effectiveThink = requestThink !== undefined ? requestThink : this.think;
+
+      // format: 'json' for any JSON, or a JSON Schema object for constrained output
+      const effectiveFormat = (rawRequestFormat === 'json' || (typeof rawRequestFormat === 'object' && rawRequestFormat !== null))
+        ? rawRequestFormat as 'json' | Record<string, unknown>
+        : undefined;
 
       const chatRequest: OllamaChatRequest = {
         model: this.model,
@@ -267,6 +274,7 @@ export class OllamaProvider implements LlmProvider {
         stream: false,
         keep_alive: this.keepAlive,
         ...(effectiveThink !== undefined ? { think: effectiveThink } : {}),
+        ...(effectiveFormat !== undefined ? { format: effectiveFormat } : {}),
         options: {
           temperature: request.temperature ?? 0.7,
           num_predict: request.maxTokens ?? 2048,

@@ -70,6 +70,9 @@ import { createChallengeEvaluator, type ChallengeEvaluator } from './dream/chall
 import { createPromptEvolution, type PromptEvolution } from './dream/prompt-evolution.js';
 import { createTrainingExtractor, type TrainingExtractor } from './dream/training-extractor.js';
 import { createLoraTrainer, type LoraTrainer } from './dream/lora-trainer.js';
+import { createMlxLoraTrainer, type MlxLoraTrainer } from './dream/mlx-lora-trainer.js';
+import { createAdapterManager, type AdapterManager } from './dream/adapter-manager.js';
+import { createSpinTrainer, type SpinTrainer } from './dream/spin-trainer.js';
 
 // Advanced Memory: Zettelkasten Link Network (A-MEM)
 import { createLinkNetwork, type LinkNetwork } from './memory/link-network.js';
@@ -221,6 +224,9 @@ export class AutonomousLoop {
   private promptEvolution: PromptEvolution | null = null;
   private trainingExtractor: TrainingExtractor | null = null;
   private loraTrainer: LoraTrainer | null = null;
+  private mlxLoraTrainer: MlxLoraTrainer | null = null;
+  private adapterManager: AdapterManager | null = null;
+  private spinTrainer: SpinTrainer | null = null;
 
   // Advanced Memory: Zettelkasten Link Network (A-MEM)
   private linkNetwork: LinkNetwork;
@@ -343,6 +349,11 @@ export class AutonomousLoop {
       this.promptEvolution = createPromptEvolution();
       this.trainingExtractor = createTrainingExtractor();
       this.loraTrainer = createLoraTrainer();
+
+      // Tier 3 Items 8-10: LoRA training, disentangled adapters, SPIN
+      this.mlxLoraTrainer = createMlxLoraTrainer();
+      this.adapterManager = createAdapterManager();
+      this.spinTrainer = createSpinTrainer();
     }
 
     // Advanced Memory: Zettelkasten Link Network + Memory Evolution (A-MEM)
@@ -491,6 +502,8 @@ export class AutonomousLoop {
     if (this.challengeEvaluator) ops.push(this.challengeEvaluator.load());
     if (this.promptEvolution) ops.push(this.promptEvolution.load());
     if (this.loraTrainer) ops.push(this.loraTrainer.load());
+    if (this.adapterManager) ops.push(this.adapterManager.load());
+    if (this.spinTrainer) ops.push(this.spinTrainer.load());
     return ops;
   }
 
@@ -527,6 +540,8 @@ export class AutonomousLoop {
     if (this.challengeEvaluator) ops.push(this.challengeEvaluator.save());
     if (this.promptEvolution) ops.push(this.promptEvolution.save());
     if (this.loraTrainer) ops.push(this.loraTrainer.save());
+    if (this.adapterManager) ops.push(this.adapterManager.save());
+    if (this.spinTrainer) ops.push(this.spinTrainer.save());
     return ops;
   }
 
@@ -816,6 +831,8 @@ export class AutonomousLoop {
         ...(this.promptEvolution ? { promptEvolution: this.promptEvolution } : {}),
         ...(this.trainingExtractor ? { trainingExtractor: this.trainingExtractor } : {}),
         ...(this.loraTrainer ? { loraTrainer: this.loraTrainer } : {}),
+        ...(this.adapterManager ? { adapterManager: this.adapterManager } : {}),
+        ...(this.spinTrainer ? { spinTrainer: this.spinTrainer } : {}),
         // Communication
         ...(this.messagePolicy ? { messagePolicy: this.messagePolicy } : {}),
         ...(this.messageDelivery ? { messageDelivery: this.messageDelivery } : {}),
@@ -1014,6 +1031,9 @@ export class AutonomousLoop {
         this.promptEvolution ?? undefined,
         this.trainingExtractor ?? undefined,
         this.loraTrainer ?? undefined,
+        this.mlxLoraTrainer ?? undefined,
+        this.adapterManager ?? undefined,
+        this.spinTrainer ?? undefined,
         this.journal,
         this.linkNetwork,
         this.audnConsolidator,

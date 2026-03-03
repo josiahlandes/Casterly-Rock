@@ -88,8 +88,8 @@ const DEFAULT_CONFIG: CoordinatorConfig = {
   taskBoard: {},
   contextTiers: {
     fast: { compact: 4096, standard: 12288, extended: 24576, reviewLargeThresholdLines: 150 },
-    deep: { compact: 8192, standard: 24576, extended: 131072, contextPressureWarningThreshold: 0.80 },
-    coder: { compact: 8192, standard: 16384, extended: 65536, responseBufferTokens: 2000 },
+    deep: { compact: 8192, standard: 24576, extended: 262144, contextPressureSoftThreshold: 0.70, contextPressureWarningThreshold: 0.80, contextPressureActionThreshold: 0.85 },
+    coder: { compact: 8192, standard: 65536, extended: 262144, responseBufferTokens: 2000 },
   },
   maxRestartAttempts: 3,
   restartDelayMs: 5000,

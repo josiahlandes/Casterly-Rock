@@ -331,6 +331,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       // ── Dual-loop mode ──────────────────────────────────────────────
       const { createDualLoopController } = await import('../dual-loop/index.js');
       const { OllamaProvider } = await import('../providers/ollama.js');
+      const { MlxProvider } = await import('../providers/mlx.js');
       const { ConcurrentProvider } = await import('../providers/concurrent.js');
       const { EventBus } = await import('../autonomous/events.js');
       const { GoalStack } = await import('../autonomous/goal-stack.js');
@@ -347,11 +348,22 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         timeoutMs: 60_000,
         think: false, // Disable thinking for triage/review — we need plain JSON output
       });
-      const deepProvider = new OllamaProvider({
-        baseUrl,
-        model: 'qwen3.5:122b',
-        timeoutMs: 1_800_000, // 30 min — coding tasks with 131K context can be slow
-      });
+
+      // DeepLoop provider: use MLX if available, fall back to Ollama.
+      // MLX achieves 50-87% faster inference on Apple Silicon (Tier 2, Item 5).
+      const mlxBaseUrl = process.env['MLX_BASE_URL'] || 'http://localhost:8000';
+      const useMlx = process.env['CASTERLY_DEEP_PROVIDER'] === 'mlx';
+      const deepProvider = useMlx
+        ? new MlxProvider({
+            baseUrl: mlxBaseUrl,
+            model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-MLX-4bit',
+            timeoutMs: 1_800_000,
+          })
+        : new OllamaProvider({
+            baseUrl,
+            model: 'qwen3.5:122b',
+            timeoutMs: 1_800_000, // 30 min — coding tasks with 262K context
+          });
 
       const concurrentProvider = new ConcurrentProvider(
         new Map([
@@ -396,7 +408,8 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
       safeLogger.info('Dual-loop controller initialized', {
         fastModel: 'qwen3.5:35b-a3b',
-        deepModel: 'qwen3.5:122b',
+        deepModel: useMlx ? 'mlx:' + deepProvider.model : 'qwen3.5:122b',
+        deepProvider: useMlx ? 'mlx' : 'ollama',
       });
     } else {
       // ── Standard single-loop mode ───────────────────────────────────

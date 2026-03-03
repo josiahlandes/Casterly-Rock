@@ -76,6 +76,9 @@ export interface LoraAdapter {
 
   /** Notes about why this adapter was created/retired */
   notes: string;
+
+  /** Adapter category for disentangled training (reasoning vs tools) */
+  category?: 'reasoning' | 'tools' | undefined;
 }
 
 /**

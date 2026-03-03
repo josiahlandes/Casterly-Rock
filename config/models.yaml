@@ -3,7 +3,7 @@
 #
 # All models run locally via Ollama. No cloud APIs.
 # Two-model architecture: 122b (81 GB) + 35b-a3b (24 GB) = ~105 GB of 128 GB.
-# KV cache at 131K context adds ~8-10 GB → ~117 GB total, 11 GB headroom.
+# KV cache at 262K context with q8_0 adds ~8-10 GB → ~115 GB total, ~13 GB headroom.
 
 models:
   # Coding tasks: code generation, refactoring, bug fixes
@@ -11,7 +11,7 @@ models:
   coding:
     provider: ollama
     model: qwen3.5:122b
-    context_length: 131072
+    context_length: 262144
     temperature: 0.1  # Low for code accuracy
     keep_alive: -1    # Never unload (always-hot)
     fallback: null  # This is the primary model
@@ -20,7 +20,7 @@ models:
   primary:
     provider: ollama
     model: qwen3.5:122b
-    context_length: 131072
+    context_length: 262144
     temperature: 0.6  # Balanced for tool use + reasoning
     keep_alive: -1    # Never unload (always-hot)
     fallback: null  # No fallback - this is the fallback
@@ -29,7 +29,7 @@ models:
   autonomous:
     provider: ollama
     model: qwen3.5:122b
-    context_length: 131072
+    context_length: 262144
     temperature: 0.2  # Slightly higher for exploration
     keep_alive: -1    # Never unload (always-hot)
     fallback: null
@@ -86,3 +86,26 @@ ollama:
   timeout_ms: 600000         # 10 minutes — default for all tasks
   coding_timeout_ms: 1800000 # 30 minutes — coding tasks (multi-file generation can be slow at 131K context)
   keep_alive: -1              # Never unload — both models stay hot
+
+  # KV cache quantization: set via OLLAMA_KV_CACHE_TYPE env var (not an Ollama API param).
+  # q8_0 = ~50% KV memory reduction with negligible quality loss (< 0.1 perplexity).
+  # q4_0 = ~75% reduction but may degrade quality on long contexts.
+  # Set by scripts/setup-mac.sh and scripts/tyrion-daemon.sh.
+  # Reference: KVQuant (Hooper et al., 2024)
+  kv_cache_type: q8_0
+
+# MLX settings (Apple Silicon-native inference via vllm-mlx)
+# Achieves 50-87% faster inference than Ollama for large dense models.
+# Activate by setting CASTERLY_DEEP_PROVIDER=mlx before starting the daemon.
+# See scripts/mlx-server.sh for server launch.
+mlx:
+  base_url: http://localhost:8000
+  model: mlx-community/Qwen3.5-122B-MLX-4bit
+  timeout_ms: 1800000          # 30 minutes — same budget as Ollama coding tasks
+
+  # Speculative decoding: draft model generates candidate tokens, main model verifies.
+  # 1.5-2x speedup with zero quality loss (mathematically identical output distribution).
+  # Enable by passing --spec to scripts/mlx-server.sh.
+  speculative_decoding:
+    draft_model: mlx-community/Qwen3.5-0.5B-MLX-4bit
+    num_speculative_tokens: 5  # Tokens per speculation step (higher = faster but lower acceptance rate)

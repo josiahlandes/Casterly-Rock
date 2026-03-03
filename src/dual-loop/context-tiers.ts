@@ -51,6 +51,10 @@ export interface FastTierConfig extends ContextTierConfig {
 export interface DeepTierConfig extends ContextTierConfig {
   /** Log a warning when token usage exceeds this fraction of num_ctx */
   contextPressureWarningThreshold: number;
+  /** Inject a context budget warning into the prompt at this threshold (default: 0.70) */
+  contextPressureSoftThreshold: number;
+  /** Auto-compress/summarize oldest turns at this threshold (default: 0.85) */
+  contextPressureActionThreshold: number;
 }
 
 /**
@@ -98,13 +102,15 @@ export const DEFAULT_CONTEXT_TIERS: ContextTiersConfig = {
   deep: {
     compact: 8192,
     standard: 24576,
-    extended: 131072,
+    extended: 262144,
     contextPressureWarningThreshold: 0.80,
+    contextPressureSoftThreshold: 0.70,
+    contextPressureActionThreshold: 0.85,
   },
   coder: {
     compact: 8192,
-    standard: 32768,
-    extended: 131072,
+    standard: 65536,
+    extended: 262144,
     responseBufferTokens: 2000,
   },
 };
@@ -224,4 +230,107 @@ export function buildProviderOptions(
  */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Context Pressure
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The result of a context pressure check.
+ */
+export interface ContextPressureResult {
+  /** Current pressure as a fraction (0.0 - 1.0+) */
+  pressure: number;
+  /** Estimated prompt tokens */
+  estimatedTokens: number;
+  /** Context window size for the current tier */
+  numCtx: number;
+  /** Whether soft threshold was exceeded (inject warning) */
+  softExceeded: boolean;
+  /** Whether action threshold was exceeded (compress prompt) */
+  actionExceeded: boolean;
+  /** Whether warning threshold was exceeded (log warning) */
+  warningExceeded: boolean;
+}
+
+/**
+ * Check context pressure against all thresholds.
+ */
+export function checkContextPressure(
+  promptChars: number,
+  systemPromptChars: number,
+  numCtx: number,
+  config: DeepTierConfig,
+): ContextPressureResult {
+  const estimatedTokens = Math.ceil((promptChars + systemPromptChars) / 3.5);
+  const pressure = estimatedTokens / numCtx;
+
+  return {
+    pressure,
+    estimatedTokens,
+    numCtx,
+    softExceeded: pressure >= config.contextPressureSoftThreshold,
+    actionExceeded: pressure >= config.contextPressureActionThreshold,
+    warningExceeded: pressure >= config.contextPressureWarningThreshold,
+  };
+}
+
+/**
+ * Build a context budget warning message to inject into the prompt.
+ * Tells the model how much context budget remains so it can self-manage.
+ */
+export function buildPressureWarning(result: ContextPressureResult): string {
+  const usedPct = Math.round(result.pressure * 100);
+  const remainingTokens = Math.max(0, result.numCtx - result.estimatedTokens);
+
+  if (result.actionExceeded) {
+    return `\n\n⚠️ CONTEXT PRESSURE CRITICAL (${usedPct}% used). ~${remainingTokens} tokens remaining. ` +
+      `Wrap up current reasoning and produce your answer. Avoid loading additional context.`;
+  }
+
+  return `\n\n⚠️ Context budget: ${usedPct}% used (~${remainingTokens} tokens remaining). ` +
+    `Be concise. Avoid requesting large file reads unless essential.`;
+}
+
+/**
+ * Compress a prompt by summarizing the oldest portions.
+ * Removes the middle section of conversation history, keeping the system
+ * context (beginning) and most recent turns (end).
+ *
+ * Returns the compressed prompt and whether compression was applied.
+ */
+export function compressPrompt(
+  prompt: string,
+  targetTokens: number,
+): { compressed: string; applied: boolean } {
+  const currentTokens = estimateTokens(prompt);
+
+  if (currentTokens <= targetTokens) {
+    return { compressed: prompt, applied: false };
+  }
+
+  // Split by double-newlines to find logical sections
+  const sections = prompt.split('\n\n');
+
+  // Keep first 2 sections (system context) and last 3 sections (recent turns).
+  // Replace middle sections with a summary marker.
+  // Requires at least 6 sections (2 start + 3 end + 1 to remove).
+  const keepStart = 2;
+  const keepEnd = 3;
+  const minSections = keepStart + keepEnd + 1;
+
+  if (sections.length < minSections) {
+    return { compressed: prompt, applied: false };
+  }
+
+  const removed = sections.length - keepStart - keepEnd;
+
+  const compressed = [
+    ...sections.slice(0, keepStart),
+    `[... ${removed} earlier sections compressed due to context pressure ...]`,
+    ...sections.slice(-keepEnd),
+  ].join('\n\n');
+
+  return { compressed, applied: true };
 }

@@ -137,6 +137,12 @@ export interface Task {
   reviewNotes?: string | undefined;
   reviewFeedback?: string | undefined;
 
+  // ── Verification Cascade (multi-pass review for high-stakes tasks) ──────
+  /** Total cascade passes required (default: 1, multi-file: 2) */
+  verificationPasses?: number | undefined;
+  /** Current cascade pass (0-indexed, incremented after each approved pass) */
+  currentVerificationPass?: number | undefined;
+
   // ── Parking (for preemption) ──────────────────────────────────────────────
   parkedState?: ParkedState | undefined;
 
@@ -185,6 +191,8 @@ export interface UpdateTaskFields {
   reviewResult?: ReviewResult | undefined;
   reviewNotes?: string | undefined;
   reviewFeedback?: string | undefined;
+  verificationPasses?: number | undefined;
+  currentVerificationPass?: number | undefined;
   parkedState?: ParkedState | undefined;
   resolvedAt?: string | undefined;
   resolution?: string | undefined;

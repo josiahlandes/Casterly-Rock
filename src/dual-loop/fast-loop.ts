@@ -25,12 +25,15 @@ import type { FastTierConfig, ContextTier } from './context-tiers.js';
 import { selectFastTier, selectReviewTier, resolveNumCtx, estimateTokens } from './context-tiers.js';
 import {
   TRIAGE_SYSTEM_PROMPT,
+  TRIAGE_FORMAT_SCHEMA,
   buildTriagePrompt,
   parseTriageResponse,
 } from './triage-prompt.js';
 import type { TriageResult } from './triage-prompt.js';
 import {
   REVIEW_SYSTEM_PROMPT,
+  REVIEW_FORMAT_SCHEMA,
+  CASCADE_REVIEW_PROMPTS,
   buildReviewPrompt,
   countDiffLines,
   parseReviewResponse,
@@ -331,6 +334,7 @@ export class FastLoop {
           systemPrompt: TRIAGE_SYSTEM_PROMPT,
           temperature: 0.1,
           maxTokens: 512,
+          providerOptions: { format: TRIAGE_FORMAT_SCHEMA },
         }),
         this.config.triageTimeoutMs,
         'Triage timed out',
@@ -380,14 +384,44 @@ export class FastLoop {
     const reviewPrompt = buildReviewPrompt({ plan, artifacts });
 
     try {
+      // Determine which cascade pass we're on and select the appropriate prompt.
+      const currentPass = task.currentVerificationPass ?? 0;
+      const totalPasses = task.verificationPasses ?? 1;
+      const systemPrompt = currentPass === 0
+        ? REVIEW_SYSTEM_PROMPT
+        : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
+
       const response = await this.callWithTier(tier, {
         prompt: reviewPrompt,
-        systemPrompt: REVIEW_SYSTEM_PROMPT,
+        systemPrompt,
         temperature: 0.1,
         maxTokens: 1024,
+        providerOptions: { format: REVIEW_FORMAT_SCHEMA },
       });
 
       const outcome = parseReviewResponse(response);
+
+      // Verification cascade: if approved but more passes remain, re-review
+      // with the next cascade prompt instead of marking done.
+      if (outcome.result === 'approved' && currentPass + 1 < totalPasses) {
+        const nextPass = currentPass + 1;
+        tracer.log('fast-loop', 'info',
+          `Cascade pass ${currentPass + 1}/${totalPasses} approved for ${task.id}, advancing to pass ${nextPass + 1}`, {
+            diffLines,
+            tier,
+          });
+
+        this.taskBoard.update(task.id, {
+          currentVerificationPass: nextPass,
+          reviewResult: undefined,
+          reviewNotes: undefined,
+          reviewFeedback: undefined,
+          // Stay in 'reviewing' with null owner so FastLoop picks it up again
+          status: 'reviewing',
+          owner: null,
+        });
+        return;
+      }
 
       const newStatus = outcome.result === 'approved' ? 'done' as const : 'revision' as const;
 
@@ -398,11 +432,15 @@ export class FastLoop {
         status: newStatus,
         owner: null,
         ...(outcome.result === 'approved' ? { resolvedAt: new Date().toISOString() } : {}),
+        // Reset cascade pass on revision so it starts from pass 0 after fixes
+        ...(outcome.result !== 'approved' ? { currentVerificationPass: 0 } : {}),
       });
 
       tracer.log('fast-loop', 'info', `Review complete: ${task.id} → ${outcome.result}`, {
         diffLines,
         tier,
+        cascadePass: currentPass + 1,
+        totalPasses,
       });
     } catch (error) {
       tracer.log('fast-loop', 'error', `Review failed for ${task.id}, routing to revision`, {
@@ -494,14 +532,15 @@ export class FastLoop {
 
   /**
    * Make an LLM call with the appropriate context tier.
+   * Accepts optional providerOptions (e.g., `format` for structured output).
    */
   private async callWithTier(
     tier: ContextTier,
-    request: Omit<GenerateRequest, 'providerOptions'>,
+    request: Omit<GenerateRequest, 'providerOptions'> & { providerOptions?: Record<string, unknown> },
   ): Promise<string> {
     const numCtx = resolveNumCtx(this.config.tiers, tier);
     const response = await this.provider.generateWithTools(
-      { ...request, providerOptions: { num_ctx: numCtx } },
+      { ...request, providerOptions: { num_ctx: numCtx, ...request.providerOptions } },
       [],
     );
     return response.text;

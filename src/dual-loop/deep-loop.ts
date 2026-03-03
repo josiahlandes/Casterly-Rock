@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import type { Task, TaskArtifact, PlanStep, FileOperation } from './task-board-types.js';
 import { detectProjectDir, writeProjectMd } from './project-store.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
-import { selectDeepTier, selectCoderTier, resolveNumCtx, buildProviderOptions } from './context-tiers.js';
+import { selectDeepTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
 import { runIdleCheck } from './deep-loop-events.js';
 import type { DeepLoopEventConfig } from './deep-loop-events.js';
 
@@ -82,7 +82,9 @@ const DEFAULT_CONFIG: DeepLoopConfig = {
     compact: 8192,
     standard: 24576,
     extended: 131072,
+    contextPressureSoftThreshold: 0.70,
     contextPressureWarningThreshold: 0.80,
+    contextPressureActionThreshold: 0.85,
   },
   coderTiers: {
     compact: 8192,
@@ -444,6 +446,13 @@ export class DeepLoop {
         }
       }
 
+      // Verification cascade: multi-file tasks get 2 review passes (correctness + security).
+      // Single-file or simple tasks get the standard single review pass.
+      const fileCount = outcome.workspaceManifest?.length ?? 0;
+      const stepCount = planned?.planSteps?.length ?? 0;
+      const isHighStakes = fileCount >= 3 || stepCount >= 3;
+      const verificationPasses = isHighStakes ? 2 : 1;
+
       // Submit for review (include workspace manifest for reviewer context)
       this.taskBoard.update(task.id, {
         status: 'reviewing',
@@ -454,6 +463,7 @@ export class DeepLoop {
           ? { workspaceManifest: outcome.workspaceManifest }
           : {}),
         ...(projectDir ? { projectDir } : {}),
+        ...(verificationPasses > 1 ? { verificationPasses, currentVerificationPass: 0 } : {}),
       });
 
       tracer.log('deep-loop', 'info', `Task ${task.id} submitted for review`, {
@@ -895,7 +905,8 @@ export class DeepLoop {
       // Generate updated user-facing summary
       const userFacing = await this.generateSummary(task, [...existingArtifacts, artifact]);
 
-      // Resubmit for review
+      // Resubmit for review. Reset cascade pass to 0 so revised code
+      // goes through all verification passes again from scratch.
       this.taskBoard.update(task.id, {
         status: 'reviewing',
         owner: null,
@@ -904,6 +915,7 @@ export class DeepLoop {
         reviewResult: undefined,
         reviewNotes: undefined,
         reviewFeedback: undefined,
+        ...(task.verificationPasses ? { currentVerificationPass: 0 } : {}),
       });
 
       tracer.log('deep-loop', 'info', `Revision complete for ${task.id}, resubmitted for review`);
@@ -1190,21 +1202,61 @@ Other rules:
   ): Promise<string> {
     const tracer = getTracer();
     const numCtx = resolveNumCtx(this.config.tiers, tier);
-    const estimatedPromptTokens = Math.ceil((request.prompt.length + (request.systemPrompt?.length ?? 0)) / 3.5);
-    const pressure = estimatedPromptTokens / numCtx;
 
-    if (pressure >= this.config.tiers.contextPressureWarningThreshold) {
-      tracer.log('deep-loop', 'warn', 'Context pressure threshold reached', {
+    // ── Context Pressure Management ─────────────────────────────────────
+    const pressureResult = checkContextPressure(
+      request.prompt.length,
+      request.systemPrompt?.length ?? 0,
+      numCtx,
+      this.config.tiers,
+    );
+
+    let effectivePrompt = request.prompt;
+
+    // Action threshold (0.85): compress the prompt to free context space
+    if (pressureResult.actionExceeded) {
+      tracer.log('deep-loop', 'warn', 'Context pressure ACTION threshold reached — compressing prompt', {
         tier,
-        estimatedPromptTokens,
+        pressure: pressureResult.pressure,
+        estimatedTokens: pressureResult.estimatedTokens,
         numCtx,
-        pressure,
+      });
+
+      const targetTokens = Math.floor(numCtx * this.config.tiers.contextPressureSoftThreshold);
+      const { compressed, applied } = compressPrompt(effectivePrompt, targetTokens);
+      if (applied) {
+        effectivePrompt = compressed;
+        tracer.log('deep-loop', 'info', 'Prompt compressed due to context pressure');
+      }
+    }
+
+    // Soft threshold (0.70): inject a budget warning so the model self-manages
+    if (pressureResult.softExceeded) {
+      const warning = buildPressureWarning(pressureResult);
+      effectivePrompt = effectivePrompt + warning;
+
+      tracer.log('deep-loop', 'info', 'Context pressure soft threshold — budget warning injected', {
+        tier,
+        pressure: pressureResult.pressure,
+        estimatedTokens: pressureResult.estimatedTokens,
+        numCtx,
+      });
+    }
+
+    // Warning threshold (0.80): log for dream cycle analysis
+    if (pressureResult.warningExceeded) {
+      tracer.log('deep-loop', 'warn', 'Context pressure warning threshold reached', {
+        tier,
+        estimatedPromptTokens: pressureResult.estimatedTokens,
+        numCtx,
+        pressure: pressureResult.pressure,
         threshold: this.config.tiers.contextPressureWarningThreshold,
       });
     }
 
     const fullRequest: GenerateRequest = {
       ...request,
+      prompt: effectivePrompt,
       providerOptions: { num_ctx: numCtx, ...request.providerOptions },
     };
 

@@ -1717,21 +1717,18 @@ describe('Multi-Resolution Understanding', () => {
 // VISION GAP: Self-Distillation (not implemented)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Self-Distillation (Vision — Not Implemented)', () => {
-  it('dream cycle does NOT include fine-tuning logic', () => {
+describe('Self-Distillation (Vision — Tier 3 Implemented)', () => {
+  it('dream cycle includes LoRA fine-tuning logic (Tier 3)', () => {
     const source = readFileSync(
       resolve(PROJECT_ROOT, 'src/autonomous/dream/runner.ts'),
       'utf8',
     );
 
-    // The vision described fine-tuning a specialist model from reasoning traces.
-    // This documents that model-level fine-tuning is not yet implemented.
-    // Note: 'training' alone is too broad — TrainingExtractor extracts data
-    // for analysis, not for fine-tuning model weights.
-    expect(source).not.toContain('fine-tune');
-    expect(source).not.toContain('LoRA');
-    expect(source).not.toContain('GGUF');
-    expect(source).not.toContain('model.save');
+    // Tier 3 implemented QLoRA training (Item 8), disentangled adapters (Item 9),
+    // and SPIN self-play (Item 10). The runner now contains LoRA training phases.
+    expect(source).toContain('LoRA');
+    expect(source).toContain('loraTraining');
+    expect(source).toContain('spinSelfPlay');
   });
 
   it('self-model uses knowledge distillation into YAML instead', () => {

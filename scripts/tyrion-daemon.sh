@@ -67,6 +67,10 @@ start_daemon() {
         echo -e "${YELLOW}Set 'enabled: true' in config/autonomous.yaml to start${NC}"
     fi
 
+    # KV cache quantization: ~50% KV memory reduction with negligible quality loss.
+    # See docs/roadmap.md Tier 1, Item 2.
+    export OLLAMA_KV_CACHE_TYPE="${OLLAMA_KV_CACHE_TYPE:-q8_0}"
+
     # Start the daemon
     cd "$PROJECT_ROOT"
     nohup npx tsx src/autonomous/loop.ts \

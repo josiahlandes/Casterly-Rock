@@ -283,6 +283,129 @@ export class TrainingExtractor {
     return lines.join('\n');
   }
 
+  // ── Tool-Call Specific Extraction ────────────────────────────────────────
+
+  /**
+   * Extract tool-call-specific training pairs from journal entries.
+   *
+   * Tool-call patterns are identified by looking for entries that describe
+   * tool invocations, file operations, and structured tool sequences.
+   * These become instruction/completion pairs where the instruction is the
+   * task description and the completion is the tool call sequence.
+   *
+   * This is specifically for fine-tuning the FastLoop on tool-calling
+   * patterns — teaching it the vocabulary, parameter formats, and calling
+   * conventions that work in Casterly.
+   *
+   * See docs/roadmap.md Tier 3, Item 8.
+   */
+  extractToolCallPairs(journal: Journal): TrainingExample[] {
+    const examples: TrainingExample[] = [];
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - this.config.lookbackDays);
+    const cutoffIso = cutoff.toISOString();
+
+    const entries = journal.getAllEntries();
+
+    for (const entry of entries) {
+      if (entry.timestamp < cutoffIso) continue;
+      if (entry.content.length < this.config.minContentLength) continue;
+
+      // Look for tool-call patterns in content
+      if (!this.containsToolCallPatterns(entry.content)) continue;
+
+      const toolCalls = this.extractToolCallSequence(entry.content);
+      if (toolCalls.length === 0) continue;
+
+      const instruction = this.buildToolCallInstruction(entry);
+      const completion = toolCalls.join('\n');
+
+      if (completion.length >= this.config.minContentLength) {
+        examples.push({
+          id: `train-toolcall-${entry.id}`,
+          skill: 'tool-calling',
+          instruction,
+          completion: this.truncateContent(completion),
+          outcome: this.inferOutcome(entry),
+          source: 'journal',
+          sourceId: entry.id,
+          extractedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    return examples;
+  }
+
+  /**
+   * Check if text contains tool-call patterns.
+   */
+  private containsToolCallPatterns(text: string): boolean {
+    const patterns = [
+      /\bread_file\b/,
+      /\bwrite_file\b/,
+      /\bedit_file\b/,
+      /\bgrep\b/,
+      /\bexecute_command\b/,
+      /\brun_test\b/,
+      /\btool[_\s]?call/i,
+      /\bcalled\s+\w+\s+tool\b/i,
+      /\btool\s+result/i,
+      /\bfile_diff\b/,
+      /\bfile_created\b/,
+    ];
+
+    return patterns.some((p) => p.test(text));
+  }
+
+  /**
+   * Extract tool call sequences from journal content.
+   */
+  private extractToolCallSequence(text: string): string[] {
+    const calls: string[] = [];
+
+    // Match tool call patterns like: "called read_file({path: ...})"
+    // or "used grep to search for ..."
+    // or "read_file: /path/to/file"
+    const patterns = [
+      /\b(read_file|write_file|edit_file|grep|execute_command|run_test)\b[:(]\s*([^\n]+)/gi,
+      /\bcalled\s+(\w+)\s*\(([^)]*)\)/gi,
+      /\btool:\s*(\w+)\s*(?:with|input)?\s*[:=]?\s*([^\n]+)/gi,
+    ];
+
+    for (const pattern of patterns) {
+      for (const match of text.matchAll(pattern)) {
+        const toolName = match[1] ?? '';
+        const args = match[2] ?? '';
+        calls.push(`${toolName}(${args.trim()})`);
+      }
+    }
+
+    return calls;
+  }
+
+  /**
+   * Build an instruction for tool-call training from a journal entry.
+   */
+  private buildToolCallInstruction(entry: JournalEntry): string {
+    // Extract the task context before the tool calls
+    const lines = entry.content.split('\n');
+    const contextLines: string[] = [];
+
+    for (const line of lines) {
+      if (this.containsToolCallPatterns(line)) break;
+      if (line.trim().length > 0) {
+        contextLines.push(line.trim());
+      }
+    }
+
+    const context = contextLines.length > 0
+      ? contextLines.slice(0, 3).join(' ')
+      : `Task from ${entry.type} entry`;
+
+    return `Perform the following task using the available tools:\n${context}\nTags: ${entry.tags.join(', ')}`;
+  }
+
   // ── Private Helpers ─────────────────────────────────────────────────────
 
   /**

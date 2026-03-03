@@ -24,6 +24,34 @@ export interface TriageResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Structured Output Schema (Ollama format parameter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * JSON Schema for the triage response. Passed as Ollama's `format` parameter
+ * to guarantee valid, schema-conformant JSON output without parsing fallbacks.
+ */
+export const TRIAGE_FORMAT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    classification: {
+      type: 'string',
+      enum: ['simple', 'complex', 'conversational'],
+    },
+    confidence: {
+      type: 'number',
+    },
+    triageNotes: {
+      type: 'string',
+    },
+    directResponse: {
+      type: 'string',
+    },
+  },
+  required: ['classification', 'confidence', 'triageNotes'],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Prompts
 // ─────────────────────────────────────────────────────────────────────────────
 

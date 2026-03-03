@@ -1,8 +1,8 @@
 /**
  * Provider Registry
  *
- * Mac Studio Edition - Local Ollama Only
- * No cloud providers, all inference runs locally.
+ * Mac Studio Edition - Local inference only.
+ * Supports Ollama (llama.cpp) and MLX (vllm-mlx) backends.
  *
  * When a codingModel is configured (config/default.yaml), the registry
  * creates a second Ollama provider for coding tasks. The `forTask()`
@@ -14,6 +14,10 @@ import type { LlmProvider } from './base.js';
 import { OllamaProvider } from './ollama.js';
 
 export type { LlmProvider, PreviousAssistantMessage } from './base.js';
+
+// MLX provider for Apple Silicon-native inference via vllm-mlx
+export { MlxProvider } from './mlx.js';
+export type { MlxProviderOptions } from './mlx.js';
 
 // Phase 5: Concurrent provider
 export { ConcurrentProvider } from './concurrent.js';

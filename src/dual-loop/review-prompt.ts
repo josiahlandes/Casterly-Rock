@@ -24,6 +24,31 @@ export interface ReviewOutcome {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Structured Output Schema (Ollama format parameter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * JSON Schema for the review response. Passed as Ollama's `format` parameter
+ * to guarantee valid, schema-conformant JSON output without parsing fallbacks.
+ */
+export const REVIEW_FORMAT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    result: {
+      type: 'string',
+      enum: ['approved', 'changes_requested', 'rejected'],
+    },
+    notes: {
+      type: 'string',
+    },
+    feedback: {
+      type: 'string',
+    },
+  },
+  required: ['result', 'notes'],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Prompts
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -46,6 +71,34 @@ Respond with a JSON object:
 
 When in doubt, approve. The deep thinker has more context than you.
 Only request changes for clear correctness or security issues.`;
+
+/**
+ * Cascade review prompts — each pass focuses on a different concern.
+ * Pass 0 is the standard review (REVIEW_SYSTEM_PROMPT above).
+ * Additional passes use these specialized prompts.
+ *
+ * See docs/roadmap.md Tier 2, Item 7.
+ */
+export const CASCADE_REVIEW_PROMPTS: string[] = [
+  // Pass 1: Security & robustness focus
+  `You are a security reviewer performing a second-pass review. The code has already passed a correctness review.
+
+Focus exclusively on:
+1. **Security** — Injection risks (SQL, command, path traversal), credential exposure, unsafe deserialization, missing input validation
+2. **Robustness** — Error handling gaps, uncaught exceptions, resource leaks (file handles, connections), race conditions
+3. **API surface** — Every cross-file method/property call must exist in the target module. Check imports against actual exports.
+
+Do NOT repeat correctness feedback — that was handled in the first pass.
+Only request changes for genuine security vulnerabilities or robustness gaps.
+When in doubt, approve — the implementer has more context.
+
+Respond with a JSON object:
+{
+  "result": "approved" | "changes_requested" | "rejected",
+  "notes": "Security/robustness findings",
+  "feedback": "Specific fixes needed (only for changes_requested)"
+}`,
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Prompt Builders
