@@ -21,6 +21,8 @@ import type {
   GenerateWithToolsResponse,
   NativeToolCall,
 } from '../tools/schemas/types.js';
+import type { MlxKvCacheConfig } from './mlx-kv-cache.js';
+import { defaultKvCacheConfig, resolveKvBits, summarizeKvCacheConfig } from './mlx-kv-cache.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -33,6 +35,8 @@ export interface MlxProviderOptions {
   model: string;
   /** Request timeout in milliseconds (default: 600_000 = 10 min) */
   timeoutMs?: number;
+  /** KV cache quantization configuration (Tier 4, Item 12). */
+  kvCache?: MlxKvCacheConfig;
 }
 
 /**
@@ -181,6 +185,7 @@ export class MlxProvider implements LlmProvider {
   readonly id = 'mlx';
   readonly kind = 'local' as const;
   readonly model: string;
+  readonly kvCache: MlxKvCacheConfig;
 
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
@@ -189,6 +194,21 @@ export class MlxProvider implements LlmProvider {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.model = options.model;
     this.timeoutMs = options.timeoutMs ?? 600_000;
+    this.kvCache = options.kvCache ?? defaultKvCacheConfig();
+  }
+
+  /**
+   * Returns the resolved key/value bit widths, or null if no quantization.
+   */
+  get kvBits() {
+    return resolveKvBits(this.kvCache);
+  }
+
+  /**
+   * Human-readable summary of KV cache configuration.
+   */
+  kvCacheSummary(): string {
+    return summarizeKvCacheConfig(this.kvCache);
   }
 
   async generateWithTools(

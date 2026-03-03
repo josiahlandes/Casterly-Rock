@@ -270,7 +270,7 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 ---
 
-### 12. [ ] KVSplit K8V4 for MLX Inference
+### 12. [~] KVSplit K8V4 for MLX Inference (config layer: 2026-03-03)
 
 **What:** Use mixed-precision KV cache where keys are stored at 8-bit and values at 4-bit precision (K8V4). Research shows this asymmetric quantization achieves 59% cache memory reduction with minimal quality loss — keys are more sensitive to quantization than values.
 
@@ -278,17 +278,36 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 **Impact:** 59% KV cache reduction. Enables longer contexts or lower memory pressure.
 
+**Status: Configuration layer complete.** All code is wired end-to-end from env vars → server script → provider. Activation is a single flag flip (`MLX_KV_SERVER_SUPPORT=1`) when vllm-mlx adds `--kv-bits` support (tracking: mlx-lm Issue #615).
+
+**Source files:**
+- `src/providers/mlx-kv-cache.ts` — Types (`KvBits`, `KvGroupSize`, `KvCachePreset`, `MlxKvCacheConfig`), validation, preset resolution (none/q8/q4/k8v4), memory estimation with known model params, env var bridge (build/parse), human-readable summary
+- `src/providers/mlx.ts` — `MlxProviderOptions.kvCache`, `kvBits` getter, `kvCacheSummary()` method
+- `src/providers/mlx-health.ts` — `EnsureMlxServerOptions.startEnv` for passing KV cache env vars to server start script
+- `src/providers/index.ts` — Re-exports all KV cache types and functions
+- `scripts/mlx-server.sh` — `MLX_KV_KEY_BITS`, `MLX_KV_VALUE_BITS`, `MLX_KV_GROUP_SIZE`, `MLX_KV_QUANTIZED_START`, `MLX_KV_SERVER_SUPPORT` env vars; validation; conditional flag injection when server support is enabled; status display
+- `config/models.yaml` — `mlx.kv_cache` section with K8V4 preset configuration
+- `src/imessage/daemon.ts` — Reads KV cache config from env, passes to server start and provider construction
+- `tests/mlx-kv-cache.test.ts` — 50 tests (defaults, validation, preset resolution, memory estimation, env var round-trip, summary formatting, provider integration)
+
 **Implementation:**
-1. Requires MLX backend (Tier 2 item 5) as prerequisite
-2. Implement K8V4 quantization in MLX inference config
-3. Benchmark carefully: run quality evaluation suite at multiple context lengths
-4. Compare against Q8 (Tier 1) and FP16 baselines
-5. Document quality/memory tradeoff curves
+1. ~~Requires MLX backend (Tier 2 item 5) as prerequisite~~ ✅
+2. ~~Implement K8V4 quantization in MLX inference config~~ ✅ (config layer; server activation pending)
+3. Benchmark carefully: run quality evaluation suite at multiple context lengths — **requires local Apple Silicon**
+4. Compare against Q8 (Tier 1) and FP16 baselines — **requires local Apple Silicon**
+5. Document quality/memory tradeoff curves — **requires benchmark data**
+
+**Remaining (requires local machine):**
+- Flip `MLX_KV_SERVER_SUPPORT=1` when vllm-mlx adds `--kv-bits` (Issue #615)
+- Run benchmarks: perplexity at 4K/16K/64K/128K context for FP16 vs Q8 vs K8V4
+- Validate flag names match vllm-mlx's actual CLI (expected: `--kv-bits`, `--kv-group-size`)
+- Measure real memory savings with `mlx.core.metal.get_active_memory()`
 
 **References:**
 - Research: KVQuant (Hooper et al., 2024) — asymmetric key/value quantization
 - Research: KIVI (Liu et al., 2024) — K8V4 specifically, 59% reduction with <0.1 perplexity degradation
-- MLX quantization support: configurable per-tensor precision
+- MLX quantization support: `mlx.core.quantize` with 2/3/4/5/6/8-bit, group sizes 32/64/128
+- Tracking: [mlx-lm Issue #615](https://github.com/ml-explore/mlx-lm/issues/615) — server-side KV cache params
 
 ---
 

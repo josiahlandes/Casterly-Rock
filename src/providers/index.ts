@@ -19,6 +19,28 @@ export type { LlmProvider, PreviousAssistantMessage } from './base.js';
 export { MlxProvider } from './mlx.js';
 export type { MlxProviderOptions } from './mlx.js';
 
+// MLX KV cache configuration (Tier 4, Item 12 — K8V4 mixed-precision)
+export {
+  defaultKvCacheConfig,
+  validateKvCacheConfig,
+  resolveKvBits,
+  estimateKvCacheMemory,
+  buildKvCacheEnvVars,
+  parseKvCacheFromEnv,
+  summarizeKvCacheConfig,
+  MODEL_PARAMS,
+} from './mlx-kv-cache.js';
+export type {
+  MlxKvCacheConfig,
+  KvBits,
+  KvGroupSize,
+  KvCachePreset,
+  KvCacheMemoryEstimate,
+  KvCacheModelParams,
+  KvCacheValidationError,
+  ResolvedKvBits,
+} from './mlx-kv-cache.js';
+
 // Phase 5: Concurrent provider
 export { ConcurrentProvider } from './concurrent.js';
 export type {

@@ -358,6 +358,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       const { createDualLoopController } = await import('../dual-loop/index.js');
       const { OllamaProvider } = await import('../providers/ollama.js');
       const { MlxProvider } = await import('../providers/mlx.js');
+      const { parseKvCacheFromEnv, buildKvCacheEnvVars } = await import('../providers/mlx-kv-cache.js');
       const { ConcurrentProvider } = await import('../providers/concurrent.js');
       const { EventBus } = await import('../autonomous/events.js');
       const { GoalStack } = await import('../autonomous/goal-stack.js');
@@ -386,6 +387,10 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         const autoStart = readBooleanEnv('CASTERLY_MLX_AUTOSTART', true);
         const startWithSpec = readBooleanEnv('CASTERLY_MLX_START_WITH_SPEC', false);
 
+        // KV cache config from environment (Tier 4, Item 12)
+        const kvCacheConfig = parseKvCacheFromEnv();
+        const kvCacheEnvVars = buildKvCacheEnvVars(kvCacheConfig);
+
         safeLogger.info('Ensuring MLX server readiness', {
           baseUrl: mlxBaseUrl,
           retries: readyRetries,
@@ -393,8 +398,11 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           retryTimeoutMs,
           autoStart,
           startWithSpec,
+          kvCachePreset: kvCacheConfig.preset,
+          kvCacheServerSupport: kvCacheConfig.serverSupport,
         });
 
+        const hasKvEnv = Object.keys(kvCacheEnvVars).length > 0;
         await ensureMlxServerReady(mlxBaseUrl, {
           projectRoot: process.cwd(),
           maxAttempts: readyRetries,
@@ -402,6 +410,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           timeoutMs: retryTimeoutMs,
           autoStart,
           startWithSpec,
+          ...(hasKvEnv ? { startEnv: kvCacheEnvVars } : {}),
         });
       }
 
@@ -410,6 +419,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
             baseUrl: mlxBaseUrl,
             model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-MLX-4bit',
             timeoutMs: 1_800_000,
+            kvCache: parseKvCacheFromEnv(),
           })
         : new OllamaProvider({
             baseUrl,
