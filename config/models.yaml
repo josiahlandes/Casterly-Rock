@@ -100,9 +100,7 @@ ollama:
 # See scripts/mlx-server.sh for server launch.
 mlx:
   base_url: http://localhost:8000
-  # Use a text-only model by default. Some 122B variants include vision
-  # towers and fail to load in current vllm-mlx text server paths.
-  model: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit
+  model: mlx-community/Qwen3.5-122B-MLX-4bit
   timeout_ms: 1800000          # 30 minutes — same budget as Ollama coding tasks
 
   # Speculative decoding: draft model generates candidate tokens, main model verifies.

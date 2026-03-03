@@ -27,7 +27,7 @@ PID_FILE="${HOME}/.casterly/mlx/server.pid"
 # ── Configuration ────────────────────────────────────────────────────────────
 # Override these via environment variables if needed.
 
-MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit}"
+MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3.5-122B-MLX-4bit}"
 MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-8000}"
 
