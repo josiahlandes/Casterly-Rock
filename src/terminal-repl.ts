@@ -118,7 +118,7 @@ function getDeepProviderLabel(): string {
     return 'ollama:qwen3.5:122b';
   }
 
-  const mlxModel = process.env['MLX_MODEL'] || 'mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit';
+  const mlxModel = process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-MLX-4bit';
   return `mlx:${mlxModel}`;
 }
 
@@ -329,7 +329,7 @@ async function main(): Promise<void> {
     const deepProvider = useMlx
       ? new MlxProvider({
           baseUrl: mlxBaseUrl,
-          model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit',
+          model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-MLX-4bit',
           timeoutMs: 1_800_000,
         })
       : new OllamaProvider({
