@@ -20,6 +20,10 @@ import type { TaskPlan, TaskStep, StepOutcome, TaskRunResult } from './types.js'
 import { verifyStepOutcome } from './verifier.js';
 import { TOOL_REQUIRED_PARAMS } from './tool-params.js';
 
+function elapsedMs(start: number): number {
+  return Math.ceil(performance.now() - start);
+}
+
 /**
  * Validate that a step has the minimum required input parameters.
  * Returns null if valid, or an error message if invalid.
@@ -126,7 +130,7 @@ async function executeStep(
   let lastResult: NativeToolResult | null = null;
   let retries = 0;
 
-  const startTime = Date.now();
+  const startTime = performance.now();
 
   while (retries <= maxRetries) {
     const toolCall = {
@@ -143,7 +147,7 @@ async function executeStep(
         tool: step.tool,
         success: true,
         retries,
-        durationMs: Date.now() - startTime,
+        durationMs: elapsedMs(startTime),
         output: lastResult.output,
       };
       return { outcome, toolResult: lastResult };
@@ -168,7 +172,7 @@ async function executeStep(
     success: false,
     retries: retries - 1,
     failureReason: lastResult?.error ?? 'Unknown failure',
-    durationMs: Date.now() - startTime,
+    durationMs: elapsedMs(startTime),
     output: lastResult?.output,
   };
 
@@ -198,7 +202,7 @@ export async function runTaskPlan(
     onStepComplete,
   } = options;
 
-  const startTime = Date.now();
+  const startTime = performance.now();
   const semaphore = new Semaphore(maxConcurrency);
 
   // Build state tracking
@@ -372,7 +376,7 @@ export async function runTaskPlan(
   );
 
   const overallSuccess = stepOutcomes.every((o) => o.success);
-  const durationMs = Date.now() - startTime;
+  const durationMs = elapsedMs(startTime);
 
   safeLogger.info('Task plan execution complete', {
     totalSteps: plan.steps.length,

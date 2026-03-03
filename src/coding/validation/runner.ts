@@ -5,7 +5,10 @@
  */
 
 import { spawn } from 'child_process';
+import { existsSync } from 'node:fs';
 import type { ValidationError, ValidationStepResult, ValidationStep } from './types.js';
+
+const COMMAND_SHELL = existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh';
 
 /**
  * Command execution result.
@@ -37,12 +40,7 @@ export async function executeCommand(
     let stderr = '';
     let timedOut = false;
 
-    // Parse command into parts
-    const parts = command.split(' ');
-    const cmd = parts[0];
-    const args = parts.slice(1);
-
-    if (!cmd) {
+    if (!command.trim()) {
       resolve({
         exitCode: 1,
         stdout: '',
@@ -53,15 +51,42 @@ export async function executeCommand(
       return;
     }
 
-    const proc = spawn(cmd, args, {
+    let settled = false;
+
+    const settle = (result: CommandResult): void => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const proc = spawn(COMMAND_SHELL, ['-lc', command], {
       cwd,
-      shell: true,
+      detached: true,
       env: { ...process.env, FORCE_COLOR: '0' },
     });
 
     const timer = setTimeout(() => {
       timedOut = true;
-      proc.kill('SIGTERM');
+      if (proc.pid) {
+        try {
+          process.kill(-proc.pid, 'SIGTERM');
+        } catch {
+          // Process may have already exited.
+        }
+      }
+
+      // Some shells keep children alive after SIGTERM. Escalate quickly.
+      setTimeout(() => {
+        if (!settled) {
+          if (proc.pid) {
+            try {
+              process.kill(-proc.pid, 'SIGKILL');
+            } catch {
+              // Process may have already exited.
+            }
+          }
+        }
+      }, 100);
     }, timeout);
 
     proc.stdout.on('data', (data: Buffer) => {
@@ -74,7 +99,7 @@ export async function executeCommand(
 
     proc.on('close', (code) => {
       clearTimeout(timer);
-      resolve({
+      settle({
         exitCode: code ?? 1,
         stdout,
         stderr,
@@ -85,7 +110,7 @@ export async function executeCommand(
 
     proc.on('error', (err) => {
       clearTimeout(timer);
-      resolve({
+      settle({
         exitCode: 1,
         stdout,
         stderr: err.message,
