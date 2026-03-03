@@ -109,3 +109,22 @@ mlx:
   speculative_decoding:
     draft_model: mlx-community/Qwen3.5-0.5B-MLX-4bit
     num_speculative_tokens: 5  # Tokens per speculation step (higher = faster but lower acceptance rate)
+
+  # KV cache quantization (Tier 4, Item 12 — K8V4 mixed-precision)
+  # Asymmetric quantization: keys at 8-bit, values at 4-bit.
+  # Keys are more sensitive to quantization than values (KIVI, Liu et al. 2024).
+  # Achieves ~59% KV cache reduction with <0.1 perplexity degradation.
+  #
+  # Presets: none (FP16), q8 (uniform 8-bit), q4 (uniform 4-bit), k8v4 (mixed)
+  # Bit widths: 2, 3, 4, 5, 6, 8 (from mlx.core.quantize)
+  # Group sizes: 32, 64, 128
+  #
+  # Status: config validated but not active until vllm-mlx adds --kv-bits support.
+  # Track: https://github.com/ml-explore/mlx-lm/issues/615
+  kv_cache:
+    preset: k8v4             # Recommended: best quality/memory tradeoff
+    key_bits: 8              # Explicit override (matches preset)
+    value_bits: 4            # Explicit override (matches preset)
+    group_size: 64           # Quantization group size
+    quantized_kv_start: 0    # Start quantization immediately (server mode)
+    server_support: false    # Flip to true when vllm-mlx supports --kv-bits
