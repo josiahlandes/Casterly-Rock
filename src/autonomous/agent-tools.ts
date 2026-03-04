@@ -439,7 +439,7 @@ Your reasoning will be logged for debugging transparency.`,
 
 const READ_FILE_SCHEMA: ToolSchema = {
   name: 'read_file',
-  description: 'Read the contents of a source file. Returns the file content with line numbers.',
+  description: 'Read the contents of a source file. Returns the file content with line numbers. On re-reads, returns a diff of changes since the first read (or "unchanged" if no changes).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -454,6 +454,10 @@ const READ_FILE_SCHEMA: ToolSchema = {
       offset: {
         type: 'integer',
         description: 'Line number to start reading from (1-indexed). Defaults to 1.',
+      },
+      force_full: {
+        type: 'boolean',
+        description: 'Force full content even on re-read (bypasses delta tracking). Default: false.',
       },
     },
     required: ['path'],
@@ -2698,6 +2702,8 @@ interface FileReadCacheEntry {
   readAt: number;
   /** How many times this file has been read in this cycle */
   readCount: number;
+  /** Turn number when first read (for delta tracking messages) */
+  firstReadTurn: number;
 }
 
 /**
@@ -2717,12 +2723,13 @@ export class FileReadCache {
   }
 
   /** Store content after a successful disk read. */
-  set(fullPath: string, content: string): void {
+  set(fullPath: string, content: string, turn?: number): void {
     const existing = this.cache.get(fullPath);
     this.cache.set(fullPath, {
       content,
       readAt: Date.now(),
       readCount: (existing?.readCount ?? 0) + 1,
+      firstReadTurn: existing?.firstReadTurn ?? (turn ?? 0),
     });
   }
 
@@ -2786,19 +2793,55 @@ function buildExecutors(
           : `${config.projectRoot}/${filePath}`;
 
         // Check the per-cycle cache before hitting disk
-        let content: string;
-        let cacheHit = false;
         const cached = fileReadCache.get(fullPath);
+        const forceFull = call.input['force_full'] === true;
 
-        if (cached) {
-          content = cached.content;
-          cacheHit = true;
-          // Increment the read count
-          fileReadCache.set(fullPath, content);
-        } else {
-          content = await readFile(fullPath, 'utf8');
-          fileReadCache.set(fullPath, content);
+        // Delta tracking: if file was previously read, check if it changed
+        if (cached && !forceFull) {
+          const currentContent = await readFile(fullPath, 'utf8');
+          fileReadCache.set(fullPath, currentContent);
+
+          if (currentContent === cached.content) {
+            // File unchanged — save context tokens
+            const unchangedMsg = `File: ${filePath} — unchanged since first read (turn ${cached.firstReadTurn}). ${currentContent.split('\n').length} lines. Use force_full=true to re-read.`;
+            return successResult(call.id, unchangedMsg, config.maxOutputChars);
+          }
+
+          // File changed — return a unified diff
+          const oldLines = cached.content.split('\n');
+          const newLines = currentContent.split('\n');
+
+          // Simple diff: show changed regions
+          const diffLines: string[] = [`File: ${filePath} — changed since turn ${cached.firstReadTurn}:`];
+          let inDiff = false;
+          for (let i = 0; i < Math.max(oldLines.length, newLines.length); i++) {
+            const oldLine = oldLines[i];
+            const newLine = newLines[i];
+            if (oldLine !== newLine) {
+              if (!inDiff) {
+                diffLines.push(`\n@@ line ${i + 1} @@`);
+                inDiff = true;
+              }
+              if (oldLine !== undefined) diffLines.push(`- ${oldLine}`);
+              if (newLine !== undefined) diffLines.push(`+ ${newLine}`);
+            } else {
+              if (inDiff) {
+                inDiff = false;
+              }
+            }
+          }
+
+          if (diffLines.length === 1) {
+            // Edge case: whitespace-only changes
+            diffLines.push('(whitespace-only changes)');
+          }
+
+          return successResult(call.id, diffLines.join('\n'), config.maxOutputChars);
         }
+
+        // First read — full content
+        const content = await readFile(fullPath, 'utf8');
+        fileReadCache.set(fullPath, content);
 
         const lines = content.split('\n');
 
@@ -2815,15 +2858,7 @@ function buildExecutors(
         );
 
         const header = `File: ${filePath} (${lines.length} lines total, showing ${startLine + 1}-${endLine})`;
-
-        // Build redundancy warning for repeated reads
-        let redundancyNote = '';
-        const entry = fileReadCache.get(fullPath);
-        if (cacheHit && entry && entry.readCount > 1) {
-          redundancyNote = `\n⚠ NOTE: This file was already read ${entry.readCount - 1} time(s) this cycle. Using cached content. Consider working with the information you already have instead of re-reading.`;
-        }
-
-        const output = `${header}\n${'─'.repeat(60)}\n${numberedLines.join('\n')}${redundancyNote}`;
+        const output = `${header}\n${'─'.repeat(60)}\n${numberedLines.join('\n')}`;
 
         tracer.logIO('agent-loop', 'read', filePath, 0, {
           success: true,
