@@ -4,6 +4,7 @@ import {
   selectDeepTier,
   selectCoderTier,
   selectReviewTier,
+  selectDeepReviewTier,
   resolveNumCtx,
   buildProviderOptions,
   estimateTokens,
@@ -139,6 +140,34 @@ describe('Context Tiers', () => {
     it('returns review_large for diffs at or above threshold', () => {
       expect(selectReviewTier(150, config)).toBe('review_large');
       expect(selectReviewTier(200, config)).toBe('review_large');
+    });
+  });
+
+  describe('selectDeepReviewTier', () => {
+    const tiers = DEFAULT_CONTEXT_TIERS.deep;
+
+    it('returns compact for small review prompts', () => {
+      // 1000 chars review + 500 chars system → ~429 tokens + 1024 buffer = 1453
+      // withHeadroom = 1453 / 0.75 = 1937 < compact (8192)
+      expect(selectDeepReviewTier(1000, 500, tiers)).toBe('compact');
+    });
+
+    it('returns standard for medium review prompts', () => {
+      // 20000 chars review + 500 chars system → ~5858 tokens + 1024 buffer = 6882
+      // withHeadroom = 6882 / 0.75 = 9176 > compact (8192), < standard (24576)
+      expect(selectDeepReviewTier(20000, 500, tiers)).toBe('standard');
+    });
+
+    it('returns extended for large review prompts', () => {
+      // 70000 chars review + 500 chars system → ~20143 tokens + 1024 buffer = 21167
+      // withHeadroom = 21167 / 0.75 = 28223 > standard (24576)
+      expect(selectDeepReviewTier(70000, 500, tiers)).toBe('extended');
+    });
+
+    it('accounts for response buffer tokens', () => {
+      // 19000 chars + 500 system → ~5572 tokens + 4000 buffer = 9572
+      // withHeadroom = 9572 / 0.75 = 12763 > compact (8192), < standard (24576)
+      expect(selectDeepReviewTier(19000, 500, tiers, 4000)).toBe('standard');
     });
   });
 

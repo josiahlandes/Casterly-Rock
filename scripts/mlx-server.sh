@@ -125,16 +125,12 @@ else:
     cfg = raw
 
 vision = cfg.get("vision_config") is not None
-arch = cfg.get("architectures") or []
-cond_gen = any(isinstance(a, str) and "ConditionalGeneration" in a for a in arch)
 
-if vision or cond_gen:
-    reasons = []
-    if vision:
-        reasons.append("vision_config present")
-    if cond_gen:
-        reasons.append("ConditionalGeneration architecture")
-    print(", ".join(reasons), file=sys.stderr)
+# Only reject models with vision_config (true multimodal).
+# ConditionalGeneration in the architecture name is normal for MoE models
+# (e.g. Qwen3_5MoeForConditionalGeneration) and does NOT imply multimodal.
+if vision:
+    print("vision_config present", file=sys.stderr)
     sys.exit(2)
 PY
     then

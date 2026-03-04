@@ -154,7 +154,7 @@ describe('Cascade Pass Reset', () => {
       reviewResult: 'changes_requested',
     });
 
-    // Simulate reset (as done in fast-loop reviewTask)
+    // Simulate reset (as done in deep-loop selfReview)
     const resetPass = 0;
     expect(resetPass).toBe(0);
     expect(task.currentVerificationPass).toBe(1); // Before reset

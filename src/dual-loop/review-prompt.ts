@@ -1,9 +1,9 @@
 /**
- * Review Prompt — System prompts for FastLoop code review.
+ * Review Prompt — System prompts for code review.
  *
- * The FastLoop (35B-A3B) reviews diffs produced by DeepLoop before
- * changes are committed. The review is advisory — DeepLoop can override
- * with explanation, but cannot ignore.
+ * The DeepLoop (122B) self-reviews its own output before marking
+ * tasks as complete. The review is a single structured-output call
+ * (not a ReAct tool loop) that runs after implementation.
  *
  * See docs/dual-loop-architecture.md Section 5.4 and Section 4 (Phase 4).
  */
@@ -69,7 +69,7 @@ Respond with a JSON object:
   "feedback": "Specific changes needed (only for changes_requested)"
 }
 
-When in doubt, approve. The deep thinker has more context than you.
+When in doubt, approve. You implemented this code and have the full context.
 Only request changes for clear correctness or security issues.`;
 
 /**
@@ -90,7 +90,7 @@ Focus exclusively on:
 
 Do NOT repeat correctness feedback — that was handled in the first pass.
 Only request changes for genuine security vulnerabilities or robustness gaps.
-When in doubt, approve — the implementer has more context.
+When in doubt, approve — you have the full implementation context.
 
 Respond with a JSON object:
 {

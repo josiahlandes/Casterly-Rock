@@ -1,147 +1,164 @@
-// Game configuration constants
+// Game Constants - All speeds, sizes, colors, and timings
 
-export const CANVAS_WIDTH = 800;
-export const CANVAS_HEIGHT = 600;
+export const CANVAS = {
+    WIDTH: 800,
+    HEIGHT: 600
+};
 
-// Colors
 export const COLORS = {
-    background: '#1a1a2e',
-    player: '#00fff5',
-    playerCore: '#ffffff',
-    enemyA: '#ff00ff',
-    enemyB: '#ff6600',
-    enemyC: '#39ff14',
-    enemyBullet: '#ff3333',
-    powerup: '#ffd700',
-    shield: '#00fff5',
-    shieldGradientEnd: '#ff00ff',
-    text: '#00fff5',
-    white: '#ffffff',
-    yellow: '#ffff00',
-    orange: '#ff6600',
-    grid: '#2a2a4e',
-    star: '#ffffff',
-    scanline: '#1a1a3e'
+    // Background
+    BACKGROUND: '#1a1a2e',
+    
+    // Player
+    PLAYER: '#00fff5',
+    PLAYER_CORE: '#ffffff',
+    PLAYER_BULLET: '#00fff5',
+    
+    // Enemies
+    ENEMY_A: '#ff00ff',  // Drone - magenta
+    ENEMY_B: '#ff6600',  // Tank - electric orange
+    ENEMY_C: '#39ff14',  // Scout - lime green
+    ENEMY_BULLET: '#ff3333',
+    ENEMY_HIT_FLASH: '#ffffff',
+    
+    // Power-ups
+    POWERUP: '#ffd700',  // Gold
+    
+    // Effects
+    EXPLOSION_START: '#ffffff',
+    EXPLOSION_MID: '#ffff00',
+    EXPLOSION_END: '#ff6600',
+    PARTICLE_TRAIL: '#00fff5',
+    SPARK: '#ffffff',
+    
+    // HUD
+    HUD_TEXT: '#00fff5',
+    SHIELD_GRADIENT_START: '#00fff5',
+    SHIELD_GRADIENT_END: '#ff00ff',
+    COMBO_TEXT: '#ffd700',
+    
+    // Scan lines
+    SCANLINE: 'rgba(255, 255, 255, 0.03)'
 };
 
-// Player settings
 export const PLAYER = {
-    width: 40,
-    height: 30,
-    speed: 300,
-    maxShield: 3,
-    fireRate: 0.2, // seconds between shots
-    maxBullets: 3,
-    shieldHitPoints: 3
+    WIDTH: 40,
+    HEIGHT: 30,
+    SPEED: 300,  // pixels per second
+    SHOOT_COOLDOWN: 0.2,  // seconds
+    MAX_BULLETS: 3,
+    SHIELD_MAX: 3,
+    SHIELD_HIT_SIZE: 35,
+    THRUSTER_PARTICLES: 3  // particles per frame when moving
 };
 
-// Enemy settings
 export const ENEMY = {
-    width: 35,
-    height: 25,
-    baseSpeed: 50,
-    speedIncreasePerKill: 0.5,
-    fireRate: 0.003, // per enemy per second
-    fireRateMultiplier: 1, // increases every 5 levels
-    formationRows: 5,
-    formationCols: 8,
-    rowSpacing: 50,
-    colSpacing: 60,
-    startMarginTop: 80,
-    startMarginSide: 50,
-    dropDistance: 25,
-    idlePulseSpeed: 2
+    WIDTH: 35,
+    HEIGHT: 30,
+    GRID_ROWS: 5,
+    GRID_COLS: 8,
+    GRID_PADDING_X: 40,
+    GRID_PADDING_Y: 30,
+    GRID_START_Y: 80,
+    MOVE_SPEED_BASE: 50,  // pixels per second
+    MOVE_SPEED_MAX: 150,
+    DROP_DISTANCE: 25,  // pixels down when hitting edge
+    FIRE_RATE_BASE: 0.002,  // base fire probability per enemy per frame
+    FIRE_RATE_LEVEL_BOOST: 0.001,  // additional per level
+    FIRE_RATE_BOOST_EVERY_5: 0.5  // 50% increase every 5 levels
 };
 
-// Enemy type specifics
 export const ENEMY_TYPES = {
     A: {
+        name: 'Drone',
         hp: 1,
         points: 100,
-        speed: 1,
-        color: COLORS.enemyA,
-        shape: 'diamond'
+        speed: 1.0,
+        color: COLORS.ENEMY_A,
+        shape: 'diamond',
+        appears: 1
     },
     B: {
+        name: 'Tank',
         hp: 2,
         points: 250,
         speed: 0.7,
-        color: COLORS.enemyB,
-        shape: 'hexagon'
+        color: COLORS.ENEMY_B,
+        shape: 'hexagon',
+        appears: 2
     },
     C: {
+        name: 'Scout',
         hp: 1,
         points: 200,
         speed: 1.5,
-        color: COLORS.enemyC,
-        shape: 'triangle'
+        color: COLORS.ENEMY_C,
+        shape: 'triangle',
+        appears: 3
     }
 };
 
-// Projectile settings
 export const PROJECTILE = {
-    playerSpeed: 500,
-    enemySpeed: 200,
-    playerWidth: 4,
-    playerHeight: 15,
-    enemyWidth: 6,
-    enemyHeight: 12,
-    maxPlayerBullets: 3
+    PLAYER_SPEED: 500,
+    ENEMY_SPEED: 200,
+    PLAYER_WIDTH: 4,
+    PLAYER_HEIGHT: 12,
+    ENEMY_WIDTH: 5,
+    ENEMY_HEIGHT: 10
 };
 
-// Power-up settings
+export const PARTICLES = {
+    EXPLOSION_COUNT: 20,  // particles per explosion
+    EXPLOSION_LIFE: 0.5,  // seconds
+    THRUSTER_LIFE: 0.3,
+    IMPACT_COUNT: 6,
+    IMPACT_LIFE: 0.2,
+    POWERUP_COLLECT_COUNT: 12,
+    POWERUP_COLLECT_LIFE: 0.4
+};
+
 export const POWERUP = {
-    dropChance: 0.1,
-    width: 30,
-    height: 30,
-    fallSpeed: 80,
-    pulseSpeed: 3,
-    duration: 8, // seconds for active effects
-    types: ['rapid', 'shield', 'spread']
+    WIDTH: 30,
+    HEIGHT: 30,
+    DROP_SPEED: 80,  // pixels per second
+    DESPAWN_Y: 550,
+    CHANCE: 0.1,  // 10% chance on enemy death
+    DURATION: 8,  // seconds for timed power-ups
+    TYPES: {
+        RAPID_FIRE: 'R',
+        SHIELD_REPAIR: 'S',
+        SPREAD_SHOT: 'W'
+    }
 };
 
-// Particle settings
-export const PARTICLE = {
-    explosionCount: 20,
-    explosionLife: 0.5,
-    thrusterCount: 3,
-    thrusterLife: 0.3,
-    impactCount: 6,
-    impactLife: 0.2,
-    powerupCount: 12,
-    powerupLife: 0.4
-};
-
-// Combo settings
 export const COMBO = {
-    maxCombo: 5,
-    resetTime: 1.5 // seconds
+    MAX_TIME: 1.5,  // seconds between kills to maintain combo
+    MAX_MULTIPLIER: 5
 };
 
-// Level settings
 export const LEVEL = {
-    transitionTime: 2, // seconds
-    startRowOffset: 0,
-    rowOffsetPerLevel: 10,
-    fireRateLevelInterval: 5
+    TRANSITION_TIME: 2,  // seconds for level transition screen
+    START_Y_INCREMENT: 10  // enemies start lower each level
 };
 
-// Game settings
-export const GAME = {
-    comboResetTime: 1.5,
-    highScoreKey: 'neonInvadersHighScore'
-};
-
-// Audio settings
 export const AUDIO = {
-    enabled: true,
-    volume: 0.3
+    PLAYER_SHOOT_FREQ: 880,
+    PLAYER_SHOOT_DECAY: 0.1,
+    ENEMY_SHOOT_FREQ: 440,
+    ENEMY_SHOOT_DECAY: 0.08,
+    ENEMY_DESTROY_START: 200,
+    ENEMY_DESTROY_END: 50,
+    ENEMY_DESTROY_DECAY: 0.3,
+    PLAYER_HIT_FREQ: 100,
+    PLAYER_HIT_DECAY: 0.2,
+    POWERUP_NOTES: [523.25, 659.25, 783.99],  // C5, E5, G5
+    POWERUP_DECAY: 0.05,
+    LEVEL_NOTES: [261.63, 329.63, 392.00, 523.25],  // C4, E4, G4, C5
+    LEVEL_DECAY: 0.1,
+    GAMEOVER_START: 300,
+    GAMEOVER_END: 100,
+    GAMEOVER_DECAY: 0.8
 };
 
-// Input settings
-export const INPUT = {
-    left: ['ArrowLeft', 'KeyA'],
-    right: ['ArrowRight', 'KeyD'],
-    shoot: ['Space'],
-    start: ['Enter']
-};
+export const SHADOW_BLUR = 15;
+export const GLOW_OPACITY = 0.3;

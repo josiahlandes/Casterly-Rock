@@ -27,7 +27,9 @@ import { join } from 'node:path';
 import type { Task, TaskArtifact, PlanStep, FileOperation } from './task-board-types.js';
 import { detectProjectDir, writeProjectMd } from './project-store.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
-import { selectDeepTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
+import { selectDeepTier, selectDeepReviewTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
+import type { ReviewResult } from './task-board-types.js';
+import { REVIEW_SYSTEM_PROMPT, REVIEW_FORMAT_SCHEMA, CASCADE_REVIEW_PROMPTS, buildReviewPrompt, parseReviewResponse } from './review-prompt.js';
 import { runIdleCheck } from './deep-loop-events.js';
 import type { DeepLoopEventConfig } from './deep-loop-events.js';
 
@@ -453,10 +455,10 @@ export class DeepLoop {
       const isHighStakes = fileCount >= 3 || stepCount >= 3;
       const verificationPasses = isHighStakes ? 2 : 1;
 
-      // Submit for review (include workspace manifest for reviewer context)
+      // Update task with implementation results before self-review
       this.taskBoard.update(task.id, {
         status: 'reviewing',
-        owner: null,
+        owner: 'deep', // Keep ownership during self-review
         userFacing: outcome.userFacing,
         implementationNotes: outcome.notes,
         ...(outcome.workspaceManifest && outcome.workspaceManifest.length > 0
@@ -466,10 +468,35 @@ export class DeepLoop {
         ...(verificationPasses > 1 ? { verificationPasses, currentVerificationPass: 0 } : {}),
       });
 
-      tracer.log('deep-loop', 'info', `Task ${task.id} submitted for review`, {
+      tracer.log('deep-loop', 'info', `Task ${task.id} entering self-review`, {
         stepsCompleted: outcome.stepsCompleted,
         artifactCount: outcome.artifacts.length,
+        verificationPasses,
       });
+
+      // Self-review: DeepLoop reviews its own output with the 122B model
+      const reviewResult = await this.selfReview(this.taskBoard.get(task.id)!);
+
+      if (reviewResult.approved) {
+        this.taskBoard.update(task.id, {
+          status: 'done',
+          owner: null,
+          reviewResult: reviewResult.reviewResult,
+          reviewNotes: reviewResult.reviewNotes,
+          resolvedAt: new Date().toISOString(),
+        });
+        tracer.log('deep-loop', 'info', `Task ${task.id} self-review approved, marking done`);
+      } else {
+        this.taskBoard.update(task.id, {
+          status: 'revision',
+          owner: null,
+          reviewResult: reviewResult.reviewResult,
+          reviewNotes: reviewResult.reviewNotes,
+          reviewFeedback: reviewResult.reviewFeedback,
+          currentVerificationPass: 0,
+        });
+        tracer.log('deep-loop', 'info', `Task ${task.id} self-review requests changes, routing to revision`);
+      }
     } catch (error) {
       tracer.log('deep-loop', 'error', `Task ${task.id} failed`, {
         error: error instanceof Error ? error.message : String(error),
@@ -905,11 +932,10 @@ export class DeepLoop {
       // Generate updated user-facing summary
       const userFacing = await this.generateSummary(task, [...existingArtifacts, artifact]);
 
-      // Resubmit for review. Reset cascade pass to 0 so revised code
-      // goes through all verification passes again from scratch.
+      // Self-review the revised output. Keep ownership during review.
       this.taskBoard.update(task.id, {
         status: 'reviewing',
-        owner: null,
+        owner: 'deep',
         artifacts: [...existingArtifacts, artifact],
         userFacing,
         reviewResult: undefined,
@@ -918,7 +944,28 @@ export class DeepLoop {
         ...(task.verificationPasses ? { currentVerificationPass: 0 } : {}),
       });
 
-      tracer.log('deep-loop', 'info', `Revision complete for ${task.id}, resubmitted for review`);
+      const reviewResult = await this.selfReview(this.taskBoard.get(task.id)!);
+
+      if (reviewResult.approved) {
+        this.taskBoard.update(task.id, {
+          status: 'done',
+          owner: null,
+          reviewResult: reviewResult.reviewResult,
+          reviewNotes: reviewResult.reviewNotes,
+          resolvedAt: new Date().toISOString(),
+        });
+        tracer.log('deep-loop', 'info', `Revision for ${task.id} self-review approved, marking done`);
+      } else {
+        this.taskBoard.update(task.id, {
+          status: 'revision',
+          owner: null,
+          reviewResult: reviewResult.reviewResult,
+          reviewNotes: reviewResult.reviewNotes,
+          reviewFeedback: reviewResult.reviewFeedback,
+          currentVerificationPass: 0,
+        });
+        tracer.log('deep-loop', 'info', `Revision for ${task.id} self-review requests further changes`);
+      }
     } catch (error) {
       tracer.log('deep-loop', 'error', `Revision failed for ${task.id}`, {
         error: error instanceof Error ? error.message : String(error),
@@ -967,6 +1014,94 @@ export class DeepLoop {
       // Fallback summary if generation fails
       return `Done — completed ${task.plan ?? 'your request'}.`;
     }
+  }
+
+  // ── Self-Review ─────────────────────────────────────────────────────────
+
+  /**
+   * Self-review the task's artifacts using the 122B model.
+   *
+   * Single structured-output generate call per cascade pass (NOT a ReAct
+   * tool loop). The model reviews its own output for correctness and security.
+   *
+   * For high-stakes tasks, runs multiple passes:
+   *   Pass 0: Correctness review (REVIEW_SYSTEM_PROMPT)
+   *   Pass 1: Security review (CASCADE_REVIEW_PROMPTS[0])
+   */
+  private async selfReview(task: Task): Promise<{
+    approved: boolean;
+    reviewResult: ReviewResult;
+    reviewNotes: string;
+    reviewFeedback?: string;
+  }> {
+    const tracer = getTracer();
+    const plan = task.plan ?? '(no plan)';
+    const artifacts = task.artifacts ?? [];
+    const totalPasses = task.verificationPasses ?? 1;
+    let currentPass = task.currentVerificationPass ?? 0;
+
+    while (currentPass < totalPasses) {
+      const systemPrompt = currentPass === 0
+        ? REVIEW_SYSTEM_PROMPT
+        : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
+
+      const reviewPrompt = buildReviewPrompt({ plan, artifacts });
+
+      // Select tier based on measured content size
+      const tier = selectDeepReviewTier(
+        reviewPrompt.length,
+        systemPrompt.length,
+        this.config.tiers,
+        1024,
+      );
+
+      tracer.log('deep-loop', 'info',
+        `Self-review pass ${currentPass + 1}/${totalPasses} for ${task.id}`, {
+          tier,
+          promptChars: reviewPrompt.length,
+        });
+
+      const response = await this.callWithTier(tier, {
+        prompt: reviewPrompt,
+        systemPrompt,
+        temperature: 0.1,
+        maxTokens: 1024,
+        providerOptions: { format: REVIEW_FORMAT_SCHEMA, think: false },
+      });
+
+      const outcome = parseReviewResponse(response);
+
+      // Write intermediate review state to TaskBoard for visibility
+      this.taskBoard.update(task.id, {
+        reviewResult: outcome.result,
+        reviewNotes: outcome.notes,
+        reviewFeedback: outcome.feedback,
+        currentVerificationPass: currentPass,
+      });
+
+      if (outcome.result !== 'approved') {
+        tracer.log('deep-loop', 'info',
+          `Self-review pass ${currentPass + 1} found issues for ${task.id}: ${outcome.result}`, {
+            notes: outcome.notes?.slice(0, 200),
+          });
+        return {
+          approved: false,
+          reviewResult: outcome.result,
+          reviewNotes: outcome.notes,
+          ...(outcome.feedback ? { reviewFeedback: outcome.feedback } : {}),
+        };
+      }
+
+      tracer.log('deep-loop', 'info',
+        `Self-review pass ${currentPass + 1}/${totalPasses} approved for ${task.id}`);
+      currentPass++;
+    }
+
+    return {
+      approved: true,
+      reviewResult: 'approved',
+      reviewNotes: `All ${totalPasses} review pass(es) approved`,
+    };
   }
 
   // ── Coder Dispatch ──────────────────────────────────────────────────────

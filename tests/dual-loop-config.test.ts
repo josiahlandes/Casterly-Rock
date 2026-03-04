@@ -17,7 +17,6 @@ describe('parseDualLoopRuntimeConfig', () => {
         enabled: true,
         fast: {
           heartbeat_ms: 1500,
-          review_enabled: false,
         },
         deep: {
           model: 'mlx-community/Qwen3.5-122B-A10B-4bit',
@@ -56,7 +55,6 @@ describe('parseDualLoopRuntimeConfig', () => {
     expect(parsed.enabled).toBe(true);
     expect(parsed.coordinatorConfig?.fast).toEqual({
       heartbeatMs: 1500,
-      reviewEnabled: false,
     });
     expect(parsed.coordinatorConfig?.deep).toEqual({
       model: 'mlx-community/Qwen3.5-122B-A10B-4bit',

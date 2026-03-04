@@ -43,10 +43,18 @@ export {
   selectDeepTier,
   selectCoderTier,
   selectReviewTier,
+  selectDeepReviewTier,
   resolveNumCtx,
   buildProviderOptions,
   estimateTokens,
+  checkContextPressure,
+  buildPressureWarning,
+  compressPrompt,
   DEFAULT_CONTEXT_TIERS,
+} from './context-tiers.js';
+
+export type {
+  ContextPressureResult,
 } from './context-tiers.js';
 
 // ── Fast Loop ─────────────────────────────────────────────────────────────────

@@ -25,7 +25,7 @@ export type TaskStatus =
   | 'queued'              // Created by FastLoop, waiting for DeepLoop
   | 'planning'            // DeepLoop is planning the approach
   | 'implementing'        // DeepLoop is dispatching to Coder
-  | 'reviewing'           // FastLoop is reviewing the output
+  | 'reviewing'           // DeepLoop is self-reviewing the output
   | 'revision'            // DeepLoop is addressing review feedback
   | 'done'                // Completed successfully
   | 'failed'              // Failed after retries
@@ -47,7 +47,7 @@ export type TaskOwner = 'fast' | 'deep' | null;
 export type TaskClassification = 'simple' | 'complex' | 'conversational';
 
 /**
- * Review outcome written by the FastLoop.
+ * Review outcome written by DeepLoop self-review.
  */
 export type ReviewResult = 'approved' | 'changes_requested' | 'rejected';
 
@@ -98,8 +98,9 @@ export interface ParkedState {
  * The core Task entity. Central to the dual-loop coordination protocol.
  *
  * Fields are written by different loops at different lifecycle stages:
- *   - FastLoop writes: classification, triageNotes, reviewResult, reviewNotes, reviewFeedback
- *   - DeepLoop writes: plan, planSteps, artifacts, implementationNotes, userFacing, resolution
+ *   - FastLoop writes: classification, triageNotes
+ *   - DeepLoop writes: plan, planSteps, artifacts, implementationNotes, userFacing, resolution,
+ *     reviewResult, reviewNotes, reviewFeedback (via self-review)
  *   - Either loop writes: status, owner (via atomic TaskBoard operations)
  */
 export interface Task {
@@ -132,7 +133,7 @@ export interface Task {
   workspaceManifest?: FileOperation[] | undefined;
   projectDir?: string | undefined;           // e.g. "projects/neon-invaders"
 
-  // ── Review (written by FastLoop) ──────────────────────────────────────────
+  // ── Review (written by DeepLoop self-review) ────────────────────────────
   reviewResult?: ReviewResult | undefined;
   reviewNotes?: string | undefined;
   reviewFeedback?: string | undefined;

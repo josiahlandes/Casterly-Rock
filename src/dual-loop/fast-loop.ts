@@ -4,10 +4,12 @@
  * Runs on a ~2-second heartbeat, handling:
  *   - User message triage and acknowledgment
  *   - Direct answers for simple questions
- *   - Code review of DeepLoop's output
- *   - Status reporting from the TaskBoard
+ *   - Status reporting from the TaskBoard (relays DeepLoop progress)
  *   - Voice filter application before delivery
  *   - Response delivery to user
+ *
+ * Code review is handled by DeepLoop self-review (see deep-loop.ts).
+ * FastLoop serves as a progress relay, not a reviewer.
  *
  * The FastLoop makes independent LLM calls (no persistent conversation
  * across heartbeats). Each operation selects its own context tier for
@@ -22,7 +24,7 @@ import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
 import type { Task } from './task-board-types.js';
 import type { FastTierConfig, ContextTier } from './context-tiers.js';
-import { selectFastTier, selectReviewTier, resolveNumCtx, estimateTokens } from './context-tiers.js';
+import { selectFastTier, resolveNumCtx, estimateTokens } from './context-tiers.js';
 import {
   TRIAGE_SYSTEM_PROMPT,
   TRIAGE_FORMAT_SCHEMA,
@@ -30,14 +32,6 @@ import {
   parseTriageResponse,
 } from './triage-prompt.js';
 import type { TriageResult } from './triage-prompt.js';
-import {
-  REVIEW_SYSTEM_PROMPT,
-  REVIEW_FORMAT_SCHEMA,
-  CASCADE_REVIEW_PROMPTS,
-  buildReviewPrompt,
-  countDiffLines,
-  parseReviewResponse,
-} from './review-prompt.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -53,8 +47,6 @@ export interface FastLoopConfig {
   triageTimeoutMs: number;
   /** Maximum tokens in the rolling user conversation window */
   maxConversationTokens: number;
-  /** Whether code review is enabled */
-  reviewEnabled: boolean;
   /** Coalesce window for batching rapid user messages */
   messageCoalesceMs: number;
   /** Context tier configuration */
@@ -92,7 +84,6 @@ const DEFAULT_CONFIG: FastLoopConfig = {
   heartbeatMs: 2000,
   triageTimeoutMs: 10_000,
   maxConversationTokens: 10_000,
-  reviewEnabled: true,
   messageCoalesceMs: 3000,
   tiers: {
     compact: 4096,
@@ -142,9 +133,8 @@ export class FastLoop {
    *
    * Each heartbeat checks for work in priority order:
    *   1. Pending user messages (coalesced)
-   *   2. Tasks needing review
-   *   3. Completed tasks with responses to deliver
-   *   4. Sleep until next heartbeat
+   *   2. Completed tasks with responses to deliver
+   *   3. Sleep until next heartbeat
    */
   async run(): Promise<void> {
     const tracer = getTracer();
@@ -159,23 +149,14 @@ export class FastLoop {
           continue; // Re-check immediately — more messages may have arrived
         }
 
-        // 2. Review tasks that DeepLoop has completed
-        if (this.config.reviewEnabled) {
-          const reviewable = this.taskBoard.getNextReviewable();
-          if (reviewable) {
-            await this.reviewTask(reviewable);
-            continue;
-          }
-        }
-
-        // 3. Deliver completed task responses
+        // 2. Deliver completed task responses
         const deliverable = this.taskBoard.getCompletedWithResponse();
         if (deliverable) {
           await this.deliverResponse(deliverable);
           continue;
         }
 
-        // 4. Nothing to do — sleep until next heartbeat
+        // 3. Nothing to do — sleep until next heartbeat
         await this.sleep(this.config.heartbeatMs);
       } catch (error) {
         tracer.log('fast-loop', 'error', 'FastLoop heartbeat error', {
@@ -359,105 +340,6 @@ export class FastLoop {
     }
   }
 
-  // ── Code Review ─────────────────────────────────────────────────────────
-
-  /**
-   * Review a task's artifacts and write the review result to the TaskBoard.
-   */
-  async reviewTask(task: Task): Promise<void> {
-    const tracer = getTracer();
-
-    // Claim the task for review
-    const claimed = this.taskBoard.claimNext('fast', ['reviewing']);
-    if (!claimed || claimed.id !== task.id) return;
-
-    tracer.log('fast-loop', 'info', `Reviewing task: ${task.id}`);
-
-    const plan = task.plan ?? '(no plan)';
-    const artifacts = task.artifacts ?? [];
-
-    // Select context tier based on diff size
-    const diffLines = countDiffLines(artifacts);
-    const reviewOp = selectReviewTier(diffLines, this.config.tiers);
-    const tier = selectFastTier(reviewOp);
-
-    const reviewPrompt = buildReviewPrompt({ plan, artifacts });
-
-    try {
-      // Determine which cascade pass we're on and select the appropriate prompt.
-      const currentPass = task.currentVerificationPass ?? 0;
-      const totalPasses = task.verificationPasses ?? 1;
-      const systemPrompt = currentPass === 0
-        ? REVIEW_SYSTEM_PROMPT
-        : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
-
-      const response = await this.callWithTier(tier, {
-        prompt: reviewPrompt,
-        systemPrompt,
-        temperature: 0.1,
-        maxTokens: 1024,
-        providerOptions: { format: REVIEW_FORMAT_SCHEMA },
-      });
-
-      const outcome = parseReviewResponse(response);
-
-      // Verification cascade: if approved but more passes remain, re-review
-      // with the next cascade prompt instead of marking done.
-      if (outcome.result === 'approved' && currentPass + 1 < totalPasses) {
-        const nextPass = currentPass + 1;
-        tracer.log('fast-loop', 'info',
-          `Cascade pass ${currentPass + 1}/${totalPasses} approved for ${task.id}, advancing to pass ${nextPass + 1}`, {
-            diffLines,
-            tier,
-          });
-
-        this.taskBoard.update(task.id, {
-          currentVerificationPass: nextPass,
-          reviewResult: undefined,
-          reviewNotes: undefined,
-          reviewFeedback: undefined,
-          // Stay in 'reviewing' with null owner so FastLoop picks it up again
-          status: 'reviewing',
-          owner: null,
-        });
-        return;
-      }
-
-      const newStatus = outcome.result === 'approved' ? 'done' as const : 'revision' as const;
-
-      this.taskBoard.update(task.id, {
-        reviewResult: outcome.result,
-        reviewNotes: outcome.notes,
-        reviewFeedback: outcome.feedback,
-        status: newStatus,
-        owner: null,
-        ...(outcome.result === 'approved' ? { resolvedAt: new Date().toISOString() } : {}),
-        // Reset cascade pass on revision so it starts from pass 0 after fixes
-        ...(outcome.result !== 'approved' ? { currentVerificationPass: 0 } : {}),
-      });
-
-      tracer.log('fast-loop', 'info', `Review complete: ${task.id} → ${outcome.result}`, {
-        diffLines,
-        tier,
-        cascadePass: currentPass + 1,
-        totalPasses,
-      });
-    } catch (error) {
-      tracer.log('fast-loop', 'error', `Review failed for ${task.id}, routing to revision`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      // On review failure, request revision with deterministic feedback.
-      this.taskBoard.update(task.id, {
-        reviewResult: 'changes_requested',
-        reviewNotes: 'Review failed because the reviewer model call errored',
-        reviewFeedback: 'Re-run implementation and include a concise correctness and safety self-check in implementation notes before re-review.',
-        status: 'revision',
-        owner: null,
-      });
-    }
-  }
-
   // ── Response Delivery ───────────────────────────────────────────────────
 
   /**
@@ -488,7 +370,6 @@ export class FastLoop {
    * Build a status summary from the TaskBoard for the user.
    */
   async buildStatusReport(): Promise<string> {
-    const counts = this.taskBoard.getStatusCounts();
     const active = this.taskBoard.getActive();
     const completedToday = this.taskBoard.getCompletedToday();
 
@@ -496,7 +377,26 @@ export class FastLoop {
 
     for (const task of active.slice(0, 5)) {
       const ownerTag = task.owner ? ` [${task.owner}]` : '';
-      lines.push(`• ${task.id} — ${task.status}${ownerTag}: ${task.originalMessage?.slice(0, 50) ?? '?'}`);
+      let progress = '';
+
+      // Show step-level progress for in-flight DeepLoop tasks
+      if (task.owner === 'deep' && task.planSteps && task.planSteps.length > 0) {
+        const completed = task.planSteps.filter((s) => s.status === 'done').length;
+        const current = task.planSteps.find((s) => s.status === 'in_progress');
+        progress = ` (${completed}/${task.planSteps.length} steps)`;
+        if (current) {
+          progress += ` — ${current.description?.slice(0, 40) ?? 'working...'}`;
+        }
+      }
+
+      // Show review status for self-reviewing tasks
+      if (task.status === 'reviewing' && task.owner === 'deep') {
+        const pass = (task.currentVerificationPass ?? 0) + 1;
+        const total = task.verificationPasses ?? 1;
+        progress = ` (self-review pass ${pass}/${total})`;
+      }
+
+      lines.push(`• ${task.id} — ${task.status}${ownerTag}${progress}: ${task.originalMessage?.slice(0, 50) ?? '?'}`);
     }
 
     return lines.join('\n');

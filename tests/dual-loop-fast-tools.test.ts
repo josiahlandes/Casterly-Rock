@@ -30,9 +30,9 @@ describe('Fast Tools', () => {
   });
 
   describe('buildFastToolSchemas', () => {
-    it('returns 6 tool schemas', () => {
+    it('returns 5 tool schemas', () => {
       const schemas = buildFastToolSchemas();
-      expect(schemas).toHaveLength(6);
+      expect(schemas).toHaveLength(5);
     });
 
     it('includes expected tool names', () => {
@@ -41,7 +41,6 @@ describe('Fast Tools', () => {
       expect(names).toContain('create_task');
       expect(names).toContain('read_task');
       expect(names).toContain('read_task_artifacts');
-      expect(names).toContain('write_review');
       expect(names).toContain('think');
     });
 
@@ -55,9 +54,9 @@ describe('Fast Tools', () => {
   });
 
   describe('buildFastToolkit', () => {
-    it('returns 6 tools with schemas and executors', () => {
+    it('returns 5 tools with schemas and executors', () => {
       const tools = buildFastToolkit();
-      expect(tools).toHaveLength(6);
+      expect(tools).toHaveLength(5);
       for (const tool of tools) {
         expect(tool.schema).toBeDefined();
         expect(typeof tool.execute).toBe('function');
@@ -126,45 +125,6 @@ describe('Fast Tools', () => {
       const result = await executeFastTool('read_task_artifacts', { id }, tools, ctx);
       const parsed = JSON.parse(result) as { artifacts: unknown[]; message: string };
       expect(parsed.artifacts).toHaveLength(0);
-    });
-
-    it('write_review approves a reviewing task', async () => {
-      const id = ctx.taskBoard.create({
-        origin: 'user', priority: 0, originalMessage: 'test',
-        triageNotes: '',
-      });
-      ctx.taskBoard.update(id, { status: 'reviewing' });
-
-      const result = await executeFastTool('write_review', {
-        id,
-        result: 'approved',
-        notes: 'LGTM',
-      }, tools, ctx);
-
-      const parsed = JSON.parse(result) as { reviewed: string; result: string; newStatus: string };
-      expect(parsed.result).toBe('approved');
-      expect(parsed.newStatus).toBe('done');
-
-      // Verify the task was updated
-      const task = ctx.taskBoard.get(id)!;
-      expect(task.status).toBe('done');
-      expect(task.reviewResult).toBe('approved');
-    });
-
-    it('write_review rejects non-reviewing tasks', async () => {
-      const id = ctx.taskBoard.create({
-        origin: 'user', priority: 0, originalMessage: 'test',
-        triageNotes: '',
-      });
-
-      const result = await executeFastTool('write_review', {
-        id,
-        result: 'approved',
-        notes: 'test',
-      }, tools, ctx);
-
-      const parsed = JSON.parse(result) as { error: string };
-      expect(parsed.error).toContain('not in reviewing status');
     });
 
     it('think returns acknowledgment', async () => {

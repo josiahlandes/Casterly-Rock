@@ -141,12 +141,12 @@ dual_loop:
   # used internally by the DeepLoop for ReAct execution.
   enabled: true    # Dual-loop mode active
 
-  # FastLoop settings (35B-A3B MoE — triage, review, delivery)
+  # FastLoop settings (35B-A3B MoE — triage, status relay, delivery)
+  # Code review is handled by DeepLoop self-review (see deep-loop.ts).
   fast:
     heartbeat_ms: 2000
     triage_timeout_ms: 10000
     max_conversation_tokens: 10000
-    review_enabled: true
     message_coalesce_ms: 3000
 
   # DeepLoop settings (122B model — planning, execution)
@@ -311,6 +311,56 @@ hardware:
 
   # Best-of-N judging model
   bestofn_judge_model: qwen3.5:122b
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # TEST-TIME COMPUTE SCALING (Tier 4: dynamic compute budget allocation)
+  # Dynamically allocate compute budget based on task difficulty.
+  # Easy tasks get fast, single-pass treatment. Hard tasks get extended
+  # reasoning, multiple attempts, and deep verification cascades.
+  # The model self-assesses difficulty and the system calibrates over time.
+  # See docs/roadmap.md Tier 4, Item 13.
+  # ─────────────────────────────────────────────────────────────────────────────
+  compute_scaling:
+    # Enable model self-assessment of task difficulty
+    self_assessment_enabled: true
+
+    # Enable calibration tracking (predicted vs actual difficulty)
+    calibration_enabled: true
+
+    # Maximum calibration records to retain
+    max_calibration_records: 500
+
+    # Minimum records before using calibration data for adjustments
+    min_records_for_calibration: 20
+
+    # Weight given to calibration data vs heuristics (0.0-1.0)
+    calibration_weight: 0.3
+
+    # Per-difficulty budgets (overrides for defaults)
+    budgets:
+      easy:
+        max_turns: 10
+        verification_depth: 1
+        max_retries: 1
+        parallel_candidates: 1
+        temperature: 0.1
+        context_tier: standard
+      medium:
+        max_turns: 25
+        verification_depth: 2
+        max_retries: 2
+        parallel_candidates: 2
+        temperature: 0.2
+        context_tier: standard
+      hard:
+        max_turns: 50
+        verification_depth: 3
+        max_retries: 3
+        parallel_candidates: 4
+        temperature: 0.3
+        max_tokens: 8192
+        context_tier: extended
+        use_judge: true
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DREAM CYCLES (Phase 6: quiet-hours strategic consolidation)

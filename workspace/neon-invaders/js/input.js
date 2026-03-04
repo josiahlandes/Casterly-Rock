@@ -1,56 +1,86 @@
-// Keyboard input handler
+// Keyboard Input Handler
 
-class InputHandler {
+export class InputHandler {
     constructor() {
-        this.keys = {};
-        this.justPressed = {};
-        this.justReleased = {};
+        this.keys = new Set();
+        this.keyDownCallbacks = new Map();
+        this.keyUpCallbacks = new Map();
         
-        window.addEventListener('keydown', (e) => this.handleKeyDown(e));
-        window.addEventListener('keyup', (e) => this.handleKeyUp(e));
+        this.bindEvents();
     }
     
-    handleKeyDown(e) {
-        if (!this.keys[e.code]) {
-            this.justPressed[e.code] = true;
+    bindEvents() {
+        window.addEventListener('keydown', (e) => this.onKeyDown(e));
+        window.addEventListener('keyup', (e) => this.onKeyUp(e));
+    }
+    
+    onKeyDown(e) {
+        const key = e.code;
+        if (!this.keys.has(key)) {
+            this.keys.add(key);
+            // Trigger callbacks for this key
+            if (this.keyDownCallbacks.has(key)) {
+                this.keyDownCallbacks.get(key)();
+            }
         }
-        this.keys[e.code] = true;
-    }
-    
-    handleKeyUp(e) {
-        this.keys[e.code] = false;
-        this.justReleased[e.code] = true;
-    }
-    
-    isDown(code) {
-        return this.keys[code] === true;
-    }
-    
-    isJustPressed(code) {
-        if (this.justPressed[code]) {
-            this.justPressed[code] = false;
-            return true;
+        // Prevent default for game keys
+        if (['ArrowLeft', 'ArrowRight', 'Space', 'KeyA', 'KeyD', 'Enter'].includes(key)) {
+            e.preventDefault();
         }
-        return false;
     }
     
-    isJustReleased(code) {
-        if (this.justReleased[code]) {
-            this.justReleased[code] = false;
-            return true;
+    onKeyUp(e) {
+        const key = e.code;
+        this.keys.delete(key);
+        // Trigger callbacks for this key
+        if (this.keyUpCallbacks.has(key)) {
+            this.keyUpCallbacks.get(key)();
         }
-        return false;
     }
     
-    // Check if any key from a list is pressed
-    isAnyDown(codes) {
-        return codes.some(code => this.keys[code]);
+    isPressed(key) {
+        return this.keys.has(key);
     }
     
-    // Check if any key from a list was just pressed
-    isAnyJustPressed(codes) {
-        return codes.some(code => this.isJustPressed(code));
+    isAnyPressed(keys) {
+        return keys.some(k => this.keys.has(k));
+    }
+    
+    onKeyPress(key, callback) {
+        this.keyDownCallbacks.set(key, callback);
+    }
+    
+    onKeyRelease(key, callback) {
+        this.keyUpCallbacks.set(key, callback);
+    }
+    
+    // Convenience methods for common game controls
+    isLeft() {
+        return this.isPressed('ArrowLeft') || this.isPressed('KeyA');
+    }
+    
+    isRight() {
+        return this.isPressed('ArrowRight') || this.isPressed('KeyD');
+    }
+    
+    isShoot() {
+        return this.isPressed('Space');
+    }
+    
+    isStart() {
+        return this.isPressed('Enter');
+    }
+    
+    // Reset all keys (useful for state transitions)
+    reset() {
+        this.keys.clear();
+    }
+    
+    // Get all currently pressed keys
+    getPressedKeys() {
+        return Array.from(this.keys);
     }
 }
 
-export default InputHandler;
+// Export a singleton instance
+export const input = new InputHandler();

@@ -1,118 +1,151 @@
-// Animated background: grid, stars, scan lines
+// Background Module (Perspective grid, star field, scan lines)
 
-import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './config.js';
+import { COLORS, CANVAS } from './config.js';
 
 class Background {
     constructor() {
-        this.stars = this.createStars();
+        this.starField1 = this.createStarField(80, 1);
+        this.starField2 = this.createStarField(50, 0.5);
         this.scanLineY = 0;
-        this.time = 0;
+        this.gridOffsetY = 0;
+        this.animTimer = 0;
     }
     
-    createStars() {
+    createStarField(count, depth) {
         const stars = [];
-        // Two depth layers
-        for (let i = 0; i < 100; i++) {
+        for (let i = 0; i < count; i++) {
             stars.push({
-                x: Math.random() * CANVAS_WIDTH,
-                y: Math.random() * CANVAS_HEIGHT,
-                size: Math.random() * 2 + 0.5,
-                brightness: Math.random(),
-                depth: Math.random() > 0.5 ? 1 : 2 // 1 = far, 2 = near
+                x: Math.random() * CANVAS.WIDTH,
+                y: Math.random() * CANVAS.HEIGHT,
+                brightness: 0.3 + Math.random() * 0.7,
+                size: depth * (0.5 + Math.random() * 1)
             });
         }
         return stars;
     }
     
     update(dt) {
-        this.time += dt;
+        this.animTimer += dt;
         
-        // Move stars (parallax)
-        this.stars.forEach(star => {
-            star.y += star.depth * 10 * dt;
-            if (star.y > CANVAS_HEIGHT) {
+        // Move stars slowly
+        for (const star of this.starField1) {
+            star.y += 10 * dt;
+            if (star.y > CANVAS.HEIGHT) {
                 star.y = 0;
-                star.x = Math.random() * CANVAS_WIDTH;
+                star.x = Math.random() * CANVAS.WIDTH;
             }
-            // Twinkle
-            star.brightness += (Math.random() - 0.5) * 0.1;
-            star.brightness = Math.max(0.3, Math.min(1, star.brightness));
-        });
+        }
         
-        // Move scan line
+        for (const star of this.starField2) {
+            star.y += 5 * dt;
+            if (star.y > CANVAS.HEIGHT) {
+                star.y = 0;
+                star.x = Math.random() * CANVAS.WIDTH;
+            }
+        }
+        
+        // Animate scan line
         this.scanLineY += 50 * dt;
-        if (this.scanLineY > CANVAS_HEIGHT) {
+        if (this.scanLineY > CANVAS.HEIGHT) {
             this.scanLineY = 0;
+        }
+        
+        // Animate grid
+        this.gridOffsetY += 30 * dt;
+        if (this.gridOffsetY > 40) {
+            this.gridOffsetY = 0;
         }
     }
     
     draw(ctx) {
-        // Fill background
-        ctx.fillStyle = COLORS.background;
-        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        // Clear with background color
+        ctx.fillStyle = COLORS.BACKGROUND;
+        ctx.fillRect(0, 0, CANVAS.WIDTH, CANVAS.HEIGHT);
         
         // Draw perspective grid
         this.drawGrid(ctx);
         
-        // Draw stars
-        this.drawStars(ctx);
+        // Draw star fields
+        this.drawStars(ctx, this.starField2);  // Far stars (dimmer, slower)
+        this.drawStars(ctx, this.starField1);  // Near stars (brighter, faster)
         
         // Draw scan lines
         this.drawScanLines(ctx);
     }
     
     drawGrid(ctx) {
-        ctx.strokeStyle = COLORS.grid;
-        ctx.lineWidth = 1;
+        ctx.save();
         
         // Vertical lines (perspective)
-        const centerX = CANVAS_WIDTH / 2;
-        const vanishingY = 150;
+        const centerX = CANVAS.WIDTH / 2;
+        const vanishingY = 150;  // Vanishing point Y
         
+        ctx.strokeStyle = 'rgba(0, 255, 245, 0.1)';
+        ctx.lineWidth = 1;
+        
+        // Draw vertical perspective lines
         for (let i = -10; i <= 10; i++) {
-            const x = centerX + i * 40;
+            const x = centerX + i * 60;
             ctx.beginPath();
             ctx.moveTo(x, 0);
-            ctx.lineTo(centerX + i * 150, CANVAS_HEIGHT);
+            ctx.lineTo(centerX + i * 200, CANVAS.HEIGHT);
             ctx.stroke();
         }
         
-        // Horizontal lines (perspective, fading toward vanishing point)
+        // Horizontal lines (moving down)
+        ctx.strokeStyle = 'rgba(0, 255, 245, 0.05)';
+        
         for (let i = 0; i < 15; i++) {
-            const y = vanishingY + i * 35;
-            const alpha = 1 - (i / 15);
-            ctx.globalAlpha = alpha * 0.5;
+            // Perspective horizontal lines
+            const y = vanishingY + i * 30 + this.gridOffsetY;
+            if (y > CANVAS.HEIGHT) continue;
+            
+            // Calculate width at this Y (narrower near vanishing point)
+            const progress = (y - vanishingY) / (CANVAS.HEIGHT - vanishingY);
+            const width = 20 + progress * 780;
+            const xStart = (CANVAS.WIDTH - width) / 2;
+            
             ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(CANVAS_WIDTH, y);
+            ctx.moveTo(xStart, y);
+            ctx.lineTo(xStart + width, y);
             ctx.stroke();
         }
-        ctx.globalAlpha = 1;
+        
+        ctx.restore();
     }
     
-    drawStars(ctx) {
-        this.stars.forEach(star => {
-            ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+    drawStars(ctx, stars) {
+        ctx.save();
+        
+        for (const star of stars) {
+            const alpha = star.brightness;
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
             ctx.beginPath();
             ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
             ctx.fill();
-        });
+        }
+        
+        ctx.restore();
     }
     
     drawScanLines(ctx) {
-        ctx.strokeStyle = COLORS.scanline;
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.1;
+        ctx.save();
         
-        for (let y = this.scanLineY; y < CANVAS_HEIGHT; y += 4) {
+        // Draw horizontal scan lines
+        ctx.strokeStyle = COLORS.SCANLINE;
+        ctx.lineWidth = 2;
+        
+        const spacing = 4;
+        for (let y = this.scanLineY; y < CANVAS.HEIGHT; y += spacing) {
             ctx.beginPath();
             ctx.moveTo(0, y);
-            ctx.lineTo(CANVAS_WIDTH, y);
+            ctx.lineTo(CANVAS.WIDTH, y);
             ctx.stroke();
         }
         
-        ctx.globalAlpha = 1;
+        ctx.restore();
     }
 }
 
-export default Background;
+// Export singleton
+export const background = new Background();

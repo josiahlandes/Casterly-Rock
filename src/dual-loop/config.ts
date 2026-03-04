@@ -64,9 +64,6 @@ function parseFastConfig(raw: Record<string, unknown>): Partial<FastLoopConfig> 
   const maxConversationTokens = readPositiveInt(raw, 'max_conversation_tokens');
   if (maxConversationTokens !== undefined) fast.maxConversationTokens = maxConversationTokens;
 
-  const reviewEnabled = readBoolean(raw, 'review_enabled');
-  if (reviewEnabled !== undefined) fast.reviewEnabled = reviewEnabled;
-
   const messageCoalesceMs = readPositiveInt(raw, 'message_coalesce_ms');
   if (messageCoalesceMs !== undefined) fast.messageCoalesceMs = messageCoalesceMs;
 

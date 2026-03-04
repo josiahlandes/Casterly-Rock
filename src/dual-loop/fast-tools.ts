@@ -8,7 +8,6 @@
  *   - create_task: Create a task for the DeepLoop
  *   - read_task: Read a specific task's details
  *   - read_task_artifacts: Read artifacts (diffs) produced by the DeepLoop
- *   - write_review: Write a review result on a task
  *   - think: Reason without side effects (from existing toolkit)
  *
  * This keeps the 35B-A3B's context overhead minimal (~2K for tool schemas
@@ -19,7 +18,6 @@
 
 import type { ToolSchema } from '../tools/schemas/types.js';
 import type { TaskBoard } from './task-board.js';
-import type { ReviewResult } from './task-board-types.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -87,21 +85,6 @@ const READ_TASK_ARTIFACTS_SCHEMA: ToolSchema = {
       id: { type: 'string', description: 'The task ID' },
     },
     required: ['id'],
-  },
-};
-
-const WRITE_REVIEW_SCHEMA: ToolSchema = {
-  name: 'write_review',
-  description: 'Write a code review result on a task. Use after reading the artifacts.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      id: { type: 'string', description: 'The task ID to review' },
-      result: { type: 'string', enum: ['approved', 'changes_requested', 'rejected'], description: 'Review verdict' },
-      notes: { type: 'string', description: 'Summary of findings' },
-      feedback: { type: 'string', description: 'Specific changes needed (only for changes_requested)' },
-    },
-    required: ['id', 'result', 'notes'],
   },
 };
 
@@ -183,35 +166,6 @@ async function executeReadTaskArtifacts(
   return JSON.stringify({ artifacts: task.artifacts });
 }
 
-async function executeWriteReview(
-  input: Record<string, unknown>,
-  ctx: FastToolContext,
-): Promise<string> {
-  const id = String(input['id'] ?? '');
-  const result = String(input['result'] ?? 'approved') as ReviewResult;
-  const notes = String(input['notes'] ?? '');
-  const feedback = typeof input['feedback'] === 'string' ? input['feedback'] : undefined;
-
-  const task = ctx.taskBoard.get(id);
-  if (!task) return JSON.stringify({ error: `Task not found: ${id}` });
-  if (task.status !== 'reviewing') {
-    return JSON.stringify({ error: `Task ${id} is not in reviewing status (current: ${task.status})` });
-  }
-
-  const newStatus = result === 'approved' ? 'done' as const : 'revision' as const;
-
-  ctx.taskBoard.update(id, {
-    reviewResult: result,
-    reviewNotes: notes,
-    reviewFeedback: feedback,
-    status: newStatus,
-    owner: null,
-    ...(result === 'approved' ? { resolvedAt: new Date().toISOString() } : {}),
-  });
-
-  return JSON.stringify({ reviewed: id, result, newStatus });
-}
-
 async function executeThink(
   input: Record<string, unknown>,
   _ctx: FastToolContext,
@@ -233,7 +187,6 @@ export function buildFastToolSchemas(): ToolSchema[] {
     CREATE_TASK_SCHEMA,
     READ_TASK_SCHEMA,
     READ_TASK_ARTIFACTS_SCHEMA,
-    WRITE_REVIEW_SCHEMA,
     THINK_SCHEMA,
   ];
 }
@@ -248,7 +201,6 @@ export function buildFastToolkit(): FastTool[] {
     { schema: CREATE_TASK_SCHEMA, execute: executeCreateTask },
     { schema: READ_TASK_SCHEMA, execute: executeReadTask },
     { schema: READ_TASK_ARTIFACTS_SCHEMA, execute: executeReadTaskArtifacts },
-    { schema: WRITE_REVIEW_SCHEMA, execute: executeWriteReview },
     { schema: THINK_SCHEMA, execute: executeThink },
   ];
 }

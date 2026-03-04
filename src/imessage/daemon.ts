@@ -375,50 +375,40 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         think: false, // Disable thinking for triage/review — we need plain JSON output
       });
 
-      // DeepLoop provider: use MLX when configured, otherwise Ollama.
-      // MLX achieves 50-87% faster inference on Apple Silicon (Tier 2, Item 5).
+      // DeepLoop provider: MLX (Apple Silicon-native, ~2.5x faster than Ollama).
       const mlxBaseUrl = process.env['MLX_BASE_URL'] || 'http://localhost:8000';
-      const useMlx = process.env['CASTERLY_DEEP_PROVIDER'] === 'mlx';
-      if (useMlx) {
-        const readyRetries = readPositiveIntEnv('CASTERLY_MLX_READY_RETRIES', 20);
-        const retryDelayMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_DELAY_MS', 3000);
-        const retryTimeoutMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_TIMEOUT_MS', 5000);
-        const autoStart = readBooleanEnv('CASTERLY_MLX_AUTOSTART', true);
-        const startWithSpec = readBooleanEnv('CASTERLY_MLX_START_WITH_SPEC', false);
+      const readyRetries = readPositiveIntEnv('CASTERLY_MLX_READY_RETRIES', 20);
+      const retryDelayMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_DELAY_MS', 3000);
+      const retryTimeoutMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_TIMEOUT_MS', 5000);
+      const autoStart = readBooleanEnv('CASTERLY_MLX_AUTOSTART', true);
+      const startWithSpec = readBooleanEnv('CASTERLY_MLX_START_WITH_SPEC', false);
 
-        safeLogger.info('Ensuring MLX server readiness', {
-          baseUrl: mlxBaseUrl,
-          retries: readyRetries,
-          retryDelayMs,
-          retryTimeoutMs,
-          autoStart,
-          startWithSpec,
-        });
+      safeLogger.info('Ensuring MLX server readiness', {
+        baseUrl: mlxBaseUrl,
+        retries: readyRetries,
+        retryDelayMs,
+        retryTimeoutMs,
+        autoStart,
+        startWithSpec,
+      });
 
-        await ensureMlxServerReady(mlxBaseUrl, {
-          projectRoot: process.cwd(),
-          maxAttempts: readyRetries,
-          delayMs: retryDelayMs,
-          timeoutMs: retryTimeoutMs,
-          autoStart,
-          startWithSpec,
-        });
-      }
+      await ensureMlxServerReady(mlxBaseUrl, {
+        projectRoot: process.cwd(),
+        maxAttempts: readyRetries,
+        delayMs: retryDelayMs,
+        timeoutMs: retryTimeoutMs,
+        autoStart,
+        startWithSpec,
+      });
 
-      const deepProvider = useMlx
-        ? new MlxProvider({
-            baseUrl: mlxBaseUrl,
-            model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit',
-            timeoutMs: 1_800_000,
-          })
-        : new OllamaProvider({
-            baseUrl,
-            model: 'qwen3.5:122b',
-            timeoutMs: 1_800_000, // 30 min — coding tasks with 262K context
-          });
+      const deepProvider = new MlxProvider({
+        baseUrl: mlxBaseUrl,
+        model: process.env['MLX_MODEL'] || 'nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx',
+        timeoutMs: 1_800_000,
+      });
 
       const concurrentProvider = new ConcurrentProvider(
-        new Map([
+        new Map<string, import('../providers/base.js').LlmProvider>([
           ['qwen3.5:122b', deepProvider],
           ['qwen3.5:35b-a3b', fastProvider],
         ]),
@@ -461,8 +451,8 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
       safeLogger.info('Dual-loop controller initialized', {
         fastModel: 'qwen3.5:35b-a3b',
-        deepModel: useMlx ? 'mlx:' + deepProvider.model : 'qwen3.5:122b',
-        deepProvider: useMlx ? 'mlx' : 'ollama',
+        deepModel: `mlx:${deepProvider.model}`,
+        deepProvider: 'mlx',
       });
     } else {
       // ── Standard single-loop mode ───────────────────────────────────

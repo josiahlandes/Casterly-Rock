@@ -340,7 +340,7 @@ export class TaskBoard {
 
   // ── Queries ─────────────────────────────────────────────────────────────
 
-  /** Get the next task in 'reviewing' status (unclaimed, for FastLoop) */
+  /** Get the next task in 'reviewing' status (unclaimed) */
   getNextReviewable(): Task | null {
     return this.data.tasks
       .filter((t) => t.status === 'reviewing' && t.owner === null)

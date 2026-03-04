@@ -57,7 +57,6 @@ describe('FastLoop', () => {
       heartbeatMs: 1000,
       messageCoalesceMs: 1,
       maxConversationTokens: 1000,
-      reviewEnabled: true,
       tiers: { compact: 4096, standard: 12288, extended: 24576, reviewLargeThresholdLines: 150 },
     });
 
@@ -67,25 +66,26 @@ describe('FastLoop', () => {
     expect(task.triageNotes).toContain('Triage failed');
   });
 
-  it('moves reviewing task to revision when review call fails', async () => {
-    const provider = makeProvider(new Error('review call failed'));
+  it('delivers completed task response', async () => {
+    const provider = makeProvider('{}');
     const board = createTaskBoard({ dbPath: `/tmp/fast-loop-${Date.now()}.json` });
     const loop = new FastLoop(provider, board, new EventBus({ logEvents: false, maxQueueSize: 10 }));
+
+    const delivered: string[] = [];
+    loop.setDeliverFn(async (_sender, text) => { delivered.push(text); });
 
     const id = board.create({
       origin: 'user',
       priority: 0,
       sender: 'alice',
-      originalMessage: 'Implement feature',
+      originalMessage: 'Do something',
       classification: 'complex',
-      status: 'reviewing',
+      status: 'done',
+      userFacing: 'Here is the result',
     });
 
-    await loop.reviewTask(board.get(id)!);
+    await loop.deliverResponse(board.get(id)!);
 
-    const updated = board.get(id)!;
-    expect(updated.status).toBe('revision');
-    expect(updated.reviewResult).toBe('changes_requested');
-    expect(updated.reviewFeedback).toContain('self-check');
+    expect(delivered).toContain('Here is the result');
   });
 });

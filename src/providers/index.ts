@@ -31,6 +31,14 @@ export type {
 export { EmbeddingProvider, createEmbeddingProvider } from './embedding.js';
 export type { EmbeddingProviderConfig } from './embedding.js';
 
+// Tier 4: ANE provider for Neural Engine offloading (embeddings + classification)
+export { AneProvider, createAneProvider, isAneSupported } from './ane.js';
+export type { AneProviderConfig, ClassificationResult, AneEmbeddingResult, AneHealthStatus, TaskCategory } from './ane.js';
+
+// Tier 4: KVSplit K8V4 manager for mixed-precision KV cache quantization
+export { KvSplitManager, createKvSplitManager } from './kvsplit.js';
+export type { KvSplitConfig, KvQuantStrategy, KvMemoryEstimate, MlxKvCacheArgs } from './kvsplit.js';
+
 export interface ProviderRegistry {
   /** Primary model — reasoning, planning, conversation */
   local: LlmProvider;

@@ -232,6 +232,28 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
 }
 
+/**
+ * Select the minimum DeepLoop context tier that fits a review prompt.
+ *
+ * Unlike selectDeepTier() (heuristic based on step count), this is
+ * measurement-based: the full review prompt is assembled before tier selection.
+ * Ensures the review context window fits all content with 25% headroom.
+ */
+export function selectDeepReviewTier(
+  reviewPromptChars: number,
+  systemPromptChars: number,
+  tiers: DeepTierConfig,
+  responseBufferTokens: number = 1024,
+): ContextTier {
+  const estimatedTokens = Math.ceil((reviewPromptChars + systemPromptChars) / 3.5)
+    + responseBufferTokens;
+  const withHeadroom = estimatedTokens / 0.75; // 25% headroom
+
+  if (withHeadroom <= tiers.compact) return 'compact';
+  if (withHeadroom <= tiers.standard) return 'standard';
+  return 'extended';
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Context Pressure
 // ─────────────────────────────────────────────────────────────────────────────
