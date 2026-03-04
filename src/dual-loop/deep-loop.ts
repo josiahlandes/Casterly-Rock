@@ -24,7 +24,8 @@ import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Task, TaskArtifact, PlanStep, FileOperation } from './task-board-types.js';
+import type { Task, TaskArtifact, PlanStep, FileOperation, HandoffSnapshot } from './task-board-types.js';
+import { buildHandoffSnapshot, serializeHandoff } from './handoff.js';
 import { detectProjectDir, writeProjectMd } from './project-store.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
 import { selectDeepTier, selectDeepReviewTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
@@ -531,7 +532,11 @@ export class DeepLoop {
     const prompt = [
       `## User Request\n\n${task.originalMessage ?? '(no message)'}`,
       task.triageNotes ? `\n## Triage Notes\n\n${task.triageNotes}` : '',
-      task.parkedState?.contextSnapshot ? `\n## Previous Progress\n\n${task.parkedState.contextSnapshot}` : '',
+      task.parkedState?.handoff
+        ? `\n## Previous Progress (Structured)\n\n${serializeHandoff(task.parkedState.handoff)}`
+        : task.parkedState?.contextSnapshot
+          ? `\n## Previous Progress\n\n${task.parkedState.contextSnapshot}`
+          : '',
       existingProjectContext,
     ].join('');
 
@@ -621,10 +626,17 @@ export class DeepLoop {
         const preemptor = this.checkForPreemption(task.priority);
         if (preemptor) {
           // Park this task and let the higher-priority one run
+          const handoff = buildHandoffSnapshot({
+            steps,
+            artifacts,
+            manifest: task.workspaceManifest ?? [],
+          });
+
           this.taskBoard.parkTask(task.id, {
             parkedAtTurn: i,
             reason: `Preempted by higher-priority task ${preemptor.id}`,
-            contextSnapshot: `Completed ${stepsCompleted} of ${steps.length} steps. Artifacts: ${artifacts.length}`,
+            contextSnapshot: serializeHandoff(handoff),
+            handoff,
           });
 
           // Save progress

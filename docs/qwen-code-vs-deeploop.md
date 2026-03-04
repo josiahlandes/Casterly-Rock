@@ -221,7 +221,6 @@ No crystals, constitution, dream cycles, prompt evolution, or adversarial testin
 | **P1** | Loop detection (§4.2) | Medium | High — prevents wasted cycles on stuck tasks |
 | **P1** | Delegate with read-only tools (§4.4) | Medium | High — enables parallel investigation |
 | **P2** | File-change delta tracking (§4.6) | Small | Medium — reduces redundant context in coding sessions |
-| **P2** | File-change delta tracking (§4.6) | Small | Medium — reduces redundant context in coding sessions |
 | **P2** | Skills system deepening (§4.8) | Medium | High — growth flywheel for recurring patterns, critical for Vision Tier 2-3 |
 | **P2** | Playwright desktop interaction (new) | Large | High — closes visual validation loop, enables GUI-dependent tasks |
 | **P3** | Streaming tool call parser (§4.5) | Large | Low — only needed if streaming is prioritized |

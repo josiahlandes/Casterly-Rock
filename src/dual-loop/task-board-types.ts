@@ -85,13 +85,37 @@ export interface FileOperation {
   exports?: string[];  // Exported symbol names, e.g. ['CONFIG', 'Player', 'InputHandler']
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Structured Handoff (cross-cycle context transfer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A structured snapshot of work done so far, used for cross-cycle context
+ * transfer (parking, warm-tier compression, handoffs between cycles).
+ *
+ * XML-serializable via `serializeHandoff()` / `parseHandoff()`.
+ */
+export interface HandoffSnapshot {
+  filesModified: { path: string; operation: 'created' | 'modified' | 'deleted'; summary: string }[];
+  decisionsMade: { decision: string; rationale: string }[];
+  blockersEncountered: string[];
+  nextSteps: string[];
+  keyLearnings: string[];
+  testResults: { file: string; passed: number; failed: number; summary: string }[];
+  stepsCompleted: number;
+  totalSteps: number;
+}
+
 /**
  * State preserved when a task is parked (preempted by higher-priority work).
  */
 export interface ParkedState {
   parkedAtTurn: number;
   reason: string;
-  contextSnapshot?: string | undefined;  // Summary of work done so far
+  /** Free-form snapshot (legacy) or structured handoff */
+  contextSnapshot?: string | undefined;
+  /** Structured handoff snapshot for reliable cross-cycle transfer */
+  handoff?: HandoffSnapshot | undefined;
 }
 
 /**
