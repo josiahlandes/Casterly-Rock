@@ -219,6 +219,10 @@ export type { IssueWatcherConfig } from './watchers/index.js';
 
 // ── Phase 4: Tiered Memory ──────────────────────────────────────────────────
 
+// Loop detector
+export { LoopDetector, createLoopDetector, buildLoopBreakPrompt } from './loop-detector.js';
+export type { LoopDetectorConfig, LoopDetection, CognitiveAssessCallback } from './loop-detector.js';
+
 // Context manager
 export { ContextManager, createContextManager } from './context-manager.js';
 export type {
