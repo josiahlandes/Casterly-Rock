@@ -769,7 +769,8 @@ const DELEGATE_SCHEMA: ToolSchema = {
   description: `Send a sub-task to a specific model. Use this for:
 - qwen3.5:122b — reasoning, planning, code generation, analysis, review
 
-The delegate receives the task description and optional file contents as context.`,
+The delegate receives the task description and optional file contents as context.
+With tools='read-only', the delegate can also search and read files autonomously.`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -786,6 +787,11 @@ The delegate receives the task description and optional file contents as context
         type: 'array',
         description: 'File paths to include as context for the delegate.',
         items: { type: 'string', description: 'File path relative to project root.' },
+      },
+      tools: {
+        type: 'string',
+        description: 'Tool access level. "none" (default): text-only. "read-only": delegate can read_file, grep_files, glob_files, git_diff.',
+        enum: ['none', 'read-only'],
       },
     },
     required: ['model', 'task'],
@@ -3409,6 +3415,7 @@ function buildExecutors(
     if ('error' in taskResult) return taskResult.error;
 
     const contextFiles = (call.input['context_files'] as string[] | undefined) ?? [];
+    const toolsMode = (call.input['tools'] as string | undefined) ?? 'none';
 
     return tracer.withSpan('agent-loop', `delegate:${modelResult.value}`, async () => {
       if (!delegateProvider) {
@@ -3436,13 +3443,92 @@ function buildExecutors(
 
         const request: GenerateRequest = {
           prompt: `${taskResult.value}${contextSection}`,
-          systemPrompt: 'You are a specialist assistant. Complete the task precisely and return your result.',
+          systemPrompt: toolsMode === 'read-only'
+            ? 'You are a specialist assistant with read-only access to the codebase. Use the provided tools to search and read files as needed. Complete the task precisely and return your result.'
+            : 'You are a specialist assistant. Complete the task precisely and return your result.',
           maxTokens: 4096,
           temperature: 0.2,
         };
 
-        tracer.log('agent-loop', 'info', `Delegating to ${modelResult.value}: ${taskResult.value.slice(0, 100)}...`);
+        tracer.log('agent-loop', 'info', `Delegating to ${modelResult.value} (tools=${toolsMode}): ${taskResult.value.slice(0, 100)}...`);
 
+        // Read-only mode: mini ReAct loop with read-only tools
+        if (toolsMode === 'read-only') {
+          const readOnlySchemas: ToolSchema[] = [
+            READ_FILE_SCHEMA,
+            GREP_SCHEMA,
+            GLOB_SCHEMA,
+            GIT_DIFF_SCHEMA,
+          ];
+
+          const maxDelegateTurns = 10;
+          let currentRequest = request;
+          const previousResults: ToolResultMessage[] = [];
+          let finalText = '';
+
+          for (let turn = 0; turn < maxDelegateTurns; turn++) {
+            const response = await delegateProvider.generateWithTools(
+              currentRequest,
+              readOnlySchemas,
+              previousResults.length > 0 ? previousResults : undefined,
+            );
+
+            // No tool calls → delegate is done
+            if (response.toolCalls.length === 0) {
+              finalText = response.text;
+              break;
+            }
+
+            // Execute read-only tool calls
+            for (const tc of response.toolCalls) {
+              // Only allow read-only tools
+              const allowed = ['read_file', 'grep_files', 'glob_files', 'git_diff'];
+              if (!allowed.includes(tc.name)) {
+                previousResults.push({
+                  callId: tc.id,
+                  result: `Tool "${tc.name}" is not available in read-only mode.`,
+                  isError: true,
+                });
+                continue;
+              }
+
+              // Reuse the executor from the main loop
+              const executor = executors.get(tc.name);
+              if (!executor) {
+                previousResults.push({
+                  callId: tc.id,
+                  result: `Tool "${tc.name}" not found.`,
+                  isError: true,
+                });
+                continue;
+              }
+
+              const result = await executor(tc);
+              previousResults.push({
+                callId: tc.id,
+                result: result.output ?? result.error ?? '(no output)',
+                isError: !result.success,
+              });
+            }
+
+            // Continue the conversation with tool results
+            currentRequest = {
+              ...request,
+              prompt: response.text || 'Continue.',
+            };
+            finalText = response.text;
+          }
+
+          tracer.log('agent-loop', 'info', `Delegation complete (read-only). Response: ${finalText.length} chars`);
+
+          return successResult(
+            call.id,
+            `[Delegation to ${modelResult.value} (read-only tools)]\n\n${finalText}`,
+            config.maxOutputChars,
+          );
+        }
+
+        // Text-only mode (legacy)
         const response = await delegateProvider.generateWithTools(request, []);
 
         tracer.log('agent-loop', 'info', `Delegation complete. Response: ${response.text.length} chars`);
