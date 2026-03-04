@@ -375,8 +375,6 @@ export class FastLoop {
     }
   }
 
-<<<<<<< Updated upstream
-=======
   // ── Code Review ─────────────────────────────────────────────────────────
 
   /**
@@ -476,7 +474,6 @@ export class FastLoop {
     }
   }
 
->>>>>>> Stashed changes
   // ── Response Delivery ───────────────────────────────────────────────────
 
   /**

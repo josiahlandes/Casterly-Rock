@@ -188,7 +188,7 @@ with a parallel `awaiting_approval` state for dangerous operations.
 
 **Relevance to Casterly**: Our OpenClaw skills are code-based. File-based skills would let Tyrion author and evolve skills autonomously (aligns with Vision Tier 2 tool synthesis).
 
-**Action item**: Already partially addressed by our tool synthesis. Consider adding a `SKILL.md` discovery mechanism alongside synthesized tools for user-authored workflows.
+**Action item**: The infrastructure exists (SKILL.md loader, learned skill files, tool synthesis) but skills are underutilized — loosely integrated, not automatically invoked. Deepen the system: tighter agent loop integration (auto-suggest matching skills during planning), autonomous skill authoring (extract SKILL.md from successful patterns), and skill composition (chained workflows). See roadmap §22.
 
 ---
 
@@ -221,7 +221,9 @@ No crystals, constitution, dream cycles, prompt evolution, or adversarial testin
 | **P1** | Loop detection (§4.2) | Medium | High — prevents wasted cycles on stuck tasks |
 | **P1** | Delegate with read-only tools (§4.4) | Medium | High — enables parallel investigation |
 | **P2** | File-change delta tracking (§4.6) | Small | Medium — reduces redundant context in coding sessions |
-| **P3** | Skill file discovery (§4.8) | Small | Low — user-authored workflow support |
+| **P2** | File-change delta tracking (§4.6) | Small | Medium — reduces redundant context in coding sessions |
+| **P2** | Skills system deepening (§4.8) | Medium | High — growth flywheel for recurring patterns, critical for Vision Tier 2-3 |
+| **P2** | Playwright desktop interaction (new) | Large | High — closes visual validation loop, enables GUI-dependent tasks |
 | **P3** | Streaming tool call parser (§4.5) | Large | Low — only needed if streaming is prioritized |
 
 ---

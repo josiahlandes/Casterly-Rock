@@ -540,6 +540,113 @@ Qwen Code's `ReadManyFilesTool` solves this with glob pattern support and batch 
 
 ---
 
+### 21. [ ] File-Change Delta Tracking
+
+**What:** When the model re-reads a file it already read earlier in the same cycle, send only the diff from the last read instead of the full file contents. Track file read timestamps and content hashes to detect re-reads and compute minimal deltas.
+
+**Why:** In long coding sessions (20+ turns), the model frequently re-reads files it already has in context — to check its edits, verify state, or refresh its memory. Each full re-read wastes context tokens on content the model has largely already seen. Qwen Code's IDE integration uses a delta pattern: full state on first access, only changes on subsequent accesses. The same principle applies to file reads in a coding loop.
+
+**Impact:** Reduces redundant context in deep coding sessions. Works synergistically with warm-tier compression (#15) — compression preserves *what the model knew*, delta tracking avoids *re-sending what hasn't changed*. Together they attack context waste from both ends.
+
+**Implementation:**
+1. Add a `FileReadTracker` to `src/coding/context-manager.ts` that stores `{ path, contentHash, readAtTurn, content }` for each file read
+2. On file read, check if the path has been read before in this cycle:
+   - First read: return full content, store hash + content
+   - Re-read with same hash: return `"(unchanged since turn N)"` — 5 tokens instead of 500+
+   - Re-read with different hash: compute and return a unified diff, update stored hash + content
+3. Use a fast hash (xxHash or SHA-256 of first 4KB + length) for change detection — don't diff unless hashes differ
+4. Clear tracker on cycle boundaries (new task / handoff)
+5. Add an escape hatch: `read_file(path, force_full=true)` for when the model explicitly needs the full content
+
+**References:**
+- Qwen Code: IDE context delta tracking — full state on first message, deltas on subsequent turns
+- Current code: `src/tools/executors/read-file.ts` (always returns full content)
+- `docs/qwen-code-vs-deeploop.md` §4.6
+
+---
+
+### 22. [ ] Skills System Deepening
+
+**What:** Deepen the skills system from its current state (loosely integrated LLM-facing instructions) into a core execution primitive. Three workstreams: (a) tighter integration of skills into the agent loop so they're automatically invoked, not just discoverable; (b) autonomous skill authoring where Tyrion creates new SKILL.md packages from successful task patterns; (c) skill composition where multi-step workflows chain skills together.
+
+**Why:** The skills infrastructure is solid — three tiers exist (static SKILL.md with 5 built-in + 14 workspace skills, learned skill files with mastery progression, and synthesized bash-template tools with security scanning). But they're underutilized: static skills require keyword-based intent matching to surface, learned skills are recorded but rarely replayed, and synthesized tools are isolated bash templates without workflow awareness. Skills should be a growth flywheel: successful tasks become skills, skills accelerate future tasks, usage data refines skill quality.
+
+**Impact:** Transforms skills from a passive catalog into an active execution accelerator. Critical for Vision Tier 2 (self-improvement) and Tier 3 (autonomous operation). As the skill library grows, Tyrion gets faster at recurring patterns — the system compounds over time.
+
+**Implementation:**
+
+**(a) Agent Loop Integration:**
+1. After task triage, query `skillFilesManager.search()` and `skillRegistry.getRelevantSkillInstructions()` with the task description
+2. If a high-mastery (proficient/expert) learned skill matches, inject its steps as a suggested plan in the DeepLoop's planner prompt — not as a rigid template, but as prior art
+3. After successful task completion, call `skillFilesManager.learn()` to capture the pattern if no existing skill matched (currently this path exists but isn't reliably triggered)
+4. Track skill-assisted vs. unassisted task success rates for evaluation
+
+**(b) Autonomous Skill Authoring:**
+1. After a successful multi-step task, have the fast model extract a SKILL.md draft: frontmatter (name, description, requirements) + instruction body
+2. Store in `workspace/skills/` as a new skill package — immediately discoverable on next task
+3. Require at least 2 successful uses of the same pattern before authoring (avoid one-off noise)
+4. Human approval gate: new skills are created as `draft` status, promoted to `active` after user confirms or after 3 successful autonomous uses
+
+**(c) Skill Composition:**
+1. Add a `depends_on` field to SKILL.md frontmatter for declaring skill chains
+2. Enable multi-skill plans: "To deploy, run `build` skill → `test` skill → `deploy` skill"
+3. Start simple — sequential chains only, no branching or parallelism
+
+**References:**
+- Current implementation: `src/skills/loader.ts` (registry), `src/autonomous/memory/skill-files.ts` (learned skills), `src/tools/synthesizer.ts` (tool synthesis)
+- Qwen Code: `SKILL.md` discovery with YAML frontmatter — our format is already compatible
+- `docs/qwen-code-vs-deeploop.md` §4.8
+- `docs/skills-and-tools.md` (central skills documentation)
+
+---
+
+### 23. [ ] Playwright Desktop Interaction
+
+**What:** Give Tyrion the ability to "see" and interact with the desktop via Playwright. Launch a browser or desktop app, take screenshots, read visual state, click elements, type text, and navigate — the same way a human would. This enables GUI-dependent tasks: testing web UIs, filling forms, reading visual dashboards, interacting with apps that have no CLI/API.
+
+**Why:** Tyrion currently operates entirely through text: files, terminal commands, and tool outputs. But many real tasks involve visual interfaces — verifying a web app looks correct after code changes, interacting with admin panels, testing responsive layouts, reading error screens, or automating GUI workflows that have no programmatic API. Playwright provides a mature, cross-platform automation layer that can drive Chromium, Firefox, and WebKit, plus experimental desktop app support via Electron.
+
+**Impact:** Opens an entirely new capability class. Tyrion can validate his own UI work visually (not just structurally), automate browser-based workflows, and handle tasks that currently require the user to be the "eyes." This is a meaningful step toward full autonomous operation — the agent can close the loop on visual tasks without human intermediation.
+
+**Implementation:**
+
+**(Phase 1: Browser Automation — Core)**
+1. Add `playwright` as an optional dependency (it's heavy — ~130MB browsers)
+2. Create `src/tools/executors/browser.ts` with actions:
+   - `browser_open(url)` — Launch headless Chromium, navigate to URL
+   - `browser_screenshot(selector?)` — Capture full page or element screenshot, return as image for vision model analysis
+   - `browser_click(selector)` — Click an element
+   - `browser_type(selector, text)` — Type into an input
+   - `browser_eval(js)` — Run JavaScript in page context (gated — security review required)
+   - `browser_close()` — Teardown
+3. Screenshots are analyzed by the vision-capable model (Qwen VL or LLaVA via Ollama) — Tyrion "sees" the page as an image and reasons about it
+4. Session management: one browser instance per task, auto-close on task completion or timeout (5 min idle)
+
+**(Phase 2: Visual Validation for Code Tasks)**
+1. After generating a web project, automatically `browser_open('file:///workspace/index.html')` and screenshot
+2. Compare screenshot against task description: "Does this look like a space invaders game?"
+3. If visual validation fails, feed the screenshot + description back to the coder for fixes
+4. This closes the validation loop for UI work — currently we validate structure (parse, lint, typecheck) but not appearance
+
+**(Phase 3: Desktop App Interaction — Future)**
+1. Explore Playwright's Electron support for native app automation
+2. Investigate accessibility tree reading as a lighter alternative to screenshots for structured UIs
+3. Consider macOS Accessibility API integration (complements existing system-control skill)
+
+**Security Considerations:**
+- `browser_eval` must be gated behind approval (arbitrary JS execution)
+- Browser sessions should be sandboxed (no access to user's real browser profile, cookies, or saved passwords)
+- Network access from browser context should respect the same local-first policy — no unexpected cloud calls
+- Screenshot storage must be ephemeral (workspace temp dir, cleaned on cycle end)
+
+**References:**
+- Playwright docs: headless browser automation, screenshot API, element selectors
+- Vision models via Ollama: Qwen2.5-VL, LLaVA for screenshot analysis
+- Existing validation: `src/coding/validators/` (parse, lint, typecheck — all structural, none visual)
+- System-control skill: `skills/system-control/SKILL.md` (macOS screenshot capability already exists, but not integrated into agent loop)
+
+---
+
 ## Implementation Notes
 
 ### Dependencies Between Items
@@ -568,6 +675,9 @@ Tier 5 (Qwen Code-derived):
   18 (Structured Handoffs) is independent
   19 (Progress Updates) is independent — but benefits from 14 (step-scoped context makes plan summaries more meaningful)
   20 (Batch File Read) is independent
+  21 (File-Change Delta Tracking) is independent — but benefits from 20 (batch read tracker can share the same FileReadTracker)
+  22 (Skills System Deepening) is independent — but part (a) benefits from 17 (delegate with tools enables skill-based subagent delegation)
+  23 (Playwright Desktop Interaction) is independent — but Phase 2 benefits from 14 (step-scoped context for visual validation steps)
   15 ← 18 share the XML snapshot format — implement 18 first for type definitions
 ```
 
