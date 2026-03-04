@@ -251,6 +251,17 @@ export type {
   ScaledSolution,
 } from './reasoning/scaling.js';
 
+// Test-time compute scaler
+export { ComputeScaler, createComputeScaler, SELF_ASSESSMENT_PROMPT } from './reasoning/compute-scaler.js';
+export type {
+  ComputeBudget,
+  ComputeScalerConfig,
+  CalibrationRecord,
+  CalibrationSummary,
+  ThresholdAdjustment,
+  SelfAssessment,
+} from './reasoning/compute-scaler.js';
+
 // Adversarial tester
 export { AdversarialTester } from './reasoning/adversarial.js';
 export type {

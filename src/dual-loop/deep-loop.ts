@@ -33,6 +33,9 @@ import type { ReviewResult } from './task-board-types.js';
 import { REVIEW_SYSTEM_PROMPT, REVIEW_FORMAT_SCHEMA, CASCADE_REVIEW_PROMPTS, buildReviewPrompt, parseReviewResponse } from './review-prompt.js';
 import { runIdleCheck } from './deep-loop-events.js';
 import type { DeepLoopEventConfig } from './deep-loop-events.js';
+import { ComputeScaler } from '../autonomous/reasoning/compute-scaler.js';
+import type { ComputeBudget } from '../autonomous/reasoning/compute-scaler.js';
+import { ReasoningScaler } from '../autonomous/reasoning/scaling.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -274,6 +277,14 @@ export class DeepLoop {
   private exportSummaries: Map<string, string> = new Map();
   /** Reference to the full workspace manifest for import validation across steps */
   private currentManifest: FileOperation[] = [];
+  /** Test-time compute scaler — allocates compute budgets per task difficulty */
+  private readonly computeScaler: ComputeScaler;
+  /** Heuristic difficulty assessor */
+  private readonly reasoningScaler: ReasoningScaler;
+  /** Active compute budget for the current task (set at start of processTask) */
+  private activeBudget: ComputeBudget | null = null;
+  /** Tracks turn count for current task (for calibration recording) */
+  private taskTurnCount: number = 0;
 
   constructor(
     provider: LlmProvider,
@@ -289,6 +300,11 @@ export class DeepLoop {
     this.taskBoard = taskBoard;
     this.eventBus = eventBus;
     this.toolkit = toolkit ?? null;
+    this.computeScaler = new ComputeScaler();
+    this.reasoningScaler = new ReasoningScaler({
+      codingModel: this.config.coderModel,
+      reasoningModel: this.config.model,
+    });
   }
 
   // ── Main Work Loop ──────────────────────────────────────────────────────
@@ -396,6 +412,19 @@ export class DeepLoop {
       hasParkedState: !!task.parkedState,
     });
 
+    // Assess difficulty and allocate compute budget (test-time compute scaling)
+    const taskDescription = task.originalMessage ?? task.triageNotes ?? '';
+    const heuristicDifficulty = this.reasoningScaler.assessDifficulty(taskDescription);
+    this.activeBudget = this.computeScaler.allocateBudget(heuristicDifficulty);
+    this.taskTurnCount = 0;
+
+    tracer.log('deep-loop', 'info', `Compute budget: ${this.activeBudget.difficulty}`, {
+      maxTurns: this.activeBudget.maxTurns,
+      verificationDepth: this.activeBudget.verificationDepth,
+      maxRetries: this.activeBudget.maxRetries,
+      parallelCandidates: this.activeBudget.parallelCandidates,
+    });
+
     try {
       // Transition to planning
       this.taskBoard.update(task.id, { status: 'planning' });
@@ -458,12 +487,13 @@ export class DeepLoop {
         }
       }
 
-      // Verification cascade: multi-file tasks get 2 review passes (correctness + security).
-      // Single-file or simple tasks get the standard single review pass.
+      // Verification cascade: compute budget determines depth, with heuristic override
+      // for high-stakes multi-file tasks.
       const fileCount = outcome.workspaceManifest?.length ?? 0;
       const stepCount = planned?.planSteps?.length ?? 0;
       const isHighStakes = fileCount >= 3 || stepCount >= 3;
-      const verificationPasses = isHighStakes ? 2 : 1;
+      const budgetVerification = this.activeBudget?.verificationDepth ?? 1;
+      const verificationPasses = Math.max(budgetVerification, isHighStakes ? 2 : 1);
 
       // Update task with implementation results before self-review
       this.taskBoard.update(task.id, {
@@ -513,6 +543,21 @@ export class DeepLoop {
       });
       this.failTask(task.id, error instanceof Error ? error.message : String(error));
     } finally {
+      // Record outcome for calibration (test-time compute scaling)
+      if (this.activeBudget) {
+        const finalTask = this.taskBoard.get(task.id);
+        const succeeded = finalTask?.status === 'done';
+        const revisions = this.revisionCounts.get(task.id) ?? 0;
+        this.computeScaler.recordOutcome(
+          this.activeBudget.difficulty,
+          this.taskTurnCount,
+          revisions,
+          succeeded,
+          (task.originalMessage ?? task.triageNotes ?? '').slice(0, 100),
+        );
+      }
+      this.activeBudget = null;
+      this.taskTurnCount = 0;
       this.currentTask = null;
     }
   }
@@ -880,15 +925,19 @@ export class DeepLoop {
       `## Instructions\nComplete ALL work described in the current step before stopping. Create every file mentioned, write complete implementations (not stubs), and verify imports match existing files in the workspace manifest. If files already exist from a prior step, read them and verify cross-file API compatibility: every method/property call on an imported object must exist in that module's source code. Fix mismatches using edit_file.`,
     ].filter(Boolean).join('\n\n');
 
+    // Compute budget determines turn limits — falls back to config defaults
+    const budgetMaxTask = this.activeBudget?.maxTurns ?? this.config.maxTurnsPerTask;
+    const budgetMaxStep = totalSteps <= 1
+      ? budgetMaxTask
+      : Math.min(this.config.maxTurnsPerStep, budgetMaxTask);
+
     // Single-step tasks get the full task budget; multi-step get per-step cap
-    let maxTurns = totalSteps <= 1
-      ? this.config.maxTurnsPerTask
-      : this.config.maxTurnsPerStep;
+    let maxTurns = totalSteps <= 1 ? budgetMaxTask : budgetMaxStep;
 
     // Review/verify/test/fix steps get double the turn budget so the model
     // has room to read dependencies, cross-check APIs, and apply fixes.
     if (/\b(test|verify|review|validate|integration|fix)\b/i.test(step.description)) {
-      maxTurns = Math.min(maxTurns * 2, this.config.maxTurnsPerTask);
+      maxTurns = Math.min(maxTurns * 2, budgetMaxTask);
     }
     const response = await this.dispatchToCoder(prompt, '', maxTurns);
 
@@ -1234,6 +1283,7 @@ Other rules:
     const warnAtTurn = Math.max(1, maxTurns - 2);
 
     for (let turn = 0; turn < maxTurns; turn++) {
+      this.taskTurnCount++;
       // When approaching the turn limit, inject a budget warning.
       const effectiveRequest: GenerateRequest = {
         ...(turn === warnAtTurn

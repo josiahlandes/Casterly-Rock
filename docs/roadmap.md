@@ -319,7 +319,7 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 ---
 
-### 13. [ ] Test-Time Compute Scaling
+### 13. [x] Test-Time Compute Scaling (2026-03-04)
 
 **What:** Dynamically allocate compute budget based on task difficulty. Easy tasks get a single fast pass. Hard tasks get extended reasoning chains, multiple attempts, and verification cascades. The model itself estimates difficulty and requests the appropriate compute budget.
 
@@ -333,6 +333,13 @@ Experimental capabilities that push the boundaries of what's possible with local
 3. Integrate with existing `ReasoningScaler` (`src/autonomous/reasoning/scaling.ts`)
 4. Track difficulty estimates vs. actual outcomes in the journal for calibration
 5. Dream cycle phase to recalibrate difficulty thresholds from historical data
+
+**Source files:**
+- `src/autonomous/reasoning/compute-scaler.ts` — ComputeScaler with budget allocation, self-assessment parsing, calibration tracking
+- `src/autonomous/reasoning/scaling.ts` — ReasoningScaler with heuristic difficulty assessment
+- `src/dual-loop/deep-loop.ts` — Integration: allocates budget at task start, applies to turn limits and verification depth, records outcomes for calibration
+- `src/autonomous/index.ts` — Exports ComputeScaler and related types
+- `tests/compute-scaler.test.ts` — Test suite
 
 **References:**
 - Research: "Let Me Think" (2024) — test-time compute scaling for language models
