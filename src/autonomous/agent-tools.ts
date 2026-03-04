@@ -460,6 +460,25 @@ const READ_FILE_SCHEMA: ToolSchema = {
   },
 };
 
+const READ_FILES_SCHEMA: ToolSchema = {
+  name: 'read_files',
+  description: `Read multiple files in a single call. Accepts an array of paths and/or a glob pattern. Returns all file contents at once, reducing exploration from N tool calls to 1.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paths: {
+        type: 'array',
+        description: 'File paths to read (relative to project root).',
+        items: { type: 'string' },
+      },
+      glob_pattern: {
+        type: 'string',
+        description: 'Glob pattern to match files (e.g., "src/**/*.ts"). Ignores node_modules, .git, dist.',
+      },
+    },
+  },
+};
+
 const EDIT_FILE_SCHEMA: ToolSchema = {
   name: 'edit_file',
   description: `Edit a file by replacing a specific text string with new text. The old_string must appear exactly once in the file for the edit to succeed. Use this for targeted, surgical modifications.
@@ -2819,6 +2838,81 @@ function buildExecutors(
           error: errorMsg,
         });
         return failureResult(call.id, `Failed to read ${filePath}: ${errorMsg}`);
+      }
+    });
+  });
+
+  // ── read_files (batch) ──────────────────────────────────────────────────
+
+  executors.set('read_files', async (call) => {
+    const paths = (call.input['paths'] as string[] | undefined) ?? [];
+    const globPattern = call.input['glob_pattern'] as string | undefined;
+
+    if (paths.length === 0 && !globPattern) {
+      return failureResult(call.id, 'Must provide either paths array or glob_pattern.');
+    }
+
+    return tracer.withSpan('agent-loop', 'read_files', async () => {
+      try {
+        let resolvedPaths = [...paths];
+
+        // Resolve glob pattern
+        if (globPattern) {
+          const { glob: globFn } = await import('glob');
+          const globResults = await globFn(globPattern, {
+            cwd: config.projectRoot,
+            nodir: true,
+            absolute: false,
+            ignore: ['node_modules/**', '.git/**', 'dist/**'],
+          });
+          resolvedPaths.push(...globResults);
+        }
+
+        // Deduplicate and cap
+        resolvedPaths = [...new Set(resolvedPaths)].slice(0, 20);
+
+        if (resolvedPaths.length === 0) {
+          return successResult(call.id, 'No files matched.', config.maxOutputChars);
+        }
+
+        const sections: string[] = [];
+        let totalChars = 0;
+        const maxAggregate = 50_000;
+
+        for (const filePath of resolvedPaths) {
+          const fullPath = filePath.startsWith('/')
+            ? filePath
+            : `${config.projectRoot}/${filePath}`;
+
+          try {
+            const content = await readFile(fullPath, 'utf8');
+            const remaining = maxAggregate - totalChars;
+
+            if (remaining <= 0) {
+              sections.push(`## ${filePath}\n(aggregate size limit reached)`);
+              continue;
+            }
+
+            const trimmed = content.length > remaining
+              ? content.slice(0, remaining) + '\n...(truncated)'
+              : content;
+            totalChars += trimmed.length;
+
+            const lines = content.split('\n').length;
+            sections.push(`## ${filePath} (${lines} lines)\n${trimmed}`);
+          } catch {
+            sections.push(`## ${filePath}\n(file not found or unreadable)`);
+          }
+        }
+
+        return successResult(
+          call.id,
+          `Read ${resolvedPaths.length} files:\n\n${sections.join('\n\n')}`,
+          config.maxOutputChars,
+        );
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return failureResult(call.id, `read_files failed: ${errorMsg}`);
       }
     });
   });
@@ -6485,6 +6579,7 @@ export function buildAgentToolkit(
   const allSchemas: ToolSchema[] = [
     THINK_SCHEMA,
     READ_FILE_SCHEMA,
+    READ_FILES_SCHEMA,
     EDIT_FILE_SCHEMA,
     CREATE_FILE_SCHEMA,
     GREP_SCHEMA,
@@ -6655,6 +6750,7 @@ export function buildAgentToolkit(
 export {
   THINK_SCHEMA,
   READ_FILE_SCHEMA,
+  READ_FILES_SCHEMA,
   EDIT_FILE_SCHEMA,
   CREATE_FILE_SCHEMA,
   GREP_SCHEMA,
