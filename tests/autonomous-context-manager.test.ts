@@ -455,6 +455,121 @@ describe('ContextManager — Warm Tier', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ContextManager Tests — Warm Tier Compression
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContextManager — Warm Tier Compression', () => {
+  let cm: ContextManager;
+
+  beforeEach(() => {
+    cm = createContextManager({
+      hotTierMaxTokens: 500,
+      warmTierMaxTokens: 200, // Small for testing
+      contextWindowTokens: 32768,
+      warmCompressionThreshold: 0.70,
+      storeConfig: {
+        basePath: join(tempDir, 'memory'),
+        reflectionsPath: join(tempDir, 'reflections'),
+      },
+    });
+  });
+
+  it('compresses oldest entries into a summary', async () => {
+    // Mock compress callback that returns a short summary
+    cm.setCompressCallback(async (entries) => {
+      return `<state_snapshot>Compressed ${entries.length} entries</state_snapshot>`;
+    });
+
+    // Add 6 entries to fill the warm tier
+    for (let i = 0; i < 6; i++) {
+      cm.addToWarmTier({
+        key: `entry-${i}`,
+        kind: 'tool_result',
+        content: 'x'.repeat(70), // ~20 tokens each, total ~120 tokens
+      });
+    }
+
+    const result = await cm.tryCompressWarmTier();
+
+    expect(result.compressed).toBe(true);
+    expect(result.freedTokens).toBeGreaterThan(0);
+
+    // The compressed summary entry should exist
+    const contents = cm.getWarmTierContents();
+    const compressed = contents.find((e) => e.key.startsWith('__compressed_'));
+    expect(compressed).toBeDefined();
+    expect(compressed!.content).toContain('Compressed 3 entries');
+  });
+
+  it('disables compression permanently after failure', async () => {
+    cm.setCompressCallback(async () => {
+      throw new Error('LLM call failed');
+    });
+
+    // Add enough entries
+    for (let i = 0; i < 6; i++) {
+      cm.addToWarmTier({
+        key: `entry-${i}`,
+        kind: 'tool_result',
+        content: 'x'.repeat(70),
+      });
+    }
+
+    const result = await cm.tryCompressWarmTier();
+
+    expect(result.compressed).toBe(false);
+    expect(cm.isCompressionDisabled()).toBe(true);
+
+    // Second attempt should be skipped entirely
+    const result2 = await cm.tryCompressWarmTier();
+    expect(result2.compressed).toBe(false);
+  });
+
+  it('skips compression when no callback is set', async () => {
+    for (let i = 0; i < 6; i++) {
+      cm.addToWarmTier({
+        key: `entry-${i}`,
+        kind: 'tool_result',
+        content: 'x'.repeat(70),
+      });
+    }
+
+    const result = await cm.tryCompressWarmTier();
+    expect(result.compressed).toBe(false);
+  });
+
+  it('skips compression when too few entries', async () => {
+    cm.setCompressCallback(async () => 'summary');
+
+    cm.addToWarmTier({ key: 'a', kind: 'snippet', content: 'short' });
+    cm.addToWarmTier({ key: 'b', kind: 'snippet', content: 'short' });
+
+    const result = await cm.tryCompressWarmTier();
+    expect(result.compressed).toBe(false);
+  });
+
+  it('skips compression when summary is not smaller enough', async () => {
+    // Callback returns something almost as large
+    cm.setCompressCallback(async (entries) => {
+      return entries.map((e) => e.content).join('\n');
+    });
+
+    for (let i = 0; i < 6; i++) {
+      cm.addToWarmTier({
+        key: `entry-${i}`,
+        kind: 'tool_result',
+        content: 'x'.repeat(70),
+      });
+    }
+
+    const result = await cm.tryCompressWarmTier();
+    expect(result.compressed).toBe(false);
+    // Should NOT disable compression — this was a valid attempt that just wasn't useful
+    expect(cm.isCompressionDisabled()).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ContextManager Tests — Cool/Cold Tiers (via store)
 // ─────────────────────────────────────────────────────────────────────────────
 

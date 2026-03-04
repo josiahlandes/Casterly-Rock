@@ -225,6 +225,7 @@ export type {
   ContextManagerConfig,
   WarmEntry,
   TierUsage,
+  WarmTierCompressCallback,
 } from './context-manager.js';
 
 // Context store
