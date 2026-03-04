@@ -248,7 +248,7 @@ Mechanisms that make the system improve itself over time. High ceiling, high eff
 
 Experimental capabilities that push the boundaries of what's possible with local inference.
 
-### 11. [ ] NPU/ANE Offloading for Embeddings and Classification
+### 11. [x] NPU/ANE Offloading for Embeddings and Classification (2026-03-04)
 
 **What:** Offload lightweight inference tasks (text embeddings, classification, sentiment analysis) to Apple's Neural Engine (ANE/NPU), which delivers 19 TFLOPS at only 2.8W. This frees the GPU entirely for the main inference models.
 
@@ -262,6 +262,14 @@ Experimental capabilities that push the boundaries of what's possible with local
 3. Route embedding requests to ANE, keep main inference on GPU
 4. Benchmark: compare embedding latency and throughput on ANE vs GPU
 5. Extend to classification tasks if ANE embedding quality matches GPU
+
+**Source files:**
+- `src/providers/ane.ts` — Full AneProvider class (embed, embedBatch, classify, health, LRU cache, CoreML bridge communication, keyword fallback)
+- `src/providers/embedding.ts` — ANE-first embedding with Ollama fallback via `setAneProvider()`
+- `src/tasks/classifier.ts` — ANE pre-filter for high-confidence classifications (≥0.85) via `setClassifierAneProvider()`
+- `src/providers/index.ts` — ANE provider initialization in `buildProviders()` with `isAneSupported()` auto-detection
+- `tests/ane-provider.test.ts` — Unit tests for AneProvider
+- `tests/ane-integration.test.ts` — Integration tests for ANE wiring into embedding provider and classifier
 
 **References:**
 - Apple Neural Engine: 19 TFLOPS, hardware-accelerated matrix multiply
