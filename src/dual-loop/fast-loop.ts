@@ -19,18 +19,27 @@
  */
 
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
+import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
 import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
 import type { Task } from './task-board-types.js';
 import type { FastTierConfig, ContextTier } from './context-tiers.js';
-import { selectFastTier, resolveNumCtx, estimateTokens } from './context-tiers.js';
+import { selectFastTier, selectReviewTier, resolveNumCtx, estimateTokens } from './context-tiers.js';
 import {
   TRIAGE_SYSTEM_PROMPT,
-  TRIAGE_FORMAT_SCHEMA,
   buildTriagePrompt,
   parseTriageResponse,
 } from './triage-prompt.js';
+import type { TriageResult } from './triage-prompt.js';
+import { discoverProjects } from './project-store.js';
+import type { DiscoveredProject } from './project-store.js';
+import {
+  REVIEW_SYSTEM_PROMPT,
+  buildReviewPrompt,
+  countDiffLines,
+  parseReviewResponse,
+} from './review-prompt.js';
 import type { TriageResult } from './triage-prompt.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +60,8 @@ export interface FastLoopConfig {
   messageCoalesceMs: number;
   /** Context tier configuration */
   tiers: FastTierConfig;
+  /** Model to use for complex reviews (routed via ConcurrentProvider). Undefined = always use fast model. */
+  complexReviewModel?: string | undefined;
 }
 
 /**
@@ -100,21 +111,25 @@ const DEFAULT_CONFIG: FastLoopConfig = {
 export class FastLoop {
   private readonly config: FastLoopConfig;
   private readonly provider: LlmProvider;
+  private readonly concurrentProvider: ConcurrentProvider | null;
   private readonly taskBoard: TaskBoard;
   private readonly eventBus: EventBus;
   private readonly conversations: Map<string, ConversationContext> = new Map();
   private readonly pendingMessages: PendingMessage[] = [];
   private deliverFn: DeliverFn | null = null;
   private running: boolean = false;
+  private projectsCache: { data: DiscoveredProject[]; expiresAt: number } | null = null;
 
   constructor(
     provider: LlmProvider,
     taskBoard: TaskBoard,
     eventBus: EventBus,
     config?: Partial<FastLoopConfig>,
+    concurrentProvider?: ConcurrentProvider,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.provider = provider;
+    this.concurrentProvider = concurrentProvider ?? null;
     this.taskBoard = taskBoard;
     this.eventBus = eventBus;
   }
@@ -281,6 +296,7 @@ export class FastLoop {
           originalMessage: message,
           classification: 'complex',
           triageNotes: triage.triageNotes,
+          ...(triage.matchedProject ? { projectDir: `projects/${triage.matchedProject}` } : {}),
         });
 
         // Use the triage model's natural ack if available, otherwise fall back
@@ -306,7 +322,26 @@ export class FastLoop {
     const tier = selectFastTier('triage');
 
     const boardSummary = this.taskBoard.getSummaryText();
-    const userPrompt = buildTriagePrompt({ message, sender, taskBoardSummary: boardSummary });
+
+    // Include existing projects in triage context for project matching
+    let projectsSummary: string | undefined;
+    try {
+      const projects = await this.getProjects();
+      if (projects.length > 0) {
+        projectsSummary = projects
+          .map((p) => `- ${p.slug}: ${p.goal.slice(0, 100)} [${p.status}]`)
+          .join('\n');
+      }
+    } catch {
+      // Non-fatal — triage works fine without project discovery
+    }
+
+    const userPrompt = buildTriagePrompt({
+      message,
+      sender,
+      taskBoardSummary: boardSummary,
+      ...(projectsSummary ? { projectsSummary } : {}),
+    });
 
     try {
       const response = await this.withTimeout(
@@ -340,6 +375,108 @@ export class FastLoop {
     }
   }
 
+<<<<<<< Updated upstream
+=======
+  // ── Code Review ─────────────────────────────────────────────────────────
+
+  /**
+   * Review a task's artifacts and write the review result to the TaskBoard.
+   */
+  async reviewTask(task: Task): Promise<void> {
+    const tracer = getTracer();
+
+    // Claim the task for review
+    const claimed = this.taskBoard.claimNext('fast', ['reviewing']);
+    if (!claimed || claimed.id !== task.id) return;
+
+    tracer.log('fast-loop', 'info', `Reviewing task: ${task.id}`);
+
+    const plan = task.plan ?? '(no plan)';
+    const artifacts = task.artifacts ?? [];
+
+    // Select context tier based on diff size
+    const diffLines = countDiffLines(artifacts);
+    const reviewOp = selectReviewTier(diffLines, this.config.tiers);
+    const tier = selectFastTier(reviewOp);
+
+    const reviewPrompt = buildReviewPrompt({
+      plan,
+      artifacts,
+      ...(task.workspaceManifest ? { manifest: task.workspaceManifest } : {}),
+      ...(task.originalMessage ? { originalMessage: task.originalMessage } : {}),
+    });
+
+    // Route complex reviews to the deep model for better multi-file assessment
+    const isComplex = (task.planSteps?.length ?? 0) >= 4 || diffLines >= 300;
+    const useDeepReview = isComplex
+      && this.concurrentProvider !== null
+      && this.config.complexReviewModel !== undefined;
+
+    tracer.log('fast-loop', 'info', `Review routing: ${useDeepReview ? this.config.complexReviewModel! : 'fast (35b)'}`, {
+      isComplex,
+      stepCount: task.planSteps?.length ?? 0,
+      diffLines,
+    });
+
+    try {
+      let response: string;
+      if (useDeepReview) {
+        // Use the deep model via ConcurrentProvider for complex reviews
+        const numCtx = resolveNumCtx(this.config.tiers, tier);
+        const deepResponse = await this.concurrentProvider!.generate(
+          this.config.complexReviewModel!,
+          {
+            prompt: reviewPrompt,
+            systemPrompt: REVIEW_SYSTEM_PROMPT,
+            temperature: 0.1,
+            maxTokens: 1024,
+            providerOptions: { num_ctx: numCtx },
+          },
+        );
+        response = deepResponse.text;
+      } else {
+        response = await this.callWithTier(tier, {
+          prompt: reviewPrompt,
+          systemPrompt: REVIEW_SYSTEM_PROMPT,
+          temperature: 0.1,
+          maxTokens: 1024,
+        });
+      }
+
+      const outcome = parseReviewResponse(response);
+
+      const newStatus = outcome.result === 'approved' ? 'done' as const : 'revision' as const;
+
+      this.taskBoard.update(task.id, {
+        reviewResult: outcome.result,
+        reviewNotes: outcome.notes,
+        reviewFeedback: outcome.feedback,
+        status: newStatus,
+        owner: null,
+        ...(outcome.result === 'approved' ? { resolvedAt: new Date().toISOString() } : {}),
+      });
+
+      tracer.log('fast-loop', 'info', `Review complete: ${task.id} → ${outcome.result}`, {
+        diffLines,
+        tier,
+      });
+    } catch (error) {
+      tracer.log('fast-loop', 'error', `Review failed for ${task.id}, auto-approving`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // On review failure, approve — don't block the pipeline
+      this.taskBoard.update(task.id, {
+        reviewResult: 'approved',
+        reviewNotes: 'Review auto-approved (LLM call failed)',
+        status: 'done',
+        owner: null,
+        resolvedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+>>>>>>> Stashed changes
   // ── Response Delivery ───────────────────────────────────────────────────
 
   /**
@@ -428,6 +565,21 @@ export class FastLoop {
     }
   }
 
+  // ── Project Discovery ───────────────────────────────────────────────────
+
+  /**
+   * Get discovered projects with 30-second cache to avoid scanning disk every heartbeat.
+   */
+  private async getProjects(): Promise<DiscoveredProject[]> {
+    const now = Date.now();
+    if (this.projectsCache && now < this.projectsCache.expiresAt) {
+      return this.projectsCache.data;
+    }
+    const data = await discoverProjects(process.cwd());
+    this.projectsCache = { data, expiresAt: now + 30_000 };
+    return data;
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   /**
@@ -498,6 +650,7 @@ export function createFastLoop(
   taskBoard: TaskBoard,
   eventBus: EventBus,
   config?: Partial<FastLoopConfig>,
+  concurrentProvider?: ConcurrentProvider,
 ): FastLoop {
-  return new FastLoop(provider, taskBoard, eventBus, config);
+  return new FastLoop(provider, taskBoard, eventBus, config, concurrentProvider);
 }

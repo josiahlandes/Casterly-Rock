@@ -135,6 +135,7 @@ export class LoopCoordinator {
         ...this.config.fast,
         tiers: this.config.contextTiers.fast,
       },
+      concurrentProvider,
     );
 
     this.deepLoop = createDeepLoop(

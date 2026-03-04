@@ -7,6 +7,23 @@ import type {
   NativeToolCall,
 } from '../tools/schemas/types.js';
 import type { OllamaTool } from '../tools/schemas/registry.js';
+import { Agent, setGlobalDispatcher } from 'undici';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Override Node.js fetch timeout defaults
+// ─────────────────────────────────────────────────────────────────────────────
+// Node.js uses undici for native fetch() with a default headersTimeout of 300s.
+// With stream:false, Ollama returns nothing until generation is complete —
+// so large generations (>5 min at 131K context) hit the headersTimeout before
+// our AbortController timeout fires. We raise it to 30 minutes.
+// ─────────────────────────────────────────────────────────────────────────────
+setGlobalDispatcher(
+  new Agent({
+    headersTimeout: 30 * 60 * 1000,  // 30 minutes
+    bodyTimeout: 30 * 60 * 1000,     // 30 minutes
+    connectTimeout: 30 * 1000,       // 30 seconds
+  }),
+);
 
 interface OllamaProviderOptions {
   baseUrl: string;
@@ -359,7 +376,8 @@ export class OllamaProvider implements LlmProvider {
         throw new ProviderError(`Ollama request timed out after ${this.timeoutMs}ms`);
       }
 
-      throw new ProviderError('Ollama provider failed', error);
+      const causeMsg = error instanceof Error ? error.message : String(error);
+      throw new ProviderError(`Ollama provider failed: ${causeMsg}`, error);
     } finally {
       clearTimeout(timeout);
     }

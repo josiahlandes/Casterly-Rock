@@ -446,6 +446,9 @@ async function main(): Promise<void> {
       coordinatorConfig: dualLoopRuntime.coordinatorConfig,
       sendMessageFn,
       toolkit,
+      coordinatorConfig: {
+        fast: { complexReviewModel: 'qwen3.5:122b' },
+      },
     });
 
     controller.start();

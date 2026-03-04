@@ -7,7 +7,7 @@ This prompt tests the DeepLoop's ability to build a complete multi-file project 
 1. Start the REPL: `npm run repl`
 2. Paste the prompt below (everything inside the `---` fences)
 3. Wait for completion (~60-90 minutes)
-4. Open `workspace/neon-invaders/index.html` in a browser
+4. Open `projects/neon-invaders/index.html` in a browser
 5. Compare against `workspace/neon-invaders-baseline/` (first run output)
 
 ## Evaluation Criteria
@@ -23,12 +23,12 @@ This prompt tests the DeepLoop's ability to build a complete multi-file project 
 
 Build a complete Space Invaders clone called **Neon Invaders** using vanilla JavaScript and HTML5 Canvas. No libraries, no frameworks. One `index.html` entry point and separate JS module files loaded via ES modules (`<script type="module">`). The game should run by opening `index.html` in a browser — no build step.
 
-Create all files inside a new directory: `workspace/neon-invaders/`
+Create all files inside a new directory: `projects/neon-invaders/`
 
 ### File Structure
 
 ```
-workspace/neon-invaders/
+projects/neon-invaders/
   index.html          — Canvas, minimal CSS, loads main.js
   js/
     main.js           — Game loop, state machine, entry point

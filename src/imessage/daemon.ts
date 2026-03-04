@@ -465,6 +465,9 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         coordinatorConfig: dualLoopRuntime.coordinatorConfig,
         sendMessageFn: sendMessage,
         toolkit,
+        coordinatorConfig: {
+          fast: { complexReviewModel: 'qwen3.5:122b' },
+        },
       });
 
       autonomousController.start();

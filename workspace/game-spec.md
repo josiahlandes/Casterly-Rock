@@ -2,14 +2,14 @@
 
 Build a complete Space Invaders clone called **Neon Invaders** using vanilla JavaScript and HTML5 Canvas. No libraries, no frameworks. One `index.html` entry point and separate JS module files loaded via ES modules (`<script type="module">`). The game should run by opening `index.html` in a browser — no build step.
 
-Create all files inside a new directory: `workspace/neon-invaders/`
+Create all files inside a new directory: `projects/neon-invaders/`
 
 ---
 
 ## File Structure
 
 ```
-workspace/neon-invaders/
+projects/neon-invaders/
   index.html          — Canvas, minimal CSS, loads main.js
   js/
     main.js           — Game loop, state machine, entry point

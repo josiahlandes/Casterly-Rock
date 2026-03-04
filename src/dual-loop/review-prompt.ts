@@ -8,7 +8,7 @@
  * See docs/dual-loop-architecture.md Section 5.4 and Section 4 (Phase 4).
  */
 
-import type { TaskArtifact, ReviewResult } from './task-board-types.js';
+import type { TaskArtifact, ReviewResult, FileOperation } from './task-board-types.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -61,6 +61,7 @@ export const REVIEW_SYSTEM_PROMPT = `You are a code reviewer. Review the provide
 2. **Security** — Are there injection risks, credential leaks, or unsafe operations?
 3. **Style** — Does the code follow existing patterns and conventions?
 4. **Completeness** — Are edge cases handled? Are tests included?
+5. **File Structure** — Are file paths consistent? Are there duplicate basenames at different paths (e.g., config.js at root AND js/config.js)? Does the entry point reference the correct file names and IDs?
 
 Respond with a JSON object:
 {
@@ -69,8 +70,8 @@ Respond with a JSON object:
   "feedback": "Specific changes needed (only for changes_requested)"
 }
 
-When in doubt, approve. You implemented this code and have the full context.
-Only request changes for clear correctness or security issues.`;
+When in doubt, approve. The deep thinker has more context than you.
+Only request changes for clear correctness, security, or file structure issues.`;
 
 /**
  * Cascade review prompts — each pass focuses on a different concern.
@@ -105,17 +106,37 @@ Respond with a JSON object:
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Build the review prompt from a task's plan and artifacts.
+ * Build the review prompt from a task's plan, artifacts, and optional context.
  */
 export function buildReviewPrompt(params: {
   plan: string;
   artifacts: TaskArtifact[];
+  manifest?: FileOperation[];
+  originalMessage?: string;
 }): string {
-  const parts: string[] = [
-    '## Plan\n',
-    params.plan,
-    '\n\n## Artifacts\n',
-  ];
+  const parts: string[] = [];
+
+  // Original request gives the reviewer context about what was asked for
+  if (params.originalMessage) {
+    parts.push('## Original Request\n');
+    parts.push(params.originalMessage);
+    parts.push('\n');
+  }
+
+  parts.push('## Plan\n');
+  parts.push(params.plan);
+
+  // File structure manifest lets the reviewer check for path issues
+  if (params.manifest && params.manifest.length > 0) {
+    parts.push('\n\n## File Structure\n');
+    parts.push('Files created/modified during implementation:\n');
+    for (const file of params.manifest) {
+      parts.push(`- ${file.path} (${file.action}${file.lines !== undefined ? `, ${file.lines} lines` : ''})`);
+    }
+    parts.push('\n');
+  }
+
+  parts.push('\n\n## Artifacts\n');
 
   for (const artifact of params.artifacts) {
     parts.push(`### ${artifact.type}${artifact.path ? ` — ${artifact.path}` : ''}\n`);

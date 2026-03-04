@@ -222,6 +222,7 @@ export class TaskBoard {
       classification: options.classification,
       triageNotes: options.triageNotes,
       userFacing: options.userFacing,
+      ...(options.projectDir ? { projectDir: options.projectDir } : {}),
     };
 
     this.data.tasks.push(task);
@@ -262,6 +263,8 @@ export class TaskBoard {
     if ('planSteps' in fields) task.planSteps = fields.planSteps;
     if ('artifacts' in fields) task.artifacts = fields.artifacts;
     if ('implementationNotes' in fields) task.implementationNotes = fields.implementationNotes;
+    if ('workspaceManifest' in fields) task.workspaceManifest = fields.workspaceManifest;
+    if ('projectDir' in fields) task.projectDir = fields.projectDir;
     if ('reviewResult' in fields) task.reviewResult = fields.reviewResult;
     if ('reviewNotes' in fields) task.reviewNotes = fields.reviewNotes;
     if ('reviewFeedback' in fields) task.reviewFeedback = fields.reviewFeedback;

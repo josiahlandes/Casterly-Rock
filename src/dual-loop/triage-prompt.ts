@@ -21,6 +21,7 @@ export interface TriageResult {
   confidence: number;           // 0.0 to 1.0
   triageNotes: string;          // Summary for DeepLoop (if complex)
   directResponse?: string | undefined;  // Response if answering directly
+  matchedProject?: string | undefined;  // Slug of matched existing project (if any)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,12 +71,16 @@ export const TRIAGE_SYSTEM_PROMPT = `You are a triage agent. Your job is to clas
 
 Key rule: If answering correctly requires looking at something on this machine (files, processes, git, logs), classify as **complex**. Do NOT guess at system state — you will hallucinate. When in doubt, classify as **complex**.
 
+If existing projects are listed below and the user refers to one (by name, description, or context),
+include "matchedProject": "<slug>" in your response. Otherwise omit it.
+
 Respond with a JSON object:
 {
   "classification": "simple" | "complex" | "conversational",
   "confidence": 0.0-1.0,
   "triageNotes": "Brief summary for the planner (only needed for complex)",
-  "directResponse": "Your answer (only for simple/conversational)"
+  "directResponse": "Your answer (only for simple/conversational)",
+  "matchedProject": "slug (only if user refers to an existing project)"
 }`;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,8 +94,13 @@ export function buildTriagePrompt(params: {
   message: string;
   sender: string;
   taskBoardSummary: string;
+  projectsSummary?: string;
 }): string {
-  return `[From: ${params.sender}]\n${params.message}\n\n---\nActive tasks:\n${params.taskBoardSummary}`;
+  const parts = [`[From: ${params.sender}]\n${params.message}\n\n---\nActive tasks:\n${params.taskBoardSummary}`];
+  if (params.projectsSummary) {
+    parts.push(`\n---\nExisting projects:\n${params.projectsSummary}`);
+  }
+  return parts.join('');
 }
 
 /**
@@ -120,11 +130,13 @@ export function parseTriageResponse(text: string): TriageResult {
   try {
     const jsonStr = extractJson(text);
     const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+    const matchedProject = parsed['matchedProject'] as string | undefined;
     return {
       classification: (parsed['classification'] as TriageResult['classification']) ?? 'complex',
       confidence: (parsed['confidence'] as number) ?? 0.5,
       triageNotes: (parsed['triageNotes'] as string) ?? '',
       directResponse: parsed['directResponse'] as string | undefined,
+      ...(matchedProject ? { matchedProject } : {}),
     };
   } catch {
     // On parse failure, escalate to DeepLoop — safer than guessing
