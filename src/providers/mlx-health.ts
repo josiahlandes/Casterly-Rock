@@ -19,6 +19,8 @@ export interface EnsureMlxServerOptions extends MlxReadinessOptions {
   autoStart?: boolean;
   startWithSpec?: boolean;
   startTimeoutMs?: number;
+  /** Extra environment variables to pass to the server start script (e.g., KV cache config). */
+  startEnv?: Record<string, string>;
 }
 
 function normalizePositiveInt(value: number | undefined, fallback: number): number {
@@ -53,6 +55,7 @@ function runScript(
   args: string[],
   cwd: string,
   timeoutMs: number,
+  extraEnv?: Record<string, string>,
 ): Promise<void> {
   return new Promise((resolvePromise, rejectPromise) => {
     execFile(
@@ -62,6 +65,7 @@ function runScript(
         cwd,
         timeout: timeoutMs,
         maxBuffer: 1024 * 1024,
+        ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -126,6 +130,7 @@ export async function ensureMlxServerReady(
   const projectRoot = options?.projectRoot ?? process.cwd();
   const autoStart = options?.autoStart !== false;
   const startWithSpec = options?.startWithSpec === true;
+  const startEnv = options?.startEnv;
 
   try {
     await waitForMlxServerReady(baseUrl, {
@@ -144,7 +149,7 @@ export async function ensureMlxServerReady(
   const args = ['start', ...(startWithSpec ? ['--spec'] : [])];
 
   try {
-    await runScript(scriptPath, args, projectRoot, startTimeoutMs);
+    await runScript(scriptPath, args, projectRoot, startTimeoutMs, startEnv);
   } catch (startError) {
     const output = stringifyUnknown(startError).toLowerCase();
     // Benign race: another process started the server between our probe/start.

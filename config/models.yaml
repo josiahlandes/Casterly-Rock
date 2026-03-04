@@ -70,6 +70,7 @@ routing:
 
   # Dual-loop tasks
   triage: fast
+  code_review: fast
   acknowledge: fast
 
 # Hardware constraints (Phase 5: maximization)
@@ -79,71 +80,51 @@ hardware:
   max_concurrent_models: 2  # Two-model architecture: 122b + 35b-a3b
   target_memory_usage_pct: 91  # ~117 GB of 128 GB (incl. 131K KV cache), ~11 GB headroom
 
-# Ollama settings (FastLoop only — DeepLoop runs on MLX)
+# Ollama settings
 ollama:
   base_url: http://localhost:11434
-  timeout_ms: 60000          # 1 minute — FastLoop triage/relay tasks are quick
-  keep_alive: -1              # Never unload — FastLoop model stays hot
+  timeout_ms: 600000         # 10 minutes — default for all tasks
+  coding_timeout_ms: 1800000 # 30 minutes — coding tasks (multi-file generation can be slow at 131K context)
+  keep_alive: -1              # Never unload — both models stay hot
+
+  # KV cache quantization: set via OLLAMA_KV_CACHE_TYPE env var (not an Ollama API param).
+  # q8_0 = ~50% KV memory reduction with negligible quality loss (< 0.1 perplexity).
+  # q4_0 = ~75% reduction but may degrade quality on long contexts.
+  # Set by scripts/setup-mac.sh and scripts/tyrion-daemon.sh.
+  # Reference: KVQuant (Hooper et al., 2024)
+  kv_cache_type: q8_0
 
 # MLX settings (Apple Silicon-native inference via vllm-mlx)
-# DeepLoop always runs on MLX (~2.5x faster decode than Ollama Metal).
-# Server: scripts/mlx-server.sh start (auto-started by daemon/REPL if needed).
+# Achieves 50-87% faster inference than Ollama for large dense models.
+# Activate by setting CASTERLY_DEEP_PROVIDER=mlx before starting the daemon.
+# See scripts/mlx-server.sh for server launch.
 mlx:
   base_url: http://localhost:8000
-  # DeepLoop model: text-only 122B for reasoning/coding via MLX.
-  # The mlx-community variant includes vision towers that fail to load in
-  # text-only mlx_lm paths; use the nightmedia text-only variant instead.
-  model: nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx
-  timeout_ms: 1800000          # 30 minutes — coding tasks at 131K context
-
-  # Architecture: 48 layers (12 full attention + 36 linear attention)
-  # Only the 12 full attention layers use standard KV cache.
-  # 2 KV heads, head_dim=256. Model weights: ~65 GB at MXFP4.
-  architecture:
-    n_layers: 48
-    n_kv_layers: 12
-    n_kv_heads: 2
-    head_dim: 256
+  model: mlx-community/Qwen3.5-122B-MLX-4bit
+  timeout_ms: 1800000          # 30 minutes — same budget as Ollama coding tasks
 
   # Speculative decoding: draft model generates candidate tokens, main model verifies.
   # 1.5-2x speedup with zero quality loss (mathematically identical output distribution).
   # Enable by passing --spec to scripts/mlx-server.sh.
   speculative_decoding:
     draft_model: mlx-community/Qwen3.5-0.5B-MLX-4bit
-    num_speculative_tokens: 5
+    num_speculative_tokens: 5  # Tokens per speculation step (higher = faster but lower acceptance rate)
 
-  # KVSplit K8V4: asymmetric KV cache quantization (keys=8-bit, values=4-bit).
-  # ~62.5% KV cache memory reduction vs FP16, ~25% vs Q8. Minimal quality loss.
-  # Keys are more sensitive to quantization than values — hence the asymmetry.
+  # KV cache quantization (Tier 4, Item 12 — K8V4 mixed-precision)
+  # Asymmetric quantization: keys at 8-bit, values at 4-bit.
+  # Keys are more sensitive to quantization than values (KIVI, Liu et al. 2024).
+  # Achieves ~59% KV cache reduction with <0.1 perplexity degradation.
   #
-  # Implementation: mlx_lm's QuantizedKVCache supports uniform quantization
-  # only (same bits for K and V). K8V4 uses a custom K8V4KVCache class that
-  # applies different bits. vllm-mlx serve does NOT have --kv-cache-* flags;
-  # the quantization is configured via mlx_lm's generate_step(kv_bits=...)
-  # for uniform, or by injecting the custom cache class for K8V4.
+  # Presets: none (FP16), q8 (uniform 8-bit), q4 (uniform 4-bit), k8v4 (mixed)
+  # Bit widths: 2, 3, 4, 5, 6, 8 (from mlx.core.quantize)
+  # Group sizes: 32, 64, 128
   #
-  # Reference: KIVI (Liu et al., 2024), KVQuant (Hooper et al., 2024)
-  kv_split:
-    enabled: true
-    key_bits: 8
-    value_bits: 4
-    group_size: 64
-    min_context_for_split: 8192   # Only apply for context lengths >= 8K
-    max_perplexity_degradation: 0.1
-    quality_monitoring: true
-    auto_disable_on_degradation: true
-
-# ANE/NPU settings (Apple Neural Engine offloading)
-# Offloads embeddings and classification to ANE — 19 TFLOPS at 2.8W.
-# Frees GPU entirely for main inference models.
-# Requires CoreML bridge server (scripts/ane-bridge.sh).
-# See docs/roadmap.md Tier 4, Item 11.
-ane:
-  enabled: true
-  bridge_host: 127.0.0.1
-  bridge_port: 8100
-  embedding_model: nomic-embed-text-ane
-  classification_model: task-classifier-ane
-  embedding_dimensions: 768
-  cache_size: 1024
-  timeout_ms: 5000
+  # Status: config validated but not active until vllm-mlx adds --kv-bits support.
+  # Track: https://github.com/ml-explore/mlx-lm/issues/615
+  kv_cache:
+    preset: k8v4             # Recommended: best quality/memory tradeoff
+    key_bits: 8              # Explicit override (matches preset)
+    value_bits: 4            # Explicit override (matches preset)
+    group_size: 64           # Quantization group size
+    quantized_kv_start: 0    # Start quantization immediately (server mode)
+    server_support: false    # Flip to true when vllm-mlx supports --kv-bits

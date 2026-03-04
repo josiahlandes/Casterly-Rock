@@ -113,7 +113,12 @@ let debugMode = args.values.debug ?? false;
 let dualLoopActive = false;
 
 function getDeepProviderLabel(): string {
-  const mlxModel = process.env['MLX_MODEL'] || 'nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx';
+  const useMlx = process.env['CASTERLY_DEEP_PROVIDER'] === 'mlx';
+  if (!useMlx) {
+    return 'ollama:qwen3.5:122b';
+  }
+
+  const mlxModel = process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-MLX-4bit';
   return `mlx:${mlxModel}`;
 }
 
@@ -233,7 +238,7 @@ function handleSlashCommand(
       const deepLabel = getDeepProviderLabel();
       console.log('\x1b[33mMode: dual-loop\x1b[0m');
       console.log(`\x1b[33mDeep: ${deepLabel} (reasoning + coding)\x1b[0m`);
-      console.log('\x1b[33mFast: qwen3.5:35b-a3b (triage + status relay)\x1b[0m');
+      console.log('\x1b[33mFast: qwen3.5:35b-a3b (triage + review)\x1b[0m');
     } else {
       console.log(`\x1b[33mMode: standard pipeline\x1b[0m`);
       console.log(`\x1b[33mModel: ${deps.config.local.model}\x1b[0m`);
@@ -300,32 +305,41 @@ async function main(): Promise<void> {
       think: false, // Disable thinking for triage/review — we need plain JSON output
     });
 
-    // DeepLoop provider: MLX (Apple Silicon-native, ~2.5x faster than Ollama).
+    // DeepLoop provider: use MLX when configured, otherwise default to Ollama.
     const mlxBaseUrl = process.env['MLX_BASE_URL'] || 'http://localhost:8000';
-    const readyRetries = readPositiveIntEnv('CASTERLY_MLX_READY_RETRIES', 20);
-    const retryDelayMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_DELAY_MS', 3000);
-    const retryTimeoutMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_TIMEOUT_MS', 5000);
-    const autoStart = readBooleanEnv('CASTERLY_MLX_AUTOSTART', true);
-    const startWithSpec = readBooleanEnv('CASTERLY_MLX_START_WITH_SPEC', false);
+    const useMlx = process.env['CASTERLY_DEEP_PROVIDER'] === 'mlx';
+    if (useMlx) {
+      const readyRetries = readPositiveIntEnv('CASTERLY_MLX_READY_RETRIES', 20);
+      const retryDelayMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_DELAY_MS', 3000);
+      const retryTimeoutMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_TIMEOUT_MS', 5000);
+      const autoStart = readBooleanEnv('CASTERLY_MLX_AUTOSTART', true);
+      const startWithSpec = readBooleanEnv('CASTERLY_MLX_START_WITH_SPEC', false);
 
-    console.log(`\x1b[90mEnsuring MLX server (${readyRetries} retries, ${retryDelayMs}ms delay)...\x1b[0m`);
-    await ensureMlxServerReady(mlxBaseUrl, {
-      projectRoot: process.cwd(),
-      maxAttempts: readyRetries,
-      delayMs: retryDelayMs,
-      timeoutMs: retryTimeoutMs,
-      autoStart,
-      startWithSpec,
-    });
+      console.log(`\x1b[90mEnsuring MLX server (${readyRetries} retries, ${retryDelayMs}ms delay)...\x1b[0m`);
+      await ensureMlxServerReady(mlxBaseUrl, {
+        projectRoot: process.cwd(),
+        maxAttempts: readyRetries,
+        delayMs: retryDelayMs,
+        timeoutMs: retryTimeoutMs,
+        autoStart,
+        startWithSpec,
+      });
+    }
 
-    const deepProvider = new MlxProvider({
-      baseUrl: mlxBaseUrl,
-      model: process.env['MLX_MODEL'] || 'nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx',
-      timeoutMs: 1_800_000,
-    });
+    const deepProvider = useMlx
+      ? new MlxProvider({
+          baseUrl: mlxBaseUrl,
+          model: process.env['MLX_MODEL'] || 'mlx-community/Qwen3.5-122B-MLX-4bit',
+          timeoutMs: 1_800_000,
+        })
+      : new OllamaProvider({
+          baseUrl,
+          model: 'qwen3.5:122b',
+          timeoutMs: 1_800_000, // 30 min — coding tasks with 131K context can be slow
+        });
 
     const concurrentProvider = new ConcurrentProvider(
-      new Map<string, import('./providers/base.js').LlmProvider>([
+      new Map([
         ['qwen3.5:122b', deepProvider],
         ['qwen3.5:35b-a3b', fastProvider],
       ]),
@@ -437,9 +451,10 @@ async function main(): Promise<void> {
     controller.start();
     baselineDeepWorkCount = getDeepWorkCount();
 
+    const deepModelLabel = useMlx ? `mlx:${deepProvider.model}` : 'qwen3.5:122b';
     console.log('\x1b[90mMode: dual-loop\x1b[0m');
-    console.log(`\x1b[90mDeep: mlx:${deepProvider.model} (reasoning + coding)\x1b[0m`);
-    console.log('\x1b[90mFast: qwen3.5:35b-a3b (triage + status relay)\x1b[0m');
+    console.log(`\x1b[90mDeep: ${deepModelLabel} (reasoning + coding)\x1b[0m`);
+    console.log('\x1b[90mFast: qwen3.5:35b-a3b (triage + review)\x1b[0m');
     console.log(`\x1b[90mDebug: ${debugMode ? 'on' : 'off'}\x1b[0m`);
     console.log(`\x1b[90mProject: ${projectRoot}\x1b[0m`);
 

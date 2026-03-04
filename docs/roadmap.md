@@ -115,11 +115,11 @@ Meaningful architectural changes that unlock new capability dimensions.
 - `src/providers/mlx.ts` — `MlxProvider` implementing `LlmProvider` interface via OpenAI-compatible API
 - `src/providers/index.ts` — exports `MlxProvider` and `MlxProviderOptions`
 - `scripts/mlx-server.sh` — launch script for vllm-mlx server (start/stop/status/logs)
-- `src/imessage/daemon.ts` — MLX deep provider (always-on, no toggle)
+- `src/imessage/daemon.ts` — MLX provider selection via `CASTERLY_DEEP_PROVIDER=mlx` env var
 - `config/models.yaml` — MLX configuration section (model, endpoint, timeout)
 - `tests/mlx-provider.test.ts` — 20 tests (generation, tool calling, error handling, multi-turn)
 
-**Activation:** MLX is the default and only DeepLoop provider. The server is auto-started by the daemon/REPL, or launch manually with `./scripts/mlx-server.sh start`.
+**Activation:** Set `CASTERLY_DEEP_PROVIDER=mlx` before starting the daemon. Launch vllm-mlx first with `./scripts/mlx-server.sh start`.
 
 **References:**
 - MLX framework: https://github.com/ml-explore/mlx
@@ -248,7 +248,7 @@ Mechanisms that make the system improve itself over time. High ceiling, high eff
 
 Experimental capabilities that push the boundaries of what's possible with local inference.
 
-### 11. [x] NPU/ANE Offloading for Embeddings and Classification (2026-03-03)
+### 11. [ ] NPU/ANE Offloading for Embeddings and Classification
 
 **What:** Offload lightweight inference tasks (text embeddings, classification, sentiment analysis) to Apple's Neural Engine (ANE/NPU), which delivers 19 TFLOPS at only 2.8W. This frees the GPU entirely for the main inference models.
 
@@ -256,13 +256,12 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 **Impact:** Zero-cost embeddings and classification. GPU fully dedicated to main inference.
 
-**Source files:**
-- `src/providers/ane.ts` — `AneProvider` class wrapping CoreML inference via bridge server; LRU-cached embeddings and classification; keyword-based fallback classifier; graceful degradation when ANE unavailable
-- `src/providers/index.ts` — exports `AneProvider`, `createAneProvider`, `isAneSupported`
-- `config/models.yaml` — ANE configuration section (bridge host/port, models, dimensions, cache)
-- `tests/ane-provider.test.ts` — 27 tests (embedding, classification, health, caching, fallback)
-
-**Activation:** Start the CoreML bridge server, then set `ane.enabled: true` in config/models.yaml.
+**Implementation:**
+1. Convert embedding model (nomic-embed-text) to CoreML format with ANE target
+2. Create `src/providers/ane.ts` wrapping CoreML inference via Swift bridge or `coremltools`
+3. Route embedding requests to ANE, keep main inference on GPU
+4. Benchmark: compare embedding latency and throughput on ANE vs GPU
+5. Extend to classification tasks if ANE embedding quality matches GPU
 
 **References:**
 - Apple Neural Engine: 19 TFLOPS, hardware-accelerated matrix multiply
@@ -271,7 +270,7 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 ---
 
-### 12. [x] KVSplit K8V4 for MLX Inference (2026-03-03)
+### 12. [~] KVSplit K8V4 for MLX Inference (config layer: 2026-03-03)
 
 **What:** Use mixed-precision KV cache where keys are stored at 8-bit and values at 4-bit precision (K8V4). Research shows this asymmetric quantization achieves 59% cache memory reduction with minimal quality loss — keys are more sensitive to quantization than values.
 
@@ -279,29 +278,40 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 **Impact:** 59% KV cache reduction. Enables longer contexts or lower memory pressure.
 
+**Status: Configuration layer complete.** All code is wired end-to-end from env vars → server script → provider. Activation is a single flag flip (`MLX_KV_SERVER_SUPPORT=1`) when vllm-mlx adds `--kv-bits` support (tracking: mlx-lm Issue #615).
+
 **Source files:**
-- `src/providers/kvsplit.ts` — `KvSplitManager` class managing K8V4 configuration; memory estimation for FP16/Q8/Q4/K8V4; MLX CLI argument generation; quality monitoring with auto-disable on degradation
-- `src/providers/index.ts` — exports `KvSplitManager`, `createKvSplitManager`
-- `config/models.yaml` — KVSplit configuration under `mlx.kv_split` (key/value bits, quality monitoring, auto-disable)
-- `scripts/benchmark-kvcache.py` — Full benchmark script with custom K8V4KVCache class, memory verification, perplexity measurement
-- `tests/kvsplit.test.ts` — 25 tests (memory estimation, strategy comparison, MLX args, quality monitoring, auto-disable)
+- `src/providers/mlx-kv-cache.ts` — Types (`KvBits`, `KvGroupSize`, `KvCachePreset`, `MlxKvCacheConfig`), validation, preset resolution (none/q8/q4/k8v4), memory estimation with known model params, env var bridge (build/parse), human-readable summary
+- `src/providers/mlx.ts` — `MlxProviderOptions.kvCache`, `kvBits` getter, `kvCacheSummary()` method
+- `src/providers/mlx-health.ts` — `EnsureMlxServerOptions.startEnv` for passing KV cache env vars to server start script
+- `src/providers/index.ts` — Re-exports all KV cache types and functions
+- `scripts/mlx-server.sh` — `MLX_KV_KEY_BITS`, `MLX_KV_VALUE_BITS`, `MLX_KV_GROUP_SIZE`, `MLX_KV_QUANTIZED_START`, `MLX_KV_SERVER_SUPPORT` env vars; validation; conditional flag injection when server support is enabled; status display
+- `config/models.yaml` — `mlx.kv_cache` section with K8V4 preset configuration
+- `src/imessage/daemon.ts` — Reads KV cache config from env, passes to server start and provider construction
+- `tests/mlx-kv-cache.test.ts` — 50 tests (defaults, validation, preset resolution, memory estimation, env var round-trip, summary formatting, provider integration)
 
-**Activation:** Set `mlx.kv_split.enabled: true` in config/models.yaml. Pass `--kvsplit` to scripts/mlx-server.sh.
+**Implementation:**
+1. ~~Requires MLX backend (Tier 2 item 5) as prerequisite~~ ✅
+2. ~~Implement K8V4 quantization in MLX inference config~~ ✅ (config layer; server activation pending)
+3. Benchmark carefully: run quality evaluation suite at multiple context lengths — **requires local Apple Silicon**
+4. Compare against Q8 (Tier 1) and FP16 baselines — **requires local Apple Silicon**
+5. Document quality/memory tradeoff curves — **requires benchmark data**
 
-**Benchmark results (2026-03-03):** Full perplexity benchmark at 4K/16K/64K/128K context. See `docs/kvcache-benchmark-results.md` for details.
-- **K8V4 chosen as DeepLoop's KV cache strategy.** At 128K context, K8V4 is essentially lossless (-0.06% vs FP16) while saving 1.7 GB peak memory.
-- Uniform Q8/Q4 degrade significantly at 128K (+14.5%/+15.4% perplexity), confirming that keys are far more sensitive to quantization than values.
-- At short context (4K-16K), all strategies are within noise — KV cache is too small to matter.
-- K8V4 requires a custom cache class (mlx_lm only supports uniform quantization natively) with dequantize-before-attention pattern.
+**Remaining (requires local machine):**
+- Flip `MLX_KV_SERVER_SUPPORT=1` when vllm-mlx adds `--kv-bits` (Issue #615)
+- Run benchmarks: perplexity at 4K/16K/64K/128K context for FP16 vs Q8 vs K8V4
+- Validate flag names match vllm-mlx's actual CLI (expected: `--kv-bits`, `--kv-group-size`)
+- Measure real memory savings with `mlx.core.metal.get_active_memory()`
 
 **References:**
 - Research: KVQuant (Hooper et al., 2024) — asymmetric key/value quantization
 - Research: KIVI (Liu et al., 2024) — K8V4 specifically, 59% reduction with <0.1 perplexity degradation
-- MLX quantization support: configurable per-tensor precision
+- MLX quantization support: `mlx.core.quantize` with 2/3/4/5/6/8-bit, group sizes 32/64/128
+- Tracking: [mlx-lm Issue #615](https://github.com/ml-explore/mlx-lm/issues/615) — server-side KV cache params
 
 ---
 
-### 13. [x] Test-Time Compute Scaling (2026-03-03)
+### 13. [ ] Test-Time Compute Scaling
 
 **What:** Dynamically allocate compute budget based on task difficulty. Easy tasks get a single fast pass. Hard tasks get extended reasoning chains, multiple attempts, and verification cascades. The model itself estimates difficulty and requests the appropriate compute budget.
 
@@ -309,12 +319,12 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 **Impact:** Faster responses for easy tasks. Better results for hard tasks. Optimal resource utilization.
 
-**Source files:**
-- `src/autonomous/reasoning/compute-scaler.ts` — `ComputeScaler` class with dynamic budget allocation; model self-assessment parsing; difficulty combination (heuristic + self-assessment); calibration tracking with outcome recording; dream cycle calibration summary with recommended threshold adjustments
-- `config/autonomous.yaml` — `compute_scaling` config section under `hardware` (self-assessment, calibration, per-difficulty budgets)
-- `tests/compute-scaler.test.ts` — 30 tests (budget allocation, self-assessment parsing, difficulty combination, calibration tracking, calibration adjustment, summary generation)
-
-**Integration:** The `ComputeScaler` extends the existing `ReasoningScaler` with dynamic budget management. The dual-loop calls `allocateBudget()` which combines heuristic difficulty assessment with model self-assessment and historical calibration data.
+**Implementation:**
+1. Add difficulty estimation to the classification step (or let the model self-assess)
+2. Map difficulty levels to compute budgets: turn limits, verification depth, retry count
+3. Integrate with existing `ReasoningScaler` (`src/autonomous/reasoning/scaling.ts`)
+4. Track difficulty estimates vs. actual outcomes in the journal for calibration
+5. Dream cycle phase to recalibrate difficulty thresholds from historical data
 
 **References:**
 - Research: "Let Me Think" (2024) — test-time compute scaling for language models
