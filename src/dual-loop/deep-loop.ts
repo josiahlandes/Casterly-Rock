@@ -187,10 +187,19 @@ You MUST respond with ONLY a valid JSON object (no additional text outside the J
 {
   "plan": "High-level description of the approach",
   "steps": [
-    { "description": "Step 1: ...", "status": "pending" },
-    { "description": "Step 2: ...", "status": "pending" }
+    { "description": "Step 1: ...", "status": "pending", "context": "Only the spec sections relevant to this step" },
+    { "description": "Step 2: ...", "status": "pending", "context": "Only the spec sections relevant to this step" }
   ]
 }
+
+## Step Context (CRITICAL)
+
+For each step, include a "context" field containing ONLY the parts of the user request that are relevant to that step. Do NOT repeat the full specification in every step. The coder executing each step will ONLY see the step's context, not the full request. This prevents the coder from running ahead and implementing future steps.
+
+Example: If the user asks for a game with a player, enemies, and particles:
+- Step 1 context: "Create project structure. index.html with canvas element, config.js with screen dimensions and colors."
+- Step 2 context: "Create player.js. Player class with x/y position, speed=5, draw() method on canvas, moveLeft/moveRight responding to arrow keys."
+- Step 3 context: "Create enemies.js. Enemy grid 5x4, each enemy 30x30px, move horizontally and drop when hitting edges."
 
 ## Step Sizing Guidelines
 
@@ -854,9 +863,15 @@ export class DeepLoop {
     // Inject workspace manifest so the model knows what files exist
     const manifestContext = this.formatWorkspaceManifest(manifest);
 
+    // Use step-scoped context when available (from planner), otherwise fall
+    // back to the full task message. Step-scoped context prevents the coder
+    // from running ahead — it only sees spec sections relevant to this step.
+    const taskContext = step.context
+      ? `## Task Overview: ${(task.plan ?? task.originalMessage ?? '(no message)').slice(0, 150)}\n\n## Step Context\n${step.context}`
+      : `## Task: ${task.originalMessage ?? '(no message)'}\n\n## Plan: ${task.plan ?? '(no plan)'}`;
+
     const prompt = [
-      `## Task: ${task.originalMessage ?? '(no message)'}`,
-      `## Plan: ${task.plan ?? '(no plan)'}`,
+      taskContext,
       manifestContext,
       priorContext,
       `## Current Step (${stepIndex + 1}/${allSteps.length}): ${step.description}`,

@@ -62,6 +62,9 @@ export interface PlanStep {
   description: string;
   status: 'pending' | 'in_progress' | 'done' | 'failed';
   output?: string | undefined;
+  /** Step-scoped context: only the spec sections relevant to this step.
+   *  Populated by the planner so the coder sees focused context, not the full spec. */
+  context?: string | undefined;
 }
 
 /**
