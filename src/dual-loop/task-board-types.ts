@@ -174,6 +174,14 @@ export interface Task {
   // ── Parking (for preemption) ──────────────────────────────────────────────
   parkedState?: ParkedState | undefined;
 
+  // ── Progress Tracking (for FastLoop delivery) ──────────────────────────
+  /** Whether the plan summary has been delivered to the user */
+  planSummaryDelivered?: boolean | undefined;
+  /** ISO timestamp of last progress update delivered */
+  lastProgressDeliveredAt?: string | undefined;
+  /** Number of steps that were completed when the last progress update was sent */
+  lastProgressStepsCompleted?: number | undefined;
+
   // ── Resolution ────────────────────────────────────────────────────────────
   resolvedAt?: string | undefined;
   resolution?: string | undefined;
@@ -222,6 +230,9 @@ export interface UpdateTaskFields {
   verificationPasses?: number | undefined;
   currentVerificationPass?: number | undefined;
   parkedState?: ParkedState | undefined;
+  planSummaryDelivered?: boolean | undefined;
+  lastProgressDeliveredAt?: string | undefined;
+  lastProgressStepsCompleted?: number | undefined;
   resolvedAt?: string | undefined;
   resolution?: string | undefined;
   userFacing?: string | undefined;
