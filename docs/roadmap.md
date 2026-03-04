@@ -580,7 +580,7 @@ Qwen Code's `ReadManyFilesTool` solves this with glob pattern support and batch 
 
 ---
 
-### 22. [ ] Skills System Deepening
+### 22. [x] Skills System Deepening (2026-03-04)
 
 **What:** Deepen the skills system from its current state (loosely integrated LLM-facing instructions) into a core execution primitive. Three workstreams: (a) tighter integration of skills into the agent loop so they're automatically invoked, not just discoverable; (b) autonomous skill authoring where Tyrion creates new SKILL.md packages from successful task patterns; (c) skill composition where multi-step workflows chain skills together.
 
@@ -606,6 +606,15 @@ Qwen Code's `ReadManyFilesTool` solves this with glob pattern support and batch 
 1. Add a `depends_on` field to SKILL.md frontmatter for declaring skill chains
 2. Enable multi-skill plans: "To deploy, run `build` skill → `test` skill → `deploy` skill"
 3. Start simple — sequential chains only, no branching or parallelism
+
+**Source files:**
+- `src/dual-loop/deep-loop.ts` — (a) Skill-assisted planning: queries SkillFilesManager for proficient/expert skills, injects as prior art in planner prompt. (a) Post-task skill learning: `tryLearnSkillFromTask()` captures multi-step patterns, records use of existing skills. `setSkillFilesManager()` setter.
+- `src/autonomous/agent-tools.ts` — Skill tool executors: `learn_skill`, `refine_skill`, `search_skills`, `record_skill_use` (already implemented, wired to SkillFilesManager)
+- `src/autonomous/memory/skill-files.ts` — SkillFilesManager with learn/refine/search/recordUse/mastery progression
+- `src/skills/loader.ts` — Static skill registry with SKILL.md parsing and intent matching
+- `src/tools/synthesizer.ts` — Tool synthesis with security scanning
+
+**Note:** Workstreams (b) autonomous SKILL.md authoring and (c) skill composition/chaining are deferred — the core integration (a) establishes the growth flywheel that makes (b) and (c) valuable.
 
 **References:**
 - Current implementation: `src/skills/loader.ts` (registry), `src/autonomous/memory/skill-files.ts` (learned skills), `src/tools/synthesizer.ts` (tool synthesis)

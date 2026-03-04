@@ -36,6 +36,7 @@ import type { DeepLoopEventConfig } from './deep-loop-events.js';
 import { ComputeScaler } from '../autonomous/reasoning/compute-scaler.js';
 import type { ComputeBudget } from '../autonomous/reasoning/compute-scaler.js';
 import { ReasoningScaler } from '../autonomous/reasoning/scaling.js';
+import type { SkillFilesManager, SkillFile } from '../autonomous/memory/skill-files.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -285,6 +286,8 @@ export class DeepLoop {
   private activeBudget: ComputeBudget | null = null;
   /** Tracks turn count for current task (for calibration recording) */
   private taskTurnCount: number = 0;
+  /** Skill files manager for skill-assisted planning and post-task learning */
+  private skillFilesManager: SkillFilesManager | null = null;
 
   constructor(
     provider: LlmProvider,
@@ -385,6 +388,15 @@ export class DeepLoop {
   setGoalStack(goalStack: GoalStack, config?: DeepLoopEventConfig): void {
     this.goalStack = goalStack;
     this.eventConfig = config;
+  }
+
+  /**
+   * Set the SkillFilesManager for skill-assisted planning and post-task learning.
+   * When set, the planner injects relevant learned skills as prior art,
+   * and successful tasks trigger skill learning.
+   */
+  setSkillFilesManager(manager: SkillFilesManager): void {
+    this.skillFilesManager = manager;
   }
 
   /** Whether the loop is currently running */
@@ -526,6 +538,9 @@ export class DeepLoop {
           resolvedAt: new Date().toISOString(),
         });
         tracer.log('deep-loop', 'info', `Task ${task.id} self-review approved, marking done`);
+
+        // Post-task skill learning: capture multi-step patterns as reusable skills
+        this.tryLearnSkillFromTask(task, planned);
       } else {
         this.taskBoard.update(task.id, {
           status: 'revision',
@@ -583,6 +598,25 @@ export class DeepLoop {
       }
     }
 
+    // Search learned skills for prior art to inject into the planning prompt
+    let skillContext = '';
+    if (this.skillFilesManager) {
+      const taskDescription = task.originalMessage ?? task.triageNotes ?? '';
+      const matchingSkills = this.skillFilesManager.search(taskDescription);
+      // Only inject proficient/expert skills — novice/competent skills aren't reliable enough
+      const reliableSkills = matchingSkills.filter(
+        (s) => s.mastery === 'proficient' || s.mastery === 'expert',
+      );
+      if (reliableSkills.length > 0) {
+        const skillLines = reliableSkills.slice(0, 3).map((s) => {
+          const steps = s.steps.map((step, i) => `  ${i + 1}. ${step}`).join('\n');
+          return `### ${s.name} (${s.mastery}, ${s.useCount} uses, ${Math.round((s.successCount / Math.max(s.useCount, 1)) * 100)}% success)\n${s.description}\n**Steps:**\n${steps}`;
+        });
+        skillContext = `\n## Prior Art (Learned Skills)\n\nThese skills have been used successfully before for similar tasks. Use them as suggested approaches — adapt as needed, don't follow blindly.\n\n${skillLines.join('\n\n')}`;
+        tracer.log('deep-loop', 'info', `Injected ${reliableSkills.length} skills as prior art`);
+      }
+    }
+
     const prompt = [
       `## User Request\n\n${task.originalMessage ?? '(no message)'}`,
       task.triageNotes ? `\n## Triage Notes\n\n${task.triageNotes}` : '',
@@ -592,6 +626,7 @@ export class DeepLoop {
           ? `\n## Previous Progress\n\n${task.parkedState.contextSnapshot}`
           : '',
       existingProjectContext,
+      skillContext,
     ].join('');
 
     let rawResponse: string | null = null;
@@ -1491,6 +1526,66 @@ Other rules:
       resolvedAt: new Date().toISOString(),
     });
     this.revisionCounts.delete(id);
+  }
+
+  /**
+   * Try to learn a reusable skill from a successfully completed multi-step task.
+   * Only learns when:
+   *   - SkillFilesManager is available
+   *   - Task had 2+ plan steps (single-step tasks aren't interesting patterns)
+   *   - No existing skill already matches this task closely
+   */
+  private tryLearnSkillFromTask(task: Task, planned: Task | null): void {
+    if (!this.skillFilesManager || !planned?.planSteps) return;
+
+    const steps = planned.planSteps;
+    if (steps.length < 2) return; // Single-step tasks aren't learnable patterns
+
+    const tracer = getTracer();
+    const taskDescription = task.originalMessage ?? task.triageNotes ?? '';
+
+    // Check if an existing skill already covers this pattern
+    const existingSkills = this.skillFilesManager.search(taskDescription);
+    const alreadyCovered = existingSkills.some(
+      (s) => s.mastery === 'proficient' || s.mastery === 'expert',
+    );
+
+    if (alreadyCovered) {
+      // Record use of matching skill instead of creating a new one
+      const bestMatch = existingSkills[0];
+      if (bestMatch) {
+        this.skillFilesManager.recordUse(bestMatch.id, true);
+        tracer.log('deep-loop', 'info', `Recorded successful use of skill: ${bestMatch.name}`);
+      }
+      return;
+    }
+
+    // Extract a skill name from the task description
+    const name = taskDescription
+      .slice(0, 60)
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      || `task-pattern-${Date.now().toString(36)}`;
+
+    const skillSteps = steps
+      .filter((s) => s.status === 'done')
+      .map((s) => s.description);
+
+    if (skillSteps.length < 2) return;
+
+    const result = this.skillFilesManager.learn({
+      name,
+      description: taskDescription.slice(0, 200),
+      steps: skillSteps,
+      tags: ['auto-learned', 'deep-loop'],
+    });
+
+    if (result.success) {
+      tracer.log('deep-loop', 'info', `Learned new skill: ${name} (${result.skillId})`);
+    }
   }
 
   /**
