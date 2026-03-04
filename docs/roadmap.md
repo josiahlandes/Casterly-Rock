@@ -514,6 +514,32 @@ The `buildStatusReport()` method (line 509) already has decent step-level progre
 
 ---
 
+### 20. [ ] Batch File Read Tool
+
+**What:** Add a `read_files` tool that reads multiple files in a single tool call, accepting an array of paths or glob patterns. Returns all file contents in one response, cutting multi-file exploration from N tool turns to 1.
+
+**Why:** The current `read_file` tool (`src/tools/executors/read-file.ts`) reads one file per call. During the exploration phase of a coding task, the model typically reads 5-10 files to understand the codebase. Each read is a separate ReAct turn: model requests → tool executes → result fed back → model requests next file. This wastes turns and context on per-file overhead (tool call JSON, result framing).
+
+Qwen Code's `ReadManyFilesTool` solves this with glob pattern support and batch reading. For a 6-file exploration phase, this cuts turns from 6 to 1.
+
+**Impact:** 60-80% reduction in exploration turns. Less context wasted on per-file tool call overhead. Faster codebase understanding.
+
+**Implementation:**
+1. Create `src/tools/executors/read-files.ts` — new `read_files` executor accepting `{ paths: string[] }` or `{ glob: string }`
+2. Reuse existing `read_file` safety checks (blocked paths, max file size, encoding)
+3. Per-file size cap (same 5MB), plus aggregate cap (~20MB total) to prevent context flooding
+4. Truncation: if total content exceeds a token budget (~50K chars), truncate the longest files first with `...(truncated)` markers
+5. Add tool schema to `src/tools/schemas/core.ts`
+6. Register executor in `src/tools/executors/index.ts` and tool map
+7. Output format: array of `{ path, content, lines, size, error? }` — failed files return error instead of aborting the batch
+
+**References:**
+- Qwen Code: `ReadManyFilesTool` — glob patterns, batch read, intelligent filtering
+- Current tool: `src/tools/executors/read-file.ts` (single file only)
+- `docs/qwen-code-vs-deeploop.md` §3 (tool set comparison)
+
+---
+
 ## Implementation Notes
 
 ### Dependencies Between Items
@@ -541,6 +567,7 @@ Tier 5 (Qwen Code-derived):
   17 (Delegate with Tools) is independent
   18 (Structured Handoffs) is independent
   19 (Progress Updates) is independent — but benefits from 14 (step-scoped context makes plan summaries more meaningful)
+  20 (Batch File Read) is independent
   15 ← 18 share the XML snapshot format — implement 18 first for type definitions
 ```
 
