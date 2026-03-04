@@ -457,6 +457,63 @@ This mirrors how humans work with coding agents: you describe one chunk of work 
 
 ---
 
+### 19. [ ] Meaningful Task Acknowledgments and Progress Updates
+
+**What:** Replace the generic "Got it — working on that now." acknowledgment with a plan-aware initial message, and add proactive progress updates during multi-step task execution. The user should know *what* Tyrion is about to do before he does it, and get periodic updates as steps complete.
+
+**Why:** Currently the FastLoop sends a throwaway acknowledgment from the triage model (line 303 of `fast-loop.ts`) before the DeepLoop has even planned the task. The triage model has no knowledge of the plan — it just generates a generic ack like "Understood. The work begins." Then there's silence until the entire task completes. The user has zero visibility into what's happening or how far along it is.
+
+The `buildStatusReport()` method (line 509) already has decent step-level progress info (`3/6 steps — Creating player module`), but it's only used when explicitly asked. It's never proactively pushed.
+
+**Impact:** Users know what Tyrion is doing, can course-correct early if the plan is wrong, and aren't left wondering if anything is happening during long tasks.
+
+**Implementation:**
+
+1. **Plan-aware initial ack:** After the DeepLoop finishes `planTask()`, send a brief plan summary to the user via the FastLoop's `deliver()`:
+   ```
+   "Building Neon Invaders in 6 steps:
+    1. Project structure and config
+    2. Player and input modules
+    3. Enemy grid and collision
+    4. Particles, audio, HUD
+    5. Game loop and levels
+    6. Integration test
+    Starting now."
+   ```
+   This requires a new event or TaskBoard status check — when a task transitions from `queued` → `implementing` with `planSteps` populated, the FastLoop picks it up and delivers the plan summary.
+
+2. **Step completion updates:** When a step transitions to `done`, emit a brief progress message:
+   ```
+   "Step 2/6 done — player.js and input.js created. Starting enemy grid."
+   ```
+   Use the existing `step.output` (truncated) and the next step's description. Rate-limit to at most one update per 60 seconds to avoid spamming.
+
+3. **Milestone updates for long steps:** If a single step runs longer than 3 minutes, send a heartbeat:
+   ```
+   "Still working on step 3/6 (enemy grid) — 4 files created so far."
+   ```
+   Use the workspace manifest file count for progress indication.
+
+4. **Remove the generic fallback:** Replace the `"Got it — working on that now."` fallback (line 303) with a triage-generated message that includes the `triageNotes` summary:
+   ```
+   "Got it — this looks like a multi-file coding project. Planning the approach now."
+   ```
+   Update the triage system prompt to generate contextual acks for complex tasks.
+
+**Source files to modify:**
+- `src/dual-loop/fast-loop.ts` — heartbeat loop to check for plan-ready and step-complete events; new `deliverProgressUpdate()` method; replace generic ack fallback
+- `src/dual-loop/deep-loop.ts` — emit events or update TaskBoard fields when plan is ready and steps complete
+- `src/dual-loop/task-board.ts` — add `planReady` flag or event for plan-summary delivery
+- `src/dual-loop/task-board-types.ts` — add `lastProgressDeliveredAt` timestamp for rate-limiting
+- `src/dual-loop/triage-prompt.ts` — update triage prompt to generate contextual acks for complex tasks
+
+**References:**
+- Current ack: `src/dual-loop/fast-loop.ts` line 303 (`Got it — working on that now.`)
+- Existing progress data: `src/dual-loop/fast-loop.ts` lines 509-540 (`buildStatusReport()`)
+- Task state transitions: `src/dual-loop/task-board.ts`
+
+---
+
 ## Implementation Notes
 
 ### Dependencies Between Items
@@ -483,6 +540,7 @@ Tier 5 (Qwen Code-derived):
   16 (Loop Detection) is independent
   17 (Delegate with Tools) is independent
   18 (Structured Handoffs) is independent
+  19 (Progress Updates) is independent — but benefits from 14 (step-scoped context makes plan summaries more meaningful)
   15 ← 18 share the XML snapshot format — implement 18 first for type definitions
 ```
 
