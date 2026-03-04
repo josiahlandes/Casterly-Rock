@@ -1,420 +1,235 @@
-# Qwen Code vs Casterly DeepLoop — Coding Agent Comparison
+# Qwen Code Study: Insights for Casterly
 
-> **Purpose:** Evaluate how Qwen's official coding agent (Qwen Code + Qwen3-Coder)
-> handles context, task decomposition, and multi-step workflows, and identify
-> techniques we can adopt or improve upon in our DeepLoop coding pipeline.
->
-> **Date:** 2026-03-04
+> **Purpose**: Extract actionable patterns from Qwen Code (QwenLM/qwen-code) to improve Casterly's coding interface, context management, and agent loop.
+> **Date**: 2026-03-04
+> **Source**: <https://github.com/QwenLM/qwen-code> (Apache-2.0)
 
 ---
 
-## 1. Origins & Architecture
+## 1. Project Overview
 
-| Dimension | Qwen Code | Casterly DeepLoop |
-|---|---|---|
-| **Lineage** | Fork of Gemini CLI, adapted with custom prompts and Qwen3-Coder function calling | Custom dual-loop built from scratch for local-first inference |
-| **Model coupling** | Co-evolved with Qwen3-Coder; prompts + model trained together | Model-agnostic within Qwen family (currently qwen3.5:122b via Ollama) |
-| **Architecture** | Single agentic loop with subagent delegation | Two-loop: FastLoop (35B triage) + DeepLoop (122B reasoning/coding) |
-| **Execution** | Cloud API or local via vLLM/SGLang | Local-only via Ollama or MLX, always-hot in VRAM |
+Qwen Code is a **TypeScript monorepo** (~20k GitHub stars) providing a terminal-first coding agent. It's a fork of Google's Gemini CLI with multi-provider support layered on top (OpenAI, Anthropic, Gemini, Qwen/DashScope).
 
-**Key insight:** Qwen Code benefits from model-agent co-training — the Qwen3-Coder model
-was RL-trained specifically for multi-turn tool use with the exact tool schemas Qwen Code
-presents. Our DeepLoop uses general-purpose Qwen3.5 models that weren't agentic-RL-trained.
+**Key packages:**
 
----
-
-## 2. Tool Calling Format
-
-### Qwen3-Coder: Custom XML
-
-Qwen3-Coder uses a **non-standard XML format** designed specifically for coding:
-
-```xml
-<tool_call>
-<function=read_file>
-<parameter=file_path>
-src/main.ts
-</parameter>
-<parameter=offset>
-0
-</parameter>
-</function>
-</tool_call>
-```
-
-- Requires dedicated parsers in vLLM (`qwen3_coder` or `qwen3_xml`) and SGLang
-- The 30B model can be unreliable — frequently omits the `<tool_call>` tag
-- With 5+ tools, the model may emit XML in the content field instead of structured tool_calls
-- **Non-thinking mode only** — no `<think></think>` blocks, optimized for direct action
-
-### Casterly DeepLoop: Standard Ollama JSON
-
-Our system uses Ollama's built-in function calling (OpenAI-compatible JSON):
-- More portable across model versions
-- Qwen3.5 uses Hermes-style JSON in `<tool_call>` tags
-- Our OllamaProvider already handles XML retry (3 attempts with temperature bump)
-- We support `think: true/false` toggle per-call
-
-**Comparison:** Qwen3-Coder's custom XML was designed for the model's training distribution,
-giving it higher reliability on the trained format. However, it's fragile outside that exact
-format and breaks on many third-party platforms. Our JSON approach is more robust but
-doesn't benefit from format-specific RL training.
+| Package | Purpose |
+|---------|---------|
+| `packages/core` | LLM clients, tools, prompts, services, subagents |
+| `packages/cli` | Terminal UI, commands, IDE integration |
+| `packages/sdk-typescript` | Programmatic SDK for embedding |
+| `packages/webui` | Browser-based interface |
+| `packages/vscode-ide-companion` | VS Code extension |
 
 ---
 
-## 3. Tool Set
+## 2. Architecture Comparison
 
-| Tool | Qwen Code | Casterly DeepLoop |
-|---|---|---|
-| **Read file** | `read_file` (2000-line truncation, pagination, images, PDFs) | ReAct loop reads via Ollama tool calls |
-| **Read many** | `read_many_files` (glob patterns, batch read) | Not yet — single file reads |
-| **Write file** | `write_file` (with approval gate) | Tool call within ReAct loop |
-| **Edit file** | `edit` (targeted modifications) | Tool call within ReAct loop |
-| **Search content** | `grep_search` (pattern matching) | Tool call within ReAct loop |
-| **Find files** | `glob` (file pattern matching) | Tool call within ReAct loop |
-| **List directory** | `list_directory` | Tool call within ReAct loop |
-| **Shell command** | `run_shell_command` (sandboxed) | Tool call within ReAct loop |
-| **Web fetch** | `web_fetch` | Not available (local-first) |
-| **Web search** | `web_search` | Not available (local-first) |
-| **Memory** | `save_memory` (cross-session persistence) | MEMORY.md + dream cycles |
-| **Todo/tasks** | `todo_write` → `.qwen/todo.md` | TaskBoard with ownership protocol |
-| **Delegation** | `task` → subagent spawn | FastLoop ↔ DeepLoop handoff |
-| **Plan exit** | `exit_plan_mode` | Not yet — no explicit plan mode |
-
-### Notable Qwen Code tools we lack:
-
-1. **`read_many_files`** — batch file reading with glob patterns. Our DeepLoop reads
-   files one at a time, which wastes turns and context on individual tool calls.
-2. **Explicit plan mode tools** — `exit_plan_mode` creates a formal gate between
-   exploration (read-only) and implementation (write-enabled). We implicitly plan
-   within the ReAct loop but don't enforce a read-only phase.
-3. **Cross-session memory** — `save_memory` persists insights for future sessions.
-   We have MEMORY.md but it's dream-cycle driven, not agent-invocable mid-session.
+| Dimension | Casterly | Qwen Code |
+|-----------|----------|-----------|
+| **Execution** | Local-only (Ollama) | Cloud APIs (Qwen OAuth, OpenAI, Anthropic, Gemini) |
+| **Agent loop** | Custom ReAct with 4-tier memory, 96 tools, identity prompt | GeminiClient turn loop, 20+ tools, sequential queue |
+| **Context management** | Hot/Warm/Cool/Cold tiers, LRU eviction, handoff notes | Chat compression at 70% threshold, split-point algorithm |
+| **Tool execution** | Sequential, preset-based filtering (23-96 tools per cycle) | Sequential queue with state machine (7 states) |
+| **Subagents** | `delegate` tool (text-only, no tools) | Full `TaskTool` subagents with own tool sets and event streams |
+| **Loop detection** | Turn limit + token budget + abort signal | 3-layer: identical tool calls, content chanting, LLM-based assessment |
+| **Memory** | Journal + world model + goals + issues + crystals + constitution | `QWEN.md` files (global + project), session-scoped only |
+| **Skills** | Tool synthesis (LLM-authored tools) | SKILL.md files with YAML frontmatter, discoverable by model |
 
 ---
 
-## 4. Context Window Management
+## 3. Deep-Loop Coding Mode: Head-to-Head
 
-### Qwen Code
+This section compares Qwen Code's coding workflow specifically against Tyrion's coding interface (`src/coding/`) when in a deep multi-file editing loop — the scenario where context pressure is highest and compaction matters most.
 
-| Strategy | Details |
-|---|---|
-| **Native window** | 256K tokens (Qwen3-Coder-480B), extensible to 1M via YaRN |
-| **Simple context folding** | Once cumulative tool response length hits a threshold, earlier tool responses are pruned |
-| **`/compress` command** | User-triggered conversation history compression |
-| **SubAgent isolation** | Each subagent gets its own context window; only a summary returns to the main conversation |
-| **File references** | `@filename` syntax loads file contents on demand rather than pre-loading |
-| **Recommended minimum** | 128K tokens to preserve thinking capabilities |
+### 3.1 Context Strategy During Deep Edits
 
-### Casterly DeepLoop
+| Aspect | Casterly (Coding Interface) | Qwen Code |
+|--------|---------------------------|-----------|
+| **Codebase awareness** | Tree-sitter repo map with PageRank ranking (2–8k tokens) | No repo map — relies on `glob`/`grep` tool calls to discover structure on-the-fly |
+| **File budget** | Explicit token budget allocation: system (~2k) + repo map (~2-8k) + active files (~20-40k) + conversation (~10-20k) + tool results (~10k) + response headroom (~20-40k) = 128k | Implicit — fills context until 70% threshold, then compresses |
+| **Context window** | 128k (Qwen 3.5 via Ollama) | Varies by provider (128k–1M+) |
+| **What happens at capacity** | Warm tier LRU eviction — **oldest entries silently dropped** | ChatCompressionService triggers — **older history summarized into XML snapshot, recent 30% kept verbatim** |
+| **Multi-file coordination** | EditTransaction with atomic backup/rollback across files | No transaction model — sequential tool calls, no atomic guarantees |
+| **Validation loop** | Parse → Lint → TypeCheck → Test pipeline with auto-revert on failure, 3 retries | No built-in validation loop — model decides whether to check |
+| **Edit format** | search/replace blocks (SEARCH/REPLACE markers) | `edit` tool with `old_string`/`new_string` exact match (identical concept, different syntax) |
 
-| Strategy | Details |
-|---|---|
-| **Native window** | 262K tokens (qwen3.5:122b via Ollama) |
-| **Three-tier allocation** | compact (8K) / standard (24K) / extended (262K) per task complexity |
-| **Context pressure monitoring** | Soft warning at 70%, prompt compression at 80%, hard warning at 85% |
-| **Prompt compression** | Drops middle conversation sections, preserving first 2 + last 3 turns |
-| **Measurement-based sizing** | Coder dispatch measures actual char count + response buffer to select tier |
-| **FastLoop isolation** | Triage runs in compact (4K) context, separate from DeepLoop's window |
+**Key takeaway**: Casterly has the **superior scaffolding** (repo map, validation loop, edit transactions, explicit budget allocation). But Qwen Code has the **superior degradation strategy** — when context fills up during a long edit session, it compresses intelligently instead of silently losing information.
 
-### Comparison
+### 3.2 Where Tyrion Loses Context in Deep Loops
 
-Qwen Code takes a **reactive** approach — use the full 256K window, prune when it fills up.
-Our system takes a **proactive** approach — pre-allocate context based on task complexity,
-monitor pressure continuously, and compress before hitting limits.
+In a deep coding loop (20+ turns of reading, editing, testing across multiple files), here's what happens in each system:
 
-**Qwen Code advantages:**
-- Larger effective window (256K–1M) since they target cloud APIs
-- SubAgent context isolation is more flexible than our two-loop split
-- On-demand file loading (`@filename`) is more efficient than pre-loading
+**Casterly's failure mode:**
 
-**Casterly advantages:**
-- Proactive tier selection prevents context waste on simple tasks
-- Pressure monitoring catches runaway context before it degrades output quality
-- Measurement-based coder tier selection is more precise than fixed thresholds
+    Turn 1-10: Read files, understand codebase, start editing
+    Turn 11-20: Warm tier fills up → LRU evicts oldest tool results
+    Turn 21+: Model has lost the grep results from turn 3, the test
+               output from turn 8, the architecture decision from turn 5.
+               It re-reads files, re-runs searches, wastes turns.
 
-**What we should adopt:**
-- Batch file reading (read_many_files equivalent) to reduce turn count
-- On-demand file references to avoid unnecessary context loading
-- More granular subagent spawning for focused subtasks (beyond just FastLoop/DeepLoop)
+**Qwen Code's approach:**
 
----
+    Turn 1-10: Read files, make edits, run commands
+    Turn 11-20: Context hits 70% → compression triggers
+                → Older history becomes: "Read src/auth.ts (JWT validation),
+                  decided to use middleware pattern, edited 3 files,
+                  tests passing except auth.test.ts line 42"
+                → Recent 5-6 turns kept verbatim
+    Turn 21+: Model has compressed-but-present context from earlier work.
+               Continues without re-reading files it already understood.
 
-## 5. Task Decomposition & Planning
+**The gap**: Our repo map and validation loop are advantages Qwen Code doesn't have. But their compression means the model retains *why* it made decisions and *what* it already checked, while ours forgets.
 
-### Qwen Code: Formal Plan Mode
+### 3.3 What a Combined Approach Looks Like
 
-```
-┌──────────────────────────────────────────────────┐
-│  PLAN MODE (read-only tools only)                │
-│                                                  │
-│  1. Explore codebase (read_file, grep, glob)     │
-│  2. Analyze structure and dependencies           │
-│  3. Design implementation plan                   │
-│  4. Write plan to .qwen/todo.md                  │
-│  5. Call exit_plan_mode → present plan to user    │
-│                                                  │
-├──────────────────────────────────────────────────┤
-│  USER APPROVAL GATE                              │
-├──────────────────────────────────────────────────┤
-│  IMPLEMENTATION MODE (full tool access)          │
-│                                                  │
-│  1. Execute plan steps sequentially              │
-│  2. Update todo.md progress in real-time         │
-│  3. Use task tool for dynamic task management    │
-│  4. Delegate subtasks to subagents               │
-│                                                  │
-└──────────────────────────────────────────────────┘
-```
+The ideal deep-loop coding session should combine both systems' strengths:
 
-- Enforced read-only phase prevents premature writes
-- Automatic for untrusted folders
-- Todo items persist in `.qwen/todo.md` for visibility
-- Dynamic task updates during execution
+    CASTERLY ADVANTAGES (keep):           QWEN CODE ADVANTAGES (adopt):
+    ├─ Tree-sitter repo map               ├─ Compression before eviction
+    ├─ Explicit token budget allocation    ├─ Structured XML state snapshots
+    ├─ Edit transactions (atomic)          ├─ 70% threshold trigger
+    ├─ Validation pipeline (auto-revert)   ├─ User-message-boundary split points
+    ├─ Session memory (decisions, todos)   ├─ Loop detection (3-layer)
+    └─ Mode system (architect/code/ask)    └─ File-change delta tracking
 
-### Casterly DeepLoop: Implicit Planning in ReAct
-
-```
-┌──────────────────────────────────────────────────┐
-│  TRIAGE (FastLoop, 35B, compact context)         │
-│                                                  │
-│  1. Parse user intent                            │
-│  2. Classify complexity                          │
-│  3. Route to DeepLoop if complex                 │
-│                                                  │
-├──────────────────────────────────────────────────┤
-│  DEEPLOOP ReAct (122B, extended context)         │
-│                                                  │
-│  1. Plan within first ReAct turns                │
-│  2. Implement via tool calls                     │
-│  3. Self-review (verification cascade)           │
-│     - Pass 0: correctness review                 │
-│     - Pass 1: security/robustness (if complex)   │
-│  4. Dispatch to coder model if needed            │
-│                                                  │
-└──────────────────────────────────────────────────┘
-```
-
-- No enforced read-only phase — planning and implementation are interleaved
-- Self-review happens after implementation, not before
-- Verification cascade (2-pass for complex tasks) is unique to our system
-- No persistent todo file — task state lives in TaskBoard memory
-
-### Comparison
-
-**Qwen Code advantages:**
-- **Enforced separation** between exploration and implementation reduces premature/incorrect writes
-- **Visible plan artifacts** (todo.md) give the user a reviewable plan before any changes
-- **User approval gate** ensures the human agrees with the approach
-
-**Casterly advantages:**
-- **Self-review with verification cascade** catches correctness + security issues post-implementation
-- **Triage pre-routing** (FastLoop) avoids wasting the 122B on simple tasks
-- **Integrated planning** avoids the overhead of a separate phase for straightforward tasks
-
-**What we should adopt:**
-- An explicit plan mode for complex/unfamiliar codebases (3+ files, new features)
-- Read-only tool restriction during the planning phase
-- Persistent plan artifacts (todo.md or TaskBoard extension) for user visibility
-- An approval gate before implementation begins on high-stakes changes
+The implementation plan in §4 below addresses exactly this gap.
 
 ---
 
-## 6. Agent Training & Model Optimization
+## 4. Insights Worth Adopting
 
-### Qwen3-Coder: Agent RL
+### 4.1 Chat Compression (Context Compaction)
 
-The most significant technical advantage Qwen Code has:
+**What they do**: `ChatCompressionService` triggers at **70% context window usage**, compresses older history into a structured **XML `<state_snapshot>`**, keeps the most recent **30%** verbatim.
 
-- **GSPO (Group Sequence Policy Optimization)** — modified GRPO for long-horizon RL
-- **20,000 parallel environments** — massive scale execution-driven training
-- **"Hard to Solve, Easy to Verify"** — all coding tasks are naturally RL-trainable
-- **Training on tool interaction trajectories** — the model learned optimal tool use patterns
-  directly from environment feedback across thousands of coding tasks
-- **Recovery from failures** — RL training included scenarios where tool calls fail,
-  teaching the model to adapt and retry
+**Key design choices**:
+- Split points are only allowed at **user message boundaries** (never mid-tool-call)
+- Final message before split must be a model response without pending function calls
+- Uses JSON string length as a token proxy for split-point calculation
+- A single failed compression **permanently disables auto-compression** for the session
+- Compression prompt asks the model to produce structured XML, not free-form text
 
-### Casterly DeepLoop: No Agent-Specific Training
+**Relevance to Casterly**: Our warm tier uses LRU eviction (lose-oldest), which discards tool results without summarization. Their approach **summarizes before evicting**, preserving semantic content. We could add a compression step before warm-tier eviction:
 
-Our system uses **off-the-shelf Qwen3.5:122b** without any agentic fine-tuning:
-- Model follows tool schemas via standard instruction following
-- No RL training on our specific tool set
-- Relies on prompt engineering + structured output (JSON schema) for reliability
-- OllamaProvider XML retry loop (3 attempts) compensates for format errors
+    Warm tier at capacity
+      → Compress oldest N entries into structured summary
+      → Replace N entries with 1 summary entry
+      → Continue
 
-### What This Means
+**Action item**: Implement `compressWarmTier()` in `src/autonomous/context-manager.ts` that summarizes evicted entries via a fast-model call before discarding them. Use XML `<state_snapshot>` format for parseability.
 
-Qwen3-Coder was literally trained to use the exact tools that Qwen Code provides.
-It knows the optimal patterns for:
-- When to read vs. search vs. grep
-- How many files to read before writing
-- When to delegate to a subagent
-- How to recover when a shell command fails
+### 4.2 Loop Detection (3-Layer)
 
-Our DeepLoop model has none of this training. We compensate with:
-- Careful prompt engineering
-- Structured output schemas
-- Verification cascade (catch mistakes after the fact)
-- Context tier selection (prevent context exhaustion)
+**What they do**: `LoopDetectionService` combines three independent detectors:
 
-**Potential path forward:**
-- Fine-tune on our specific tool call traces (SPIN/DPO on collected trajectories)
-- This is partially captured in config/autonomous.yaml's SPIN self-improvement pipeline
-- The `specialist` model slot in config/models.yaml is reserved for exactly this purpose
+1. **Identical tool calls** — hash signatures, triggers at 5 consecutive repeats
+2. **Content chanting** — sliding window of 50-char chunks with SHA-256, triggers at 10+ identical chunks within proximity (avg spacing ≤ 75 chars). Smart false-positive avoidance excludes code blocks, tables, markdown structures.
+3. **LLM-based cognitive assessment** — after 30+ turns, periodically asks a base model "is this conversation stuck?" with a 0.0–1.0 confidence score. Check interval dynamically adjusts (5–15 turns) based on confidence.
 
----
+**Relevance to Casterly**: We rely only on turn limits and token budgets. We have no detection of *semantic* loops (model doing the same thing repeatedly with slight variations). The LLM-based assessment is particularly clever — use the fast model (qwen3.5:35b-a3b) to evaluate whether the deep model is stuck.
 
-## 7. SubAgent Architecture
+**Action item**: Add `LoopDetector` to `src/autonomous/agent-loop.ts` with at minimum layers 1 (tool call hashing) and 3 (fast-model assessment). Layer 2 (content chanting) is lower priority for local inference since we don't pay per token.
 
-### Qwen Code SubAgents
+### 4.3 Tool Call State Machine
 
-- Configured via markdown files with YAML frontmatter
-- Each subagent has: focused system prompt, own conversation history, controlled tool set
-- Created via `/agents create` wizard or manually
-- The main agent automatically delegates to the appropriate subagent
-- Real-time progress feedback during subagent execution
-- Context isolation — subagent work doesn't pollute the main conversation
+**What they do**: `CoreToolScheduler` tracks each tool call through 7 explicit states:
+`validating → scheduled → executing → success/error/cancelled`
+with a parallel `awaiting_approval` state for dangerous operations.
 
-### Casterly DeepLoop
+**What we do**: Sequential execution with a flat `try/catch` per tool call in the agent loop.
 
-- Two-loop design: FastLoop (triage) and DeepLoop (reasoning/coding)
-- DeepLoop can dispatch to a coder model via ConcurrentProvider
-- No user-configurable subagents
-- Task ownership protocol (FastLoop vs DeepLoop) prevents conflicts
+**Relevance to Casterly**: The state machine gives better observability and enables features like:
+- Approval workflows for destructive commands (we have bash safety gates, but not a unified state machine)
+- Retry with modification (re-enter validation after failure)
+- Telemetry on tool call lifecycle
 
-### Comparison
+**Action item**: Low priority. Our current approach works for local execution. Revisit if we add approval workflows for iMessage-initiated file edits.
 
-Qwen Code's subagent system is more flexible — users can define arbitrary specialized agents
-for different domains (frontend, backend, testing, etc.). Our system is more opinionated
-with exactly two loops but tighter coordination.
+### 4.4 Subagent Architecture (Full Tool Sets)
 
-**What we should consider:**
-- Configurable subagents for domain-specific work (security review, test writing, etc.)
-- This aligns with our existing subagent flow in docs/subagents.md
-- SubAgent context isolation would help with our context pressure issues
+**What they do**: The `TaskTool` spawns subagents that are **full agent instances** with their own tool sets, event streams, lifecycle management, and session tracking. Subagents run non-interactively.
 
----
+**What we do**: `delegate` tool spawns a text-only sub-task to a different model — no tool access.
 
-## 8. Workflow Comparison: End-to-End Task
+**Relevance to Casterly**: Giving subagents tools would enable patterns like:
+- Delegate a code review to the fast model *with* `read_file` and `grep` access
+- Run parallel investigations with tool access
+- Security review subagent that can actually read and test code
 
-### Scenario: "Add input validation to the user registration API"
+**Action item**: Extend `delegate` tool to optionally provide a subset of read-only tools to the delegate. Start with `read_file`, `grep`, `glob`, `git_diff`. Keep write tools restricted to the main loop.
 
-#### Qwen Code Workflow
+### 4.5 Streaming Tool Call Parser
 
-```
-Turn 1:  [PLAN MODE] grep_search("registration", "src/")
-Turn 2:  [PLAN MODE] read_file("src/api/registration.ts")
-Turn 3:  [PLAN MODE] read_file("src/types/user.ts")
-Turn 4:  [PLAN MODE] read_file("tests/registration.test.ts")
-Turn 5:  [PLAN MODE] todo_write([
-           "Add Zod schema for registration input",
-           "Add validation middleware to registration route",
-           "Add error response types",
-           "Update tests for validation cases"
-         ])
-Turn 6:  [PLAN MODE] exit_plan_mode → user reviews plan
-         ─── USER APPROVES ───
-Turn 7:  edit("src/types/user.ts", add Zod schema)
-Turn 8:  edit("src/api/registration.ts", add validation)
-Turn 9:  edit("tests/registration.test.ts", add test cases)
-Turn 10: run_shell_command("npm test")
-Turn 11: [fix any failures]
-Turn 12: Summary to user
-```
+**What they do**: `StreamingToolCallParser` assembles partial JSON tool calls from streaming chunks with depth tracking, string boundary detection, collision resolution, and three-tier fallback parsing (JSON → auto-closed string repair → `safeJsonParse`).
 
-**Characteristics:**
-- Formal exploration → plan → approval → implement → test
-- 5-6 turns of read-only exploration before any writes
-- User sees and approves the plan
-- Single agentic loop handles everything
+**Relevance to Casterly**: Our Ollama provider receives complete responses (not streaming). If we move to streaming for better UX or faster tool execution, this parser is a reference implementation.
 
-#### Casterly DeepLoop Workflow
+**Action item**: Defer until streaming is prioritized.
 
-```
-Turn 1:  [FASTLOOP] Triage → complexity: high → route to DeepLoop
-Turn 2:  [DEEPLOOP] Read src/api/registration.ts (implicit planning)
-Turn 3:  [DEEPLOOP] Read src/types/user.ts
-Turn 4:  [DEEPLOOP] Implement validation in registration.ts
-Turn 5:  [DEEPLOOP] Implement Zod schema in user.ts
-Turn 6:  [DEEPLOOP] Update tests
-Turn 7:  [DEEPLOOP] Run tests via tool call
-Turn 8:  [DEEPLOOP] Self-review pass 0: correctness ✓
-Turn 9:  [DEEPLOOP] Self-review pass 1: security ✓ (if complex)
-Turn 10: [DEEPLOOP] Return result to user
-```
+### 4.6 IDE Context Delta Tracking
 
-**Characteristics:**
-- Triage pre-routing saves context on simple tasks
-- No formal plan phase — reads and writes are interleaved
-- Self-review after implementation catches issues
-- No user approval gate before writes
+**What they do**: On first message, full editor state is sent (open files, cursor, selections). On subsequent turns, only **deltas** (file open/close, cursor moves, selection changes) are sent.
+
+**Relevance to Casterly**: We don't have IDE integration yet, but the delta pattern is applicable to our coding interface's context manager. When the model reads a file, we could track "what changed since last read" and only send diffs on re-read.
+
+**Action item**: Add file-change tracking to `src/coding/context-manager.ts` — when a file is re-read within the same cycle, send only the diff from the last read.
+
+### 4.7 Structured Compression Prompts (XML Snapshots)
+
+**What they do**: Compression produces XML `<state_snapshot>` with structured fields, not free-form summaries. This makes compressed context more parseable and less prone to information loss.
+
+**Relevance to Casterly**: Our handoff notes are free-form text. Structured snapshots would make cross-cycle context transfer more reliable.
+
+**Action item**: Define a structured handoff format (XML or YAML) for `journal.append({ type: 'handoff' })`. Include explicit fields: `files_modified`, `decisions_made`, `blockers_encountered`, `next_steps`, `key_learnings`.
+
+### 4.8 Skills as Discoverable Files
+
+**What they do**: Skills are directories with `SKILL.md` files containing YAML frontmatter (metadata) and markdown body (instructions). The model discovers and loads them via a `skill` tool.
+
+**Relevance to Casterly**: Our OpenClaw skills are code-based. File-based skills would let Tyrion author and evolve skills autonomously (aligns with Vision Tier 2 tool synthesis).
+
+**Action item**: Already partially addressed by our tool synthesis. Consider adding a `SKILL.md` discovery mechanism alongside synthesized tools for user-authored workflows.
 
 ---
 
-## 9. Recommendations for Casterly
+## 5. Patterns to Avoid
 
-### High Priority
+### 5.1 Cloud-First Architecture
 
-1. **Batch file reading tool** — Add a `read_many_files` equivalent to reduce turn count.
-   Currently each file read is a separate ReAct turn. A batch read could cut exploration
-   turns by 60-70%.
+Qwen Code's content generator factory (`createContentGenerator`) branches on auth type (OpenAI, Anthropic, Gemini, Qwen OAuth). This adds complexity we don't need. Our single-provider Ollama architecture is simpler and should stay that way.
 
-2. **Explicit plan mode for complex tasks** — When the DeepLoop detects a complex task
-   (3+ files, new feature, unfamiliar codebase), enforce a read-only exploration phase
-   before any writes. Present the plan via TaskBoard for user review.
+### 5.2 Gemini CLI Heritage Debt
 
-3. **On-demand file references** — Allow `@filename` syntax in user messages to
-   pre-load specific files into context without using a tool turn.
+The codebase uses Gemini internal types as its universal representation, converting to/from other providers via adapters. This creates unnecessary translation layers. Our native Ollama types are cleaner.
 
-### Medium Priority
+### 5.3 Session-Only Memory
 
-4. **Configurable subagents** — Extend beyond FastLoop/DeepLoop to allow domain-specific
-   agents (test writer, security reviewer, documentation). This aligns with docs/subagents.md.
+Qwen Code's memory is mostly session-scoped (conversation history + QWEN.md facts). No goal tracking, no issue log, no world model, no cross-session learning. Casterly's persistent state architecture is significantly more advanced.
 
-5. **Agent-specific fine-tuning** — Collect tool call traces from successful DeepLoop sessions
-   and fine-tune via the SPIN pipeline. The `specialist` model slot is reserved for this.
+### 5.4 No Self-Improvement Mechanisms
 
-6. **Persistent plan artifacts** — Write plans to a file (like .qwen/todo.md) so users
-   can review and reference them across sessions.
-
-### Lower Priority
-
-7. **Context folding for tool responses** — Implement Qwen Code's approach of pruning
-   old tool responses when cumulative length exceeds a threshold. This complements our
-   existing prompt compression (which drops middle conversation sections).
-
-8. **Approval gates** — Add configurable approval gates before destructive operations
-   in the DeepLoop, similar to Qwen Code's approval modes.
+No crystals, constitution, dream cycles, prompt evolution, or adversarial testing. Casterly's Vision Tier 1-3 self-improvement stack has no equivalent in Qwen Code.
 
 ---
 
-## 10. Key Takeaways
+## 6. Priority Action Items
 
-1. **Qwen Code's biggest advantage is model-agent co-training.** The RL-trained model
-   knows the optimal tool use patterns. We can partially close this gap with trajectory
-   fine-tuning via SPIN.
-
-2. **Our biggest advantage is the two-loop architecture.** Triage routing + self-review
-   cascade is more sophisticated than Qwen Code's single loop. We should keep this.
-
-3. **Plan mode is the highest-value feature to adopt.** Enforced read-only exploration
-   before implementation would reduce premature writes and give users visibility.
-
-4. **Batch file reading is the highest-value tool to add.** It directly reduces turn
-   count and context waste.
-
-5. **Context management approaches are complementary.** We should combine our proactive
-   tier selection with Qwen Code's reactive context folding for defense in depth.
+| Priority | Item | Effort | Impact |
+|----------|------|--------|--------|
+| **P0** | Warm-tier compression before eviction (§4.1) | Medium | High — preserves semantic content during long cycles |
+| **P0** | Structured handoff format (§4.7) | Small | Medium — more reliable cross-cycle memory |
+| **P1** | Loop detection (§4.2) | Medium | High — prevents wasted cycles on stuck tasks |
+| **P1** | Delegate with read-only tools (§4.4) | Medium | High — enables parallel investigation |
+| **P2** | File-change delta tracking (§4.6) | Small | Medium — reduces redundant context in coding sessions |
+| **P3** | Skill file discovery (§4.8) | Small | Low — user-authored workflow support |
+| **P3** | Streaming tool call parser (§4.5) | Large | Low — only needed if streaming is prioritized |
 
 ---
 
-## Sources
+## 7. Conclusion
 
-- [QwenLM/qwen-code GitHub](https://github.com/QwenLM/qwen-code)
-- [Qwen3-Coder Blog](https://qwenlm.github.io/blog/qwen3-coder/)
-- [Qwen Code Documentation](https://qwenlm.github.io/qwen-code-docs/)
-- [Qwen3-Coder-Next on Hugging Face](https://huggingface.co/Qwen/Qwen3-Coder-Next)
-- [DeepWiki: QwenLM/qwen-code Architecture](https://deepwiki.com/QwenLM/qwen-code)
-- [DeepWiki: Plan Mode](https://deepwiki.com/QwenLM/qwen-code/8.7-plan-mode-and-task-management)
-- [vLLM Qwen3-Coder Usage Guide](https://docs.vllm.ai/projects/recipes/en/latest/Qwen/Qwen3-Coder-480B-A35B.html)
-- [DataCamp: Qwen Code Guide](https://www.datacamp.com/tutorial/qwen-code)
+Qwen Code's main strength is its **production-grade context compaction** and **defensive loop detection**. These address real problems we face: warm-tier eviction loses information, and long autonomous cycles can get stuck without detection.
+
+Their weaknesses — session-only memory, no self-improvement, cloud dependency — are areas where Casterly is already far ahead.
+
+The highest-value adoption is **compression-before-eviction** for the warm tier, which directly addresses context loss during long coding cycles. Second is **loop detection**, which protects our generous local token budgets from waste.
