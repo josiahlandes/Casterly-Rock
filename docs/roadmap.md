@@ -333,6 +333,130 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 ---
 
+## Tier 5: Context & Loop Improvements (derived from Qwen Code study)
+
+Patterns extracted from the [Qwen Code](https://github.com/QwenLM/qwen-code) codebase study (`docs/qwen-code-vs-deeploop.md`). These address real failure modes observed during Neon Invaders testing and long autonomous cycles.
+
+### 14. [ ] Step-Scoped Context for Multi-File Plans
+
+**What:** Change the planner to output a `context` field per step containing only the spec sections relevant to that step. `executeStep` uses `step.context` instead of the full `task.originalMessage`, so the coder model only sees what it needs for the current chunk of work.
+
+**Why:** During Neon Invaders (attempt 7), the model created all 14 files in step 1 despite the plan having 6 steps. The root cause: every step receives the full 176-line spec via `task.originalMessage` (line 846 of `deep-loop.ts`). The model reads the full spec, sees all files described, and builds everything it can see — ignoring the step boundary instruction.
+
+This mirrors how humans work with coding agents: you describe one chunk of work with focused context, the agent does it, then you describe the next chunk. The planner becomes the "project manager" who reads the full spec once and writes focused work tickets.
+
+**Impact:** Eliminates the #1 multi-step execution failure — models running ahead of the plan. Each step becomes a self-contained work unit with naturally bounded scope.
+
+**Implementation:**
+1. Add `context?: string` field to `PlanStep` in `src/dual-loop/task-board-types.ts`
+2. Update `PLANNING_SYSTEM_PROMPT` to require step-scoped context: "For each step, include a `context` field with ONLY the spec sections the coder needs. Do not repeat the full specification."
+3. Update `executeStep` (line 845-854) to use `step.context` instead of `task.originalMessage`. Include only a one-line task overview (e.g., "Build Neon Invaders — vanilla JS, HTML5 Canvas, ES modules")
+4. Keep upcoming steps as titles only (no detail) — awareness without temptation
+5. Re-run Neon Invaders test to validate step isolation
+
+**References:**
+- Neon Invaders attempt 7: 14 files generated, crashed due to 9 missing methods + 9 config mismatches
+- Current code: `src/dual-loop/deep-loop.ts` lines 812-881 (`executeStep`)
+- Qwen Code comparison: `docs/qwen-code-vs-deeploop.md` §3.2
+
+---
+
+### 15. [ ] Warm-Tier Compression Before Eviction
+
+**What:** Add a compression step before warm-tier LRU eviction. Instead of silently dropping the oldest entries, summarize them into a structured XML `<state_snapshot>` via a fast-model call, then replace N evicted entries with 1 summary entry.
+
+**Why:** In long coding loops (20+ turns), warm-tier LRU eviction discards tool results without summarization. The model loses grep results, test output, and architecture decisions from earlier turns, then wastes turns re-reading files and re-running searches. Qwen Code's `ChatCompressionService` solves this by summarizing older history into structured snapshots at 70% context usage, keeping recent turns verbatim.
+
+**Impact:** Preserves semantic content during long cycles. Model retains *why* it made decisions and *what* it already checked, even after context pressure triggers eviction.
+
+**Implementation:**
+1. Add `compressWarmTier()` to `src/autonomous/context-manager.ts`
+2. Before evicting entries, call the fast model (35B) to compress the N oldest warm-tier entries into a structured summary
+3. Use XML `<state_snapshot>` format with fields: `files_read`, `searches_performed`, `decisions_made`, `test_results`, `key_findings`
+4. Replace N entries with 1 summary entry in the warm tier
+5. Trigger at 70% warm-tier capacity (before the existing 85% action threshold)
+6. A single failed compression disables auto-compression for the session (Qwen Code's safety valve)
+
+**References:**
+- Qwen Code: `ChatCompressionService` — split at user message boundaries, 70% threshold, XML snapshots
+- Current code: `src/autonomous/context-manager.ts` warm-tier LRU eviction
+- `docs/qwen-code-vs-deeploop.md` §4.1
+
+---
+
+### 16. [ ] Loop Detection (3-Layer)
+
+**What:** Add a `LoopDetector` to the agent loop that detects when the model is stuck in semantic loops — doing the same thing repeatedly with slight variations. Three detection layers: tool call hash matching, content repetition detection, and LLM-based cognitive assessment.
+
+**Why:** Currently we rely only on turn limits and token budgets. These don't catch semantic loops where the model re-reads the same files, re-runs the same searches, or oscillates between two approaches without making progress. Qwen Code's `LoopDetectionService` combines three independent detectors to catch different types of stuck behavior.
+
+**Impact:** Prevents wasted cycles on stuck tasks. Protects local token budgets from waste. Enables earlier escalation or strategy change when the model is spinning.
+
+**Implementation:**
+1. **Layer 1: Tool call hashing** — Hash `{toolName, inputParams}` signatures. If 5 consecutive calls have identical hashes, trigger loop detection. Cheap, catches exact repeats.
+2. **Layer 2: Content chanting** (lower priority) — Sliding window of 50-char chunks with SHA-256. Triggers at 10+ identical chunks within proximity. Exclude code blocks and markdown to avoid false positives.
+3. **Layer 3: LLM cognitive assessment** — After 15+ turns (lower than Qwen Code's 30 since we're local), periodically ask the fast model (35B): "Is this conversation making progress or stuck? Score 0.0–1.0." Check interval adjusts dynamically (3–8 turns) based on confidence.
+4. On loop detection: inject a meta-prompt ("You appear to be repeating actions. Try a different approach or summarize what's blocking you."), or escalate to user if repeated.
+
+**References:**
+- Qwen Code: `LoopDetectionService` — 3-layer detection with dynamic intervals
+- Current code: `src/autonomous/agent-loop.ts` turn limit enforcement
+- `docs/qwen-code-vs-deeploop.md` §4.2
+
+---
+
+### 17. [ ] Delegate with Read-Only Tools
+
+**What:** Extend the `delegate` tool to optionally provide a subset of read-only tools to the delegate. Currently, delegated subagents are text-only — they receive context but cannot read files, search, or inspect code.
+
+**Why:** Qwen Code's `TaskTool` spawns subagents that are full agent instances with their own tool sets, event streams, and session tracking. This enables patterns like delegating a code review to the fast model *with* actual file access, running parallel investigations, or having a security review subagent that can read and test code.
+
+**Impact:** Enables meaningful delegation. A security reviewer can actually read the code it's reviewing. An investigator can search the codebase for context. A test writer can read existing tests for style consistency.
+
+**Implementation:**
+1. Add `tools?: 'none' | 'read-only'` parameter to the `delegate` tool schema
+2. When `tools: 'read-only'`, provide: `read_file`, `grep_files`, `glob`, `list_files`, `git_diff`
+3. Keep write tools (`write_file`, `edit_file`, `bash`) restricted to the main loop
+4. Delegate runs its own mini ReAct loop (up to 10 turns) with the provided tools
+5. Return tool results as part of the delegate's response
+
+**References:**
+- Qwen Code: `TaskTool` — full subagent instances with own tool sets
+- Current code: `src/autonomous/tools/delegate.ts` (text-only delegation)
+- `docs/qwen-code-vs-deeploop.md` §4.4
+- `docs/subagents.md` — existing subagent role definitions
+
+---
+
+### 18. [ ] Structured Handoff Format
+
+**What:** Define a structured handoff format (XML) for cross-cycle context transfer. Replace free-form handoff notes with explicit fields: `files_modified`, `decisions_made`, `blockers_encountered`, `next_steps`, `key_learnings`.
+
+**Why:** Current handoff notes are free-form text stored via `journal.append({ type: 'handoff' })`. The receiving cycle must parse natural language to understand what happened, leading to information loss and misinterpretation. Qwen Code's compression produces structured XML `<state_snapshot>` with explicit fields, making compressed context more parseable and reliable.
+
+**Impact:** More reliable cross-cycle memory. The receiving cycle knows exactly what files were changed, what decisions were made, and what's left to do — without parsing prose.
+
+**Implementation:**
+1. Define `HandoffSnapshot` interface in `src/dual-loop/task-board-types.ts`:
+   ```
+   files_modified: { path, operation, summary }[]
+   decisions_made: { decision, rationale }[]
+   blockers_encountered: string[]
+   next_steps: string[]
+   key_learnings: string[]
+   test_results: { file, passed, failed, summary }[]
+   ```
+2. Update `generateSummary` and `parkTask` in `deep-loop.ts` to produce structured handoffs
+3. Update `planTask` to parse structured handoffs from `parkedState.contextSnapshot` instead of treating them as free-form text
+4. Use XML format for serializability and model-parseability
+
+**References:**
+- Qwen Code: XML `<state_snapshot>` compression format
+- Current code: `src/dual-loop/deep-loop.ts` `parkTask()` (free-form contextSnapshot)
+- `docs/qwen-code-vs-deeploop.md` §4.7
+
+---
+
 ## Implementation Notes
 
 ### Dependencies Between Items
@@ -352,6 +476,14 @@ Tier 4:
   5 (MLX Backend) ← 12 (KVSplit K8V4)
   11 (NPU Offloading) is independent
   13 (Test-Time Compute) is independent
+
+Tier 5 (Qwen Code-derived):
+  14 (Step-Scoped Context) is independent
+  15 (Warm-Tier Compression) is independent
+  16 (Loop Detection) is independent
+  17 (Delegate with Tools) is independent
+  18 (Structured Handoffs) is independent
+  15 ← 18 share the XML snapshot format — implement 18 first for type definitions
 ```
 
 ### Quality Gates
