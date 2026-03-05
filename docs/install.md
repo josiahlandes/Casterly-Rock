@@ -335,4 +335,4 @@ ollama list
 - Logs are automatically redacted
 - iMessage database access requires Full Disk Access permission
 
-For more details, see [docs/rulebook.md](rulebook.md).
+For more details, see [rulebook.md](rulebook.md) and [security-and-privacy.md](security-and-privacy.md).

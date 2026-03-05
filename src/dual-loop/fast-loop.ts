@@ -171,7 +171,10 @@ export class FastLoop {
           continue;
         }
 
-        // 3. Nothing to do — sleep until next heartbeat
+        // 3. Deliver progress updates for in-flight tasks
+        await this.deliverProgressUpdates();
+
+        // 4. Nothing to do — sleep until next heartbeat
         await this.sleep(this.config.heartbeatMs);
       } catch (error) {
         tracer.log('fast-loop', 'error', 'FastLoop heartbeat error', {
@@ -299,8 +302,12 @@ export class FastLoop {
           ...(triage.matchedProject ? { projectDir: `projects/${triage.matchedProject}` } : {}),
         });
 
-        // Use the triage model's natural ack if available, otherwise fall back
-        const ack = triage.directResponse || `Got it — working on that now.`;
+        // Use the triage model's natural ack if available, otherwise generate a contextual one
+        const ack = triage.directResponse || (
+          triage.triageNotes
+            ? `Got it — ${triage.triageNotes.slice(0, 100).toLowerCase()}. Planning the approach now.`
+            : `Got it — working on that now.`
+        );
         this.addToConversation(sender, 'assistant', ack);
         await this.deliver(sender, ack);
 
@@ -375,8 +382,6 @@ export class FastLoop {
     }
   }
 
-<<<<<<< Updated upstream
-=======
   // ── Code Review ─────────────────────────────────────────────────────────
 
   /**
@@ -476,7 +481,6 @@ export class FastLoop {
     }
   }
 
->>>>>>> Stashed changes
   // ── Response Delivery ───────────────────────────────────────────────────
 
   /**
@@ -537,6 +541,76 @@ export class FastLoop {
     }
 
     return lines.join('\n');
+  }
+
+  // ── Progress Updates ────────────────────────────────────────────────────
+
+  /**
+   * Check for in-flight tasks that have new progress to report.
+   *
+   * Two types of updates:
+   *   1. Plan summary — when a task transitions to 'implementing' with steps
+   *   2. Step completion — when steps complete (rate-limited to 60s intervals)
+   */
+  private async deliverProgressUpdates(): Promise<void> {
+    const tracer = getTracer();
+    const active = this.taskBoard.getActive();
+    const now = new Date().toISOString();
+
+    for (const task of active) {
+      if (!task.sender) continue;
+
+      // 1. Plan summary delivery (once per task)
+      if (
+        task.status === 'implementing' &&
+        task.planSteps &&
+        task.planSteps.length > 1 &&
+        !task.planSummaryDelivered
+      ) {
+        const stepList = task.planSteps
+          .map((s, i) => `${i + 1}. ${s.description}`)
+          .join('\n');
+
+        const planMsg = `Planning complete — ${task.planSteps.length} steps:\n${stepList}\nStarting now.`;
+
+        await this.deliver(task.sender, planMsg);
+        this.taskBoard.update(task.id, { planSummaryDelivered: true });
+
+        tracer.log('fast-loop', 'info', `Delivered plan summary for ${task.id}`);
+        continue; // One update per heartbeat per task
+      }
+
+      // 2. Step completion updates (rate-limited to 60s)
+      if (
+        task.status === 'implementing' &&
+        task.planSteps &&
+        task.planSteps.length > 1
+      ) {
+        const completed = task.planSteps.filter((s) => s.status === 'done').length;
+        const lastDelivered = task.lastProgressStepsCompleted ?? 0;
+
+        // Only deliver if new steps completed
+        if (completed <= lastDelivered) continue;
+
+        // Rate limit: at least 60 seconds between updates
+        if (task.lastProgressDeliveredAt) {
+          const elapsed = Date.now() - new Date(task.lastProgressDeliveredAt).getTime();
+          if (elapsed < 60_000) continue;
+        }
+
+        const current = task.planSteps.find((s) => s.status === 'in_progress');
+        const nextDesc = current ? ` Starting: ${current.description.slice(0, 60)}` : '';
+        const progressMsg = `Step ${completed}/${task.planSteps.length} done.${nextDesc}`;
+
+        await this.deliver(task.sender, progressMsg);
+        this.taskBoard.update(task.id, {
+          lastProgressDeliveredAt: now,
+          lastProgressStepsCompleted: completed,
+        });
+
+        tracer.log('fast-loop', 'info', `Delivered progress update for ${task.id}: ${completed}/${task.planSteps.length}`);
+      }
+    }
   }
 
   // ── Conversation Management ─────────────────────────────────────────────

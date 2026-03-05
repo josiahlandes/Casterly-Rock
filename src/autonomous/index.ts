@@ -219,12 +219,17 @@ export type { IssueWatcherConfig } from './watchers/index.js';
 
 // ── Phase 4: Tiered Memory ──────────────────────────────────────────────────
 
+// Loop detector
+export { LoopDetector, createLoopDetector, buildLoopBreakPrompt } from './loop-detector.js';
+export type { LoopDetectorConfig, LoopDetection, CognitiveAssessCallback } from './loop-detector.js';
+
 // Context manager
 export { ContextManager, createContextManager } from './context-manager.js';
 export type {
   ContextManagerConfig,
   WarmEntry,
   TierUsage,
+  WarmTierCompressCallback,
 } from './context-manager.js';
 
 // Context store
@@ -245,6 +250,17 @@ export type {
   ProblemContext,
   ScaledSolution,
 } from './reasoning/scaling.js';
+
+// Test-time compute scaler
+export { ComputeScaler, createComputeScaler, SELF_ASSESSMENT_PROMPT } from './reasoning/compute-scaler.js';
+export type {
+  ComputeBudget,
+  ComputeScalerConfig,
+  CalibrationRecord,
+  CalibrationSummary,
+  ThresholdAdjustment,
+  SelfAssessment,
+} from './reasoning/compute-scaler.js';
 
 // Adversarial tester
 export { AdversarialTester } from './reasoning/adversarial.js';

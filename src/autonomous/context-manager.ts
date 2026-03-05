@@ -45,6 +45,15 @@ import type { SelfModelSummary, IdentityConfig } from './identity.js';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Callback for compressing warm-tier entries before eviction.
+ * Receives the entries to compress and returns a summary string.
+ * If null/undefined, compression is disabled and entries are evicted silently (legacy).
+ */
+export type WarmTierCompressCallback = (
+  entries: ReadonlyArray<WarmEntry>,
+) => Promise<string>;
+
+/**
  * Configuration for the context manager.
  */
 export interface ContextManagerConfig {
@@ -62,6 +71,13 @@ export interface ContextManagerConfig {
 
   /** Context store configuration (cool/cold tiers) */
   storeConfig: Partial<ContextStoreConfig>;
+
+  /**
+   * Compression threshold as fraction of warm tier capacity (0.0–1.0).
+   * When warm tier usage exceeds this fraction, compression is attempted
+   * before LRU eviction. Default: 0.70 (70%).
+   */
+  warmCompressionThreshold: number;
 }
 
 /**
@@ -109,6 +125,7 @@ const DEFAULT_CONFIG: ContextManagerConfig = {
   contextWindowTokens: 32768,   // Typical context window
   identityConfig: {},
   storeConfig: {},
+  warmCompressionThreshold: 0.70,
 };
 
 /**
@@ -134,9 +151,22 @@ export class ContextManager {
   private warmEntries: Map<string, WarmEntry> = new Map();
   private warmTierTokens: number = 0;
 
+  /** Compression state */
+  private compressCallback: WarmTierCompressCallback | null = null;
+  private compressionDisabled: boolean = false;
+  private compressionInProgress: boolean = false;
+
   constructor(config?: Partial<ContextManagerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.store = new ContextStore(this.config.storeConfig);
+  }
+
+  /**
+   * Set the compression callback. Called by the agent loop after the
+   * LLM provider is available.
+   */
+  setCompressCallback(cb: WarmTierCompressCallback): void {
+    this.compressCallback = cb;
   }
 
   // ── Hot Tier (Identity) ─────────────────────────────────────────────────
@@ -223,6 +253,16 @@ export class ContextManager {
         budget: this.config.warmTierMaxTokens,
       });
       return { added: false, evicted };
+    }
+
+    // Attempt compression before eviction if we're at threshold
+    const usageRatio = (this.warmTierTokens + tokens) / this.config.warmTierMaxTokens;
+    if (usageRatio >= this.config.warmCompressionThreshold && !this.compressionDisabled && !this.compressionInProgress) {
+      // Fire-and-forget compression — entries are still evicted synchronously below
+      // but the compression result replaces them when it resolves
+      this.tryCompressWarmTier().catch(() => {
+        // Compression failure is non-fatal
+      });
     }
 
     // Evict LRU entries until there's room
@@ -326,6 +366,103 @@ export class ContextManager {
    */
   getWarmTierTokens(): number {
     return this.warmTierTokens;
+  }
+
+  // ── Warm Tier Compression ─────────────────────────────────────────────
+
+  /**
+   * Attempt to compress the oldest warm-tier entries into a single summary.
+   *
+   * Compression replaces the N oldest entries with 1 summary entry, freeing
+   * tokens while preserving semantic content. Uses the `<state_snapshot>` XML
+   * format for parseability (shared with handoff, roadmap §18).
+   *
+   * Safety: A single failed compression permanently disables auto-compression
+   * for the session (Qwen Code's safety valve — avoids retrying a broken model).
+   */
+  async tryCompressWarmTier(): Promise<{ compressed: boolean; freedTokens: number }> {
+    const tracer = getTracer();
+
+    if (!this.compressCallback || this.compressionDisabled || this.compressionInProgress) {
+      return { compressed: false, freedTokens: 0 };
+    }
+
+    // Only compress if we have enough entries to make it worthwhile
+    if (this.warmEntries.size < 4) {
+      return { compressed: false, freedTokens: 0 };
+    }
+
+    this.compressionInProgress = true;
+
+    try {
+      // Select the oldest half of entries (by addedAt) for compression
+      const sorted = Array.from(this.warmEntries.values())
+        .sort((a, b) => a.addedAt.localeCompare(b.addedAt));
+
+      const compressCount = Math.floor(sorted.length / 2);
+      const toCompress = sorted.slice(0, compressCount);
+
+      const tokensBefore = toCompress.reduce((sum, e) => sum + e.tokenEstimate, 0);
+
+      tracer.log('memory', 'info', `Compressing ${compressCount} warm entries (${tokensBefore} tokens)`);
+
+      // Call the LLM to compress
+      const summary = await this.compressCallback(toCompress);
+      const summaryTokens = estimateTokens(summary);
+
+      // Only apply if the summary is meaningfully smaller
+      if (summaryTokens >= tokensBefore * 0.8) {
+        tracer.log('memory', 'info', 'Compression did not save enough tokens, skipping');
+        return { compressed: false, freedTokens: 0 };
+      }
+
+      // Remove the compressed entries
+      for (const entry of toCompress) {
+        this.warmEntries.delete(entry.key);
+        this.warmTierTokens -= entry.tokenEstimate;
+      }
+
+      // Add the summary as a single entry
+      const summaryEntry: WarmEntry = {
+        key: `__compressed_${Date.now()}`,
+        kind: 'working_note',
+        content: summary,
+        tokenEstimate: summaryTokens,
+        addedAt: new Date().toISOString(),
+        accessCount: 999, // High access count so it's not evicted first
+      };
+
+      this.warmEntries.set(summaryEntry.key, summaryEntry);
+      this.warmTierTokens += summaryTokens;
+
+      const freedTokens = tokensBefore - summaryTokens;
+
+      tracer.log('memory', 'info', `Compression saved ${freedTokens} tokens`, {
+        entriesCompressed: compressCount,
+        tokensBefore,
+        tokensAfter: summaryTokens,
+      });
+
+      return { compressed: true, freedTokens };
+    } catch (error) {
+      // Single failure disables compression for the session
+      this.compressionDisabled = true;
+
+      tracer.log('memory', 'warn', 'Warm tier compression failed, disabling for session', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return { compressed: false, freedTokens: 0 };
+    } finally {
+      this.compressionInProgress = false;
+    }
+  }
+
+  /**
+   * Check if compression has been disabled for this session.
+   */
+  isCompressionDisabled(): boolean {
+    return this.compressionDisabled;
   }
 
   // ── Cool/Cold Tiers (Persistent Storage) ────────────────────────────────

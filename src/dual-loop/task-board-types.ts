@@ -62,6 +62,9 @@ export interface PlanStep {
   description: string;
   status: 'pending' | 'in_progress' | 'done' | 'failed';
   output?: string | undefined;
+  /** Step-scoped context: only the spec sections relevant to this step.
+   *  Populated by the planner so the coder sees focused context, not the full spec. */
+  context?: string | undefined;
 }
 
 /**
@@ -85,13 +88,37 @@ export interface FileOperation {
   exports?: string[];  // Exported symbol names, e.g. ['CONFIG', 'Player', 'InputHandler']
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Structured Handoff (cross-cycle context transfer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A structured snapshot of work done so far, used for cross-cycle context
+ * transfer (parking, warm-tier compression, handoffs between cycles).
+ *
+ * XML-serializable via `serializeHandoff()` / `parseHandoff()`.
+ */
+export interface HandoffSnapshot {
+  filesModified: { path: string; operation: 'created' | 'modified' | 'deleted'; summary: string }[];
+  decisionsMade: { decision: string; rationale: string }[];
+  blockersEncountered: string[];
+  nextSteps: string[];
+  keyLearnings: string[];
+  testResults: { file: string; passed: number; failed: number; summary: string }[];
+  stepsCompleted: number;
+  totalSteps: number;
+}
+
 /**
  * State preserved when a task is parked (preempted by higher-priority work).
  */
 export interface ParkedState {
   parkedAtTurn: number;
   reason: string;
-  contextSnapshot?: string | undefined;  // Summary of work done so far
+  /** Free-form snapshot (legacy) or structured handoff */
+  contextSnapshot?: string | undefined;
+  /** Structured handoff snapshot for reliable cross-cycle transfer */
+  handoff?: HandoffSnapshot | undefined;
 }
 
 /**
@@ -147,6 +174,14 @@ export interface Task {
   // ── Parking (for preemption) ──────────────────────────────────────────────
   parkedState?: ParkedState | undefined;
 
+  // ── Progress Tracking (for FastLoop delivery) ──────────────────────────
+  /** Whether the plan summary has been delivered to the user */
+  planSummaryDelivered?: boolean | undefined;
+  /** ISO timestamp of last progress update delivered */
+  lastProgressDeliveredAt?: string | undefined;
+  /** Number of steps that were completed when the last progress update was sent */
+  lastProgressStepsCompleted?: number | undefined;
+
   // ── Resolution ────────────────────────────────────────────────────────────
   resolvedAt?: string | undefined;
   resolution?: string | undefined;
@@ -195,6 +230,9 @@ export interface UpdateTaskFields {
   verificationPasses?: number | undefined;
   currentVerificationPass?: number | undefined;
   parkedState?: ParkedState | undefined;
+  planSummaryDelivered?: boolean | undefined;
+  lastProgressDeliveredAt?: string | undefined;
+  lastProgressStepsCompleted?: number | undefined;
   resolvedAt?: string | undefined;
   resolution?: string | undefined;
   userFacing?: string | undefined;

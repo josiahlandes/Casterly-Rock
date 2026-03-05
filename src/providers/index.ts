@@ -12,6 +12,7 @@
 import type { AppConfig } from '../config/schema.js';
 import type { LlmProvider } from './base.js';
 import { OllamaProvider } from './ollama.js';
+import { AneProvider, isAneSupported } from './ane.js';
 
 export type { LlmProvider, PreviousAssistantMessage } from './base.js';
 
@@ -68,6 +69,9 @@ export interface ProviderRegistry {
   /** Coding model — code generation, review, file operations (may equal local) */
   coding: LlmProvider;
 
+  /** ANE provider for NPU offloading (null if not on Apple Silicon) */
+  ane: AneProvider | null;
+
   /**
    * Select the right provider for a task type.
    * Routes coding/file_operation tasks to the coding model,
@@ -110,9 +114,13 @@ export function buildProviders(config: AppConfig): ProviderRegistry {
       })
     : local;
 
+  // Initialize ANE provider on Apple Silicon
+  const ane = isAneSupported() ? new AneProvider() : null;
+
   return {
     local,
     coding,
+    ane,
     /**
      * @deprecated Model selection is now the LLM's decision via the
      * delegate tool. forTask() returns the local provider for all tasks.

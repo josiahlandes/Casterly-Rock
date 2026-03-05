@@ -46,6 +46,8 @@ import type { Journal } from './journal.js';
 import type { CategoryName } from './tools/types.js';
 import { hydrateCategories } from './tools/registry.js';
 import { buildCompactManifest, getCategoryTools, getAllCategories } from './tools/tool-map.js';
+import { LoopDetector, createLoopDetector, buildLoopBreakPrompt } from './loop-detector.js';
+import type { CognitiveAssessCallback } from './loop-detector.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -145,7 +147,7 @@ export interface AgentOutcome {
   success: boolean;
 
   /** Why the agent stopped */
-  stopReason: 'completed' | 'max_turns' | 'max_tokens' | 'aborted' | 'error';
+  stopReason: 'completed' | 'max_turns' | 'max_tokens' | 'aborted' | 'error' | 'loop_detected';
 
   /** Human-readable summary of what was accomplished */
   summary: string;
@@ -460,6 +462,10 @@ export class AgentLoop {
   /** Signal to abort the loop (set externally for interrupts) */
   private aborted: boolean = false;
 
+  /** 3-layer loop detector (roadmap §16) */
+  private readonly loopDetector: LoopDetector;
+  private consecutiveLoopDetections: number = 0;
+
   constructor(
     config: Partial<AgentLoopConfig>,
     provider: LlmProvider,
@@ -488,6 +494,8 @@ export class AgentLoop {
     } else {
       this.toolkit = toolkit;
     }
+
+    this.loopDetector = createLoopDetector();
   }
 
   /**
@@ -786,10 +794,42 @@ export class AgentLoop {
             toolNames: response.toolCalls.map((tc) => tc.name),
           });
 
-          // Update the prompt for the next turn — include reasoning + tool results
-          // The LLM provider handles multi-turn via previousResults, so we just
-          // keep the same prompt and let tool results accumulate.
-          userPrompt = response.text || 'Continue.';
+          // ── Loop detection ───────────────────────────────────────────
+          for (const tc of response.toolCalls) {
+            this.loopDetector.recordToolCall(tc.name, tc.input as Record<string, unknown>);
+          }
+          this.loopDetector.recordContent(response.text);
+          this.loopDetector.recordTurn(
+            `Turn ${turnNumber}: ${response.toolCalls.map((tc) => tc.name).join(', ')} → ${response.text.slice(0, 100)}`,
+          );
+
+          const loopCheck = await this.loopDetector.check();
+          if (loopCheck.detected) {
+            // Inject a loop-break prompt to redirect the agent
+            const breakPrompt = buildLoopBreakPrompt(loopCheck);
+            tracer.log('agent-loop', 'warn', `Loop detected at turn ${turnNumber}`, {
+              layer: loopCheck.layer,
+              confidence: loopCheck.confidence,
+            });
+
+            // Give the agent one chance to recover by injecting the break prompt
+            // If this is the second consecutive detection, stop the loop
+            if (this.consecutiveLoopDetections >= 1) {
+              stopReason = 'loop_detected';
+              summary = `Loop detected at turn ${turnNumber}: ${loopCheck.reason}`;
+              break;
+            }
+
+            this.consecutiveLoopDetections++;
+            userPrompt = breakPrompt;
+          } else {
+            this.consecutiveLoopDetections = 0;
+
+            // Update the prompt for the next turn — include reasoning + tool results
+            // The LLM provider handles multi-turn via previousResults, so we just
+            // keep the same prompt and let tool results accumulate.
+            userPrompt = response.text || 'Continue.';
+          }
 
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);

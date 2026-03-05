@@ -439,7 +439,7 @@ Your reasoning will be logged for debugging transparency.`,
 
 const READ_FILE_SCHEMA: ToolSchema = {
   name: 'read_file',
-  description: 'Read the contents of a source file. Returns the file content with line numbers.',
+  description: 'Read the contents of a source file. Returns the file content with line numbers. On re-reads, returns a diff of changes since the first read (or "unchanged" if no changes).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -455,8 +455,31 @@ const READ_FILE_SCHEMA: ToolSchema = {
         type: 'integer',
         description: 'Line number to start reading from (1-indexed). Defaults to 1.',
       },
+      force_full: {
+        type: 'boolean',
+        description: 'Force full content even on re-read (bypasses delta tracking). Default: false.',
+      },
     },
     required: ['path'],
+  },
+};
+
+const READ_FILES_SCHEMA: ToolSchema = {
+  name: 'read_files',
+  description: `Read multiple files in a single call. Accepts an array of paths and/or a glob pattern. Returns all file contents at once, reducing exploration from N tool calls to 1.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paths: {
+        type: 'array',
+        description: 'File paths to read (relative to project root).',
+        items: { type: 'string' },
+      },
+      glob_pattern: {
+        type: 'string',
+        description: 'Glob pattern to match files (e.g., "src/**/*.ts"). Ignores node_modules, .git, dist.',
+      },
+    },
   },
 };
 
@@ -769,7 +792,8 @@ const DELEGATE_SCHEMA: ToolSchema = {
   description: `Send a sub-task to a specific model. Use this for:
 - qwen3.5:122b — reasoning, planning, code generation, analysis, review
 
-The delegate receives the task description and optional file contents as context.`,
+The delegate receives the task description and optional file contents as context.
+With tools='read-only', the delegate can also search and read files autonomously.`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -786,6 +810,11 @@ The delegate receives the task description and optional file contents as context
         type: 'array',
         description: 'File paths to include as context for the delegate.',
         items: { type: 'string', description: 'File path relative to project root.' },
+      },
+      tools: {
+        type: 'string',
+        description: 'Tool access level. "none" (default): text-only. "read-only": delegate can read_file, grep_files, glob_files, git_diff.',
+        enum: ['none', 'read-only'],
       },
     },
     required: ['model', 'task'],
@@ -2673,6 +2702,8 @@ interface FileReadCacheEntry {
   readAt: number;
   /** How many times this file has been read in this cycle */
   readCount: number;
+  /** Turn number when first read (for delta tracking messages) */
+  firstReadTurn: number;
 }
 
 /**
@@ -2692,12 +2723,13 @@ export class FileReadCache {
   }
 
   /** Store content after a successful disk read. */
-  set(fullPath: string, content: string): void {
+  set(fullPath: string, content: string, turn?: number): void {
     const existing = this.cache.get(fullPath);
     this.cache.set(fullPath, {
       content,
       readAt: Date.now(),
       readCount: (existing?.readCount ?? 0) + 1,
+      firstReadTurn: existing?.firstReadTurn ?? (turn ?? 0),
     });
   }
 
@@ -2761,19 +2793,55 @@ function buildExecutors(
           : `${config.projectRoot}/${filePath}`;
 
         // Check the per-cycle cache before hitting disk
-        let content: string;
-        let cacheHit = false;
         const cached = fileReadCache.get(fullPath);
+        const forceFull = call.input['force_full'] === true;
 
-        if (cached) {
-          content = cached.content;
-          cacheHit = true;
-          // Increment the read count
-          fileReadCache.set(fullPath, content);
-        } else {
-          content = await readFile(fullPath, 'utf8');
-          fileReadCache.set(fullPath, content);
+        // Delta tracking: if file was previously read, check if it changed
+        if (cached && !forceFull) {
+          const currentContent = await readFile(fullPath, 'utf8');
+          fileReadCache.set(fullPath, currentContent);
+
+          if (currentContent === cached.content) {
+            // File unchanged — save context tokens
+            const unchangedMsg = `File: ${filePath} — unchanged since first read (turn ${cached.firstReadTurn}). ${currentContent.split('\n').length} lines. Use force_full=true to re-read.`;
+            return successResult(call.id, unchangedMsg, config.maxOutputChars);
+          }
+
+          // File changed — return a unified diff
+          const oldLines = cached.content.split('\n');
+          const newLines = currentContent.split('\n');
+
+          // Simple diff: show changed regions
+          const diffLines: string[] = [`File: ${filePath} — changed since turn ${cached.firstReadTurn}:`];
+          let inDiff = false;
+          for (let i = 0; i < Math.max(oldLines.length, newLines.length); i++) {
+            const oldLine = oldLines[i];
+            const newLine = newLines[i];
+            if (oldLine !== newLine) {
+              if (!inDiff) {
+                diffLines.push(`\n@@ line ${i + 1} @@`);
+                inDiff = true;
+              }
+              if (oldLine !== undefined) diffLines.push(`- ${oldLine}`);
+              if (newLine !== undefined) diffLines.push(`+ ${newLine}`);
+            } else {
+              if (inDiff) {
+                inDiff = false;
+              }
+            }
+          }
+
+          if (diffLines.length === 1) {
+            // Edge case: whitespace-only changes
+            diffLines.push('(whitespace-only changes)');
+          }
+
+          return successResult(call.id, diffLines.join('\n'), config.maxOutputChars);
         }
+
+        // First read — full content
+        const content = await readFile(fullPath, 'utf8');
+        fileReadCache.set(fullPath, content);
 
         const lines = content.split('\n');
 
@@ -2790,15 +2858,7 @@ function buildExecutors(
         );
 
         const header = `File: ${filePath} (${lines.length} lines total, showing ${startLine + 1}-${endLine})`;
-
-        // Build redundancy warning for repeated reads
-        let redundancyNote = '';
-        const entry = fileReadCache.get(fullPath);
-        if (cacheHit && entry && entry.readCount > 1) {
-          redundancyNote = `\n⚠ NOTE: This file was already read ${entry.readCount - 1} time(s) this cycle. Using cached content. Consider working with the information you already have instead of re-reading.`;
-        }
-
-        const output = `${header}\n${'─'.repeat(60)}\n${numberedLines.join('\n')}${redundancyNote}`;
+        const output = `${header}\n${'─'.repeat(60)}\n${numberedLines.join('\n')}`;
 
         tracer.logIO('agent-loop', 'read', filePath, 0, {
           success: true,
@@ -2813,6 +2873,81 @@ function buildExecutors(
           error: errorMsg,
         });
         return failureResult(call.id, `Failed to read ${filePath}: ${errorMsg}`);
+      }
+    });
+  });
+
+  // ── read_files (batch) ──────────────────────────────────────────────────
+
+  executors.set('read_files', async (call) => {
+    const paths = (call.input['paths'] as string[] | undefined) ?? [];
+    const globPattern = call.input['glob_pattern'] as string | undefined;
+
+    if (paths.length === 0 && !globPattern) {
+      return failureResult(call.id, 'Must provide either paths array or glob_pattern.');
+    }
+
+    return tracer.withSpan('agent-loop', 'read_files', async () => {
+      try {
+        let resolvedPaths = [...paths];
+
+        // Resolve glob pattern
+        if (globPattern) {
+          const { glob: globFn } = await import('glob');
+          const globResults = await globFn(globPattern, {
+            cwd: config.projectRoot,
+            nodir: true,
+            absolute: false,
+            ignore: ['node_modules/**', '.git/**', 'dist/**'],
+          });
+          resolvedPaths.push(...globResults);
+        }
+
+        // Deduplicate and cap
+        resolvedPaths = [...new Set(resolvedPaths)].slice(0, 20);
+
+        if (resolvedPaths.length === 0) {
+          return successResult(call.id, 'No files matched.', config.maxOutputChars);
+        }
+
+        const sections: string[] = [];
+        let totalChars = 0;
+        const maxAggregate = 50_000;
+
+        for (const filePath of resolvedPaths) {
+          const fullPath = filePath.startsWith('/')
+            ? filePath
+            : `${config.projectRoot}/${filePath}`;
+
+          try {
+            const content = await readFile(fullPath, 'utf8');
+            const remaining = maxAggregate - totalChars;
+
+            if (remaining <= 0) {
+              sections.push(`## ${filePath}\n(aggregate size limit reached)`);
+              continue;
+            }
+
+            const trimmed = content.length > remaining
+              ? content.slice(0, remaining) + '\n...(truncated)'
+              : content;
+            totalChars += trimmed.length;
+
+            const lines = content.split('\n').length;
+            sections.push(`## ${filePath} (${lines} lines)\n${trimmed}`);
+          } catch {
+            sections.push(`## ${filePath}\n(file not found or unreadable)`);
+          }
+        }
+
+        return successResult(
+          call.id,
+          `Read ${resolvedPaths.length} files:\n\n${sections.join('\n\n')}`,
+          config.maxOutputChars,
+        );
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return failureResult(call.id, `read_files failed: ${errorMsg}`);
       }
     });
   });
@@ -3409,6 +3544,7 @@ function buildExecutors(
     if ('error' in taskResult) return taskResult.error;
 
     const contextFiles = (call.input['context_files'] as string[] | undefined) ?? [];
+    const toolsMode = (call.input['tools'] as string | undefined) ?? 'none';
 
     return tracer.withSpan('agent-loop', `delegate:${modelResult.value}`, async () => {
       if (!delegateProvider) {
@@ -3436,13 +3572,92 @@ function buildExecutors(
 
         const request: GenerateRequest = {
           prompt: `${taskResult.value}${contextSection}`,
-          systemPrompt: 'You are a specialist assistant. Complete the task precisely and return your result.',
+          systemPrompt: toolsMode === 'read-only'
+            ? 'You are a specialist assistant with read-only access to the codebase. Use the provided tools to search and read files as needed. Complete the task precisely and return your result.'
+            : 'You are a specialist assistant. Complete the task precisely and return your result.',
           maxTokens: 4096,
           temperature: 0.2,
         };
 
-        tracer.log('agent-loop', 'info', `Delegating to ${modelResult.value}: ${taskResult.value.slice(0, 100)}...`);
+        tracer.log('agent-loop', 'info', `Delegating to ${modelResult.value} (tools=${toolsMode}): ${taskResult.value.slice(0, 100)}...`);
 
+        // Read-only mode: mini ReAct loop with read-only tools
+        if (toolsMode === 'read-only') {
+          const readOnlySchemas: ToolSchema[] = [
+            READ_FILE_SCHEMA,
+            GREP_SCHEMA,
+            GLOB_SCHEMA,
+            GIT_DIFF_SCHEMA,
+          ];
+
+          const maxDelegateTurns = 10;
+          let currentRequest = request;
+          const previousResults: ToolResultMessage[] = [];
+          let finalText = '';
+
+          for (let turn = 0; turn < maxDelegateTurns; turn++) {
+            const response = await delegateProvider.generateWithTools(
+              currentRequest,
+              readOnlySchemas,
+              previousResults.length > 0 ? previousResults : undefined,
+            );
+
+            // No tool calls → delegate is done
+            if (response.toolCalls.length === 0) {
+              finalText = response.text;
+              break;
+            }
+
+            // Execute read-only tool calls
+            for (const tc of response.toolCalls) {
+              // Only allow read-only tools
+              const allowed = ['read_file', 'grep_files', 'glob_files', 'git_diff'];
+              if (!allowed.includes(tc.name)) {
+                previousResults.push({
+                  callId: tc.id,
+                  result: `Tool "${tc.name}" is not available in read-only mode.`,
+                  isError: true,
+                });
+                continue;
+              }
+
+              // Reuse the executor from the main loop
+              const executor = executors.get(tc.name);
+              if (!executor) {
+                previousResults.push({
+                  callId: tc.id,
+                  result: `Tool "${tc.name}" not found.`,
+                  isError: true,
+                });
+                continue;
+              }
+
+              const result = await executor(tc);
+              previousResults.push({
+                callId: tc.id,
+                result: result.output ?? result.error ?? '(no output)',
+                isError: !result.success,
+              });
+            }
+
+            // Continue the conversation with tool results
+            currentRequest = {
+              ...request,
+              prompt: response.text || 'Continue.',
+            };
+            finalText = response.text;
+          }
+
+          tracer.log('agent-loop', 'info', `Delegation complete (read-only). Response: ${finalText.length} chars`);
+
+          return successResult(
+            call.id,
+            `[Delegation to ${modelResult.value} (read-only tools)]\n\n${finalText}`,
+            config.maxOutputChars,
+          );
+        }
+
+        // Text-only mode (legacy)
         const response = await delegateProvider.generateWithTools(request, []);
 
         tracer.log('agent-loop', 'info', `Delegation complete. Response: ${response.text.length} chars`);
@@ -6399,6 +6614,7 @@ export function buildAgentToolkit(
   const allSchemas: ToolSchema[] = [
     THINK_SCHEMA,
     READ_FILE_SCHEMA,
+    READ_FILES_SCHEMA,
     EDIT_FILE_SCHEMA,
     CREATE_FILE_SCHEMA,
     GREP_SCHEMA,
@@ -6569,6 +6785,7 @@ export function buildAgentToolkit(
 export {
   THINK_SCHEMA,
   READ_FILE_SCHEMA,
+  READ_FILES_SCHEMA,
   EDIT_FILE_SCHEMA,
   CREATE_FILE_SCHEMA,
   GREP_SCHEMA,
