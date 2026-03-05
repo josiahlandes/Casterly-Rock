@@ -1,235 +1,238 @@
-// Procedural Audio Controller using Web Audio API
-export default class AudioController {
+// Audio Handler - Procedural sound via Web Audio API
+export class AudioHandler {
     constructor() {
-        this.audioContext = null;
+        this.ctx = null;
         this.enabled = true;
-        this.volume = 0.3;
-        this.initialized = false;
     }
     
     init() {
-        if (this.initialized) return;
-        try {
-            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            this.initialized = true;
-        } catch (e) {
-            console.warn('Web Audio API not supported');
-            this.enabled = false;
+        if (!this.ctx) {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
         }
     }
     
-    ensureContext() {
-        if (!this.initialized) {
-            this.init();
-        }
-        if (this.audioContext && this.audioContext.state === 'suspended') {
-            this.audioContext.resume();
-        }
-    }
-    
-    playPlayerShoot() {
-        if (!this.enabled || !this.audioContext) return;
-        this.ensureContext();
+    playShoot() {
+        if (!this.enabled || !this.ctx) return;
         
-        const osc = this.audioContext.createOscillator();
-        const gain = this.audioContext.createGain();
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
         
         osc.connect(gain);
-        gain.connect(this.audioContext.destination);
+        gain.connect(this.ctx.destination);
         
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, this.audioContext.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(440, this.audioContext.currentTime + 0.1);
+        osc.frequency.setValueAtTime(880, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, this.ctx.currentTime + 0.1);
         
-        gain.gain.setValueAtTime(this.volume, this.audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
         
-        osc.start(this.audioContext.currentTime);
-        osc.stop(this.audioContext.currentTime + 0.1);
-        osc.disconnect();
-        gain.disconnect();
+        osc.start(this.ctx.currentTime);
+        osc.stop(this.ctx.currentTime + 0.1);
+        
+        setTimeout(() => {
+            osc.disconnect();
+            gain.disconnect();
+        }, 100);
     }
     
     playEnemyShoot() {
-        if (!this.enabled || !this.audioContext) return;
-        this.ensureContext();
+        if (!this.enabled || !this.ctx) return;
         
-        const osc = this.audioContext.createOscillator();
-        const gain = this.audioContext.createGain();
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
         
         osc.connect(gain);
-        gain.connect(this.audioContext.destination);
+        gain.connect(this.ctx.destination);
         
         osc.type = 'triangle';
-        osc.frequency.setValueAtTime(440, this.audioContext.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(220, this.audioContext.currentTime + 0.08);
+        osc.frequency.setValueAtTime(440, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(220, this.ctx.currentTime + 0.08);
         
-        gain.gain.setValueAtTime(this.volume * 0.7, this.audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
         
-        osc.start(this.audioContext.currentTime);
-        osc.stop(this.audioContext.currentTime + 0.08);
-        osc.disconnect();
-        gain.disconnect();
+        osc.start(this.ctx.currentTime);
+        osc.stop(this.ctx.currentTime + 0.08);
+        
+        setTimeout(() => {
+            osc.disconnect();
+            gain.disconnect();
+        }, 80);
     }
     
     playEnemyDestroyed() {
-        if (!this.enabled || !this.audioContext) return;
-        this.ensureContext();
+        if (!this.enabled || !this.ctx) return;
         
-        // White noise burst
-        const bufferSize = this.audioContext.sampleRate * 0.3;
-        const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+        // Noise burst
+        const bufferSize = this.ctx.sampleRate * 0.3;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
         const data = buffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
-            data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+            data[i] = Math.random() * 2 - 1;
         }
         
-        const noise = this.audioContext.createBufferSource();
+        const noise = this.ctx.createBufferSource();
         noise.buffer = buffer;
-        const noiseGain = this.audioContext.createGain();
-        noiseGain.gain.setValueAtTime(this.volume * 0.5, this.audioContext.currentTime);
-        noiseGain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.3);
-        
+        const noiseGain = this.ctx.createGain();
         noise.connect(noiseGain);
-        noiseGain.connect(this.audioContext.destination);
-        noise.start(this.audioContext.currentTime);
+        noiseGain.connect(this.ctx.destination);
+        
+        noiseGain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
         
         // Sine sweep
-        const osc = this.audioContext.createOscillator();
-        const oscGain = this.audioContext.createGain();
+        const osc = this.ctx.createOscillator();
+        const oscGain = this.ctx.createGain();
         osc.connect(oscGain);
-        oscGain.connect(this.audioContext.destination);
+        oscGain.connect(this.ctx.destination);
         
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(200, this.audioContext.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(50, this.audioContext.currentTime + 0.3);
+        osc.frequency.setValueAtTime(200, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.3);
         
-        oscGain.gain.setValueAtTime(this.volume * 0.5, this.audioContext.currentTime);
-        oscGain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.3);
+        oscGain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+        oscGain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
         
-        osc.start(this.audioContext.currentTime);
-        osc.stop(this.audioContext.currentTime + 0.3);
+        osc.start(this.ctx.currentTime);
+        osc.stop(this.ctx.currentTime + 0.3);
+        noise.start(this.ctx.currentTime);
+        
+        setTimeout(() => {
+            osc.disconnect();
+            oscGain.disconnect();
+            noiseGain.disconnect();
+        }, 300);
     }
     
     playPlayerHit() {
-        if (!this.enabled || !this.audioContext) return;
-        this.ensureContext();
+        if (!this.enabled || !this.ctx) return;
         
-        const osc = this.audioContext.createOscillator();
-        const gain = this.audioContext.createGain();
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
         
         osc.connect(gain);
-        gain.connect(this.audioContext.destination);
+        gain.connect(this.ctx.destination);
         
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(100, this.audioContext.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(50, this.audioContext.currentTime + 0.2);
+        // Waveshaper for distortion
+        const distortion = this.ctx.createWaveShaper();
+        distortion.curve = this.makeDistortionCurve(50);
         
-        gain.gain.setValueAtTime(this.volume * 0.8, this.audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.2);
+        osc.connect(distortion);
+        distortion.connect(gain);
+        gain.connect(this.ctx.destination);
         
-        osc.start(this.audioContext.currentTime);
-        osc.stop(this.audioContext.currentTime + 0.2);
-        osc.disconnect();
-        gain.disconnect();
+        osc.frequency.setValueAtTime(100, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.2);
+        
+        gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+        
+        osc.start(this.ctx.currentTime);
+        osc.stop(this.ctx.currentTime + 0.2);
+        
+        setTimeout(() => {
+            osc.disconnect();
+            gain.disconnect();
+        }, 200);
     }
     
-    playPowerUpCollect() {
-        if (!this.enabled || !this.audioContext) return;
-        this.ensureContext();
+    playPowerupCollect() {
+        if (!this.enabled || !this.ctx) return;
         
         const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
         
         notes.forEach((freq, i) => {
-            const osc = this.audioContext.createOscillator();
-            const gain = this.audioContext.createGain();
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
             
             osc.connect(gain);
-            gain.connect(this.audioContext.destination);
+            gain.connect(this.ctx.destination);
             
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(freq, this.audioContext.currentTime + i * 0.05);
+            osc.frequency.setValueAtTime(freq, this.ctx.currentTime + i * 0.05);
             
-            gain.gain.setValueAtTime(0, this.audioContext.currentTime + i * 0.05);
-            gain.gain.linearRampToValueAtTime(this.volume, this.audioContext.currentTime + i * 0.05 + 0.01);
-            gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + i * 0.05 + 0.05);
+            gain.gain.setValueAtTime(0.2, this.ctx.currentTime + i * 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + i * 0.05 + 0.05);
             
-            osc.start(this.audioContext.currentTime + i * 0.05);
-            osc.stop(this.audioContext.currentTime + i * 0.05 + 0.06);
+            osc.start(this.ctx.currentTime + i * 0.05);
+            osc.stop(this.ctx.currentTime + i * 0.05 + 0.05);
+            
+            setTimeout(() => {
+                osc.disconnect();
+                gain.disconnect();
+            }, i * 50 + 50);
         });
     }
     
     playLevelComplete() {
-        if (!this.enabled || !this.audioContext) return;
-        this.ensureContext();
+        if (!this.enabled || !this.ctx) return;
         
         const notes = [261.63, 329.63, 392.00, 523.25]; // C4, E4, G4, C5
         
         notes.forEach((freq, i) => {
-            const osc = this.audioContext.createOscillator();
-            const gain = this.audioContext.createGain();
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
             
             osc.connect(gain);
-            gain.connect(this.audioContext.destination);
+            gain.connect(this.ctx.destination);
             
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(freq, this.audioContext.currentTime + i * 0.1);
+            osc.frequency.setValueAtTime(freq, this.ctx.currentTime + i * 0.1);
             
-            gain.gain.setValueAtTime(0, this.audioContext.currentTime + i * 0.1);
-            gain.gain.linearRampToValueAtTime(this.volume, this.audioContext.currentTime + i * 0.1 + 0.02);
-            gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + i * 0.1 + 0.1);
+            gain.gain.setValueAtTime(0.25, this.ctx.currentTime + i * 0.1);
+            gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + i * 0.1 + 0.1);
             
-            osc.start(this.audioContext.currentTime + i * 0.1);
-            osc.stop(this.audioContext.currentTime + i * 0.1 + 0.12);
+            osc.start(this.ctx.currentTime + i * 0.1);
+            osc.stop(this.ctx.currentTime + i * 0.1 + 0.1);
+            
+            setTimeout(() => {
+                osc.disconnect();
+                gain.disconnect();
+            }, i * 100 + 100);
         });
     }
     
     playGameOver() {
-        if (!this.enabled || !this.audioContext) return;
-        this.ensureContext();
+        if (!this.enabled || !this.ctx) return;
         
-        const osc = this.audioContext.createOscillator();
-        const gain = this.audioContext.createGain();
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
         
         osc.connect(gain);
-        gain.connect(this.audioContext.destination);
+        gain.connect(this.ctx.destination);
         
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(300, this.audioContext.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(100, this.audioContext.currentTime + 0.8);
+        osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.8);
         
-        gain.gain.setValueAtTime(this.volume * 0.6, this.audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.8);
+        gain.gain.setValueAtTime(0.35, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.8);
         
-        osc.start(this.audioContext.currentTime);
-        osc.stop(this.audioContext.currentTime + 0.8);
-        osc.disconnect();
-        gain.disconnect();
+        osc.start(this.ctx.currentTime);
+        osc.stop(this.ctx.currentTime + 0.8);
+        
+        setTimeout(() => {
+            osc.disconnect();
+            gain.disconnect();
+        }, 800);
     }
     
-    playCombo(text) {
-        if (!this.enabled || !this.audioContext) return;
-        this.ensureContext();
+    makeDistortionCurve(amount) {
+        const k = typeof amount === 'number' ? amount : 50;
+        const n_samples = 44100;
+        const curve = new Float32Array(n_samples);
+        const deg = Math.PI / 180;
         
-        // Play a rising tone based on combo level
-        const baseFreq = 440;
-        const multiplier = parseInt(text.replace('x', '').replace(' COMBO!', '')) || 2;
+        for (let i = 0; i < n_samples; i++) {
+            const x = (i * 2) / n_samples - 1;
+            curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
+        }
         
-        const osc = this.audioContext.createOscillator();
-        const gain = this.audioContext.createGain();
-        
-        osc.connect(gain);
-        gain.connect(this.audioContext.destination);
-        
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(baseFreq, this.audioContext.currentTime);
-        osc.frequency.linearRampToValueAtTime(baseFreq * (1 + multiplier * 0.2), this.audioContext.currentTime + 0.15);
-        
-        gain.gain.setValueAtTime(this.volume * 0.4, this.audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.15);
-        
-        osc.start(this.audioContext.currentTime);
-        osc.stop(this.audioContext.currentTime + 0.15);
+        return curve;
+    }
+    
+    enable() {
+        this.enabled = true;
+        this.init();
+    }
+    
+    disable() {
+        this.enabled = false;
     }
 }

@@ -27,7 +27,7 @@ import type { Difficulty, ProblemContext } from './scaling.js';
  * Compute budget allocated for a task based on its difficulty.
  */
 export interface ComputeBudget {
-  /** Maximum ReAct turns for this task */
+  /** Maximum tool-calling turns for this task */
   maxTurns: number;
 
   /** Maximum verification passes (review cycles) */
@@ -173,11 +173,11 @@ export interface SelfAssessment {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_EASY_BUDGET: ComputeBudget = {
-  maxTurns: 10,
+  maxTurns: 25,
   verificationDepth: 1,
   maxRetries: 1,
   parallelCandidates: 1,
-  temperature: 0.1,
+  temperature: 0.3,
   maxTokens: 4096,
   contextTier: 'standard',
   useJudge: false,
@@ -185,11 +185,11 @@ const DEFAULT_EASY_BUDGET: ComputeBudget = {
 };
 
 const DEFAULT_MEDIUM_BUDGET: ComputeBudget = {
-  maxTurns: 25,
+  maxTurns: 50,
   verificationDepth: 2,
   maxRetries: 2,
   parallelCandidates: 2,
-  temperature: 0.2,
+  temperature: 0.3,
   maxTokens: 4096,
   contextTier: 'standard',
   useJudge: false,
@@ -197,7 +197,7 @@ const DEFAULT_MEDIUM_BUDGET: ComputeBudget = {
 };
 
 const DEFAULT_HARD_BUDGET: ComputeBudget = {
-  maxTurns: 50,
+  maxTurns: 100,
   verificationDepth: 3,
   maxRetries: 3,
   parallelCandidates: 4,

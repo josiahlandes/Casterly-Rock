@@ -1,31 +1,102 @@
-// Particle System for explosions, trails, and effects
-export default class ParticleSystem {
-    constructor() {
-        this.particles = [];
-        this.maxParticles = 500;
+// Particles - Explosion, thruster trails, sparks
+import { CONFIG } from './config.js';
+
+export class Particle {
+    constructor(x, y, vx, vy, color, size, life, maxLife) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = color;
+        this.size = size;
+        this.life = life;
+        this.maxLife = maxLife;
     }
     
     update(dt) {
-        const dtSeconds = dt / 1000;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.life -= dt;
+        this.vy += 50 * dt; // slight gravity
+    }
+    
+    isAlive() {
+        return this.life > 0;
+    }
+    
+    getAlpha() {
+        return Math.max(0, this.life / this.maxLife);
+    }
+    
+    getSize() {
+        return this.size * this.getAlpha();
+    }
+}
+
+export class ParticleSystem {
+    constructor() {
+        this.particles = [];
+    }
+    
+    add(particle) {
+        if (this.particles.length < CONFIG.MAX_PARTICLES) {
+            this.particles.push(particle);
+        }
+    }
+    
+    createExplosion(x, y, color, count = CONFIG.EXPLOSION_PARTICLES) {
+        for (let i = 0; i < count; i++) {
+            const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+            const speed = 50 + Math.random() * 150;
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+            const size = 2 + Math.random() * 3;
+            const life = 0.3 + Math.random() * 0.2;
+            
+            this.add(new Particle(x, y, vx, vy, color, size, life, life));
+        }
+    }
+    
+    createThruster(x, y) {
+        const spread = 20;
+        const vx = (Math.random() - 0.5) * spread;
+        const vy = 50 + Math.random() * 50;
+        const size = 1 + Math.random() * 2;
+        const life = 0.2 + Math.random() * 0.1;
         
-        // Update all particles
+        this.add(new Particle(x, y, vx, vy, CONFIG.COLORS.PLAYER, size, life, life));
+    }
+    
+    createImpact(x, y, color, count = CONFIG.IMPACT_PARTICLES) {
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 30 + Math.random() * 70;
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+            const size = 1 + Math.random() * 2;
+            const life = 0.1 + Math.random() * 0.1;
+            
+            this.add(new Particle(x, y, vx, vy, color, size, life, life));
+        }
+    }
+    
+    createPowerupCollect(x, y) {
+        for (let i = 0; i < CONFIG.POWERUP_PARTICLES; i++) {
+            const angle = (Math.PI * 2 * i) / CONFIG.POWERUP_PARTICLES;
+            const speed = 50 + Math.random() * 50;
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+            const size = 2 + Math.random() * 2;
+            const life = 0.4 + Math.random() * 0.2;
+            
+            this.add(new Particle(x, y, vx, vy, CONFIG.COLORS.POWERUP, size, life, life));
+        }
+    }
+    
+    update(dt) {
         for (let i = this.particles.length - 1; i >= 0; i--) {
-            const p = this.particles[i];
-            
-            // Update position
-            p.x += p.vx * dtSeconds;
-            p.y += p.vy * dtSeconds;
-            
-            // Update life
-            p.life -= dt;
-            
-            // Apply gravity to some particles
-            if (p.gravity) {
-                p.vy += p.gravity * dtSeconds;
-            }
-            
-            // Remove dead particles
-            if (p.life <= 0) {
+            this.particles[i].update(dt);
+            if (!this.particles[i].isAlive()) {
                 this.particles.splice(i, 1);
             }
         }
@@ -33,106 +104,16 @@ export default class ParticleSystem {
     
     draw(ctx) {
         this.particles.forEach(p => {
-            const alpha = p.life / p.maxLife;
-            
-            ctx.save();
+            const alpha = p.getAlpha();
             ctx.globalAlpha = alpha;
             ctx.fillStyle = p.color;
-            
-            // Glow effect for some particles
-            if (p.glow) {
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = p.color;
-            }
-            
-            // Draw particle
-            const size = p.size * alpha;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, p.getSize(), 0, Math.PI * 2);
             ctx.fill();
-            
-            ctx.restore();
         });
+        ctx.globalAlpha = 1;
     }
     
-    // Explosion burst
-    createExplosion(x, y, color, count = 20) {
-        for (let i = 0; i < count; i++) {
-            const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
-            const speed = 50 + Math.random() * 150;
-            
-            this.particles.push({
-                x: x,
-                y: y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: 500,
-                maxLife: 500,
-                color: color,
-                size: 2 + Math.random() * 2,
-                gravity: 100
-            });
-        }
-    }
-    
-    // Player thruster trail
-    createThruster(x, y) {
-        const spread = (Math.random() - 0.5) * 30;
-        
-        this.particles.push({
-            x: x + spread,
-            y: y + 15,
-            vx: (Math.random() - 0.5) * 20,
-            vy: 50 + Math.random() * 50,
-            life: 300,
-            maxLife: 300,
-            color: '#00fff5',
-            size: 1 + Math.random() * 1.5,
-            glow: true
-        });
-    }
-    
-    // Bullet impact sparks
-    createImpact(x, y, color, count = 6) {
-        for (let i = 0; i < count; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 100 + Math.random() * 100;
-            
-            this.particles.push({
-                x: x,
-                y: y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: 200,
-                maxLife: 200,
-                color: color,
-                size: 1 + Math.random() * 1,
-                gravity: 200
-            });
-        }
-    }
-    
-    // Power-up collect effect
-    createPowerUpCollect(x, y) {
-        for (let i = 0; i < 12; i++) {
-            const angle = (Math.PI * 2 * i) / 12;
-            const speed = 80;
-            
-            this.particles.push({
-                x: x,
-                y: y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: 400,
-                maxLife: 400,
-                color: '#ffd700',
-                size: 2,
-                glow: true
-            });
-        }
-    }
-    
-    // Clear all particles
     clear() {
         this.particles = [];
     }

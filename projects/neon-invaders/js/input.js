@@ -1,25 +1,26 @@
-// Input Handler - Keyboard input management
-export default class InputHandler {
+// Input Handler - Keyboard management
+export class InputHandler {
     constructor() {
         this.keys = {};
-        this.keyPressed = {};
+        this.keyDown = {};
+        this.keyUp = {};
         
-        window.addEventListener('keydown', (e) => {
-            this.keys[e.code] = true;
-            // Track first press this frame
-            if (!this.keyPressed[e.code]) {
-                this.keyPressed[e.code] = true;
-            }
-            // Prevent default for game keys
-            if (['ArrowLeft', 'ArrowRight', 'Space', 'KeyA', 'KeyD', 'Enter'].includes(e.code)) {
-                e.preventDefault();
-            }
-        });
-        
-        window.addEventListener('keyup', (e) => {
-            this.keys[e.code] = false;
-            this.keyPressed[e.code] = false;
-        });
+        window.addEventListener('keydown', (e) => this.handleKeyDown(e));
+        window.addEventListener('keyup', (e) => this.handleKeyUp(e));
+    }
+    
+    handleKeyDown(e) {
+        const key = e.code;
+        if (!this.keys[key]) {
+            this.keyDown[key] = true;
+        }
+        this.keys[key] = true;
+    }
+    
+    handleKeyUp(e) {
+        const key = e.code;
+        this.keys[key] = false;
+        this.keyUp[key] = true;
     }
     
     isDown(code) {
@@ -27,13 +28,18 @@ export default class InputHandler {
     }
     
     isPressed(code) {
-        const pressed = this.keyPressed[code];
-        // Reset after reading
-        if (pressed) this.keyPressed[code] = false;
+        const pressed = this.keyDown[code] === true;
+        this.keyDown[code] = false;
         return pressed;
     }
     
-    // Player movement
+    isReleased(code) {
+        const released = this.keyUp[code] === true;
+        this.keyUp[code] = false;
+        return released;
+    }
+    
+    // Convenience methods for common controls
     isLeft() {
         return this.isDown('ArrowLeft') || this.isDown('KeyA');
     }
@@ -43,16 +49,19 @@ export default class InputHandler {
     }
     
     isShoot() {
-        return this.isPressed('Space');
+        return this.isDown('Space');
     }
     
-    isEnter() {
+    isStart() {
         return this.isPressed('Enter');
     }
     
-    // Clear all input (used on state changes)
+    isRestart() {
+        return this.isPressed('Enter');
+    }
+    
     clear() {
-        this.keys = {};
-        this.keyPressed = {};
+        this.keyDown = {};
+        this.keyUp = {};
     }
 }

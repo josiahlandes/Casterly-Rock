@@ -47,11 +47,11 @@ describe('ComputeScaler — Budget Allocation', () => {
     const scaler = createComputeScaler();
     const budget = scaler.getBudget('easy');
 
-    expect(budget.maxTurns).toBe(10);
+    expect(budget.maxTurns).toBe(25);
     expect(budget.verificationDepth).toBe(1);
     expect(budget.maxRetries).toBe(1);
     expect(budget.parallelCandidates).toBe(1);
-    expect(budget.temperature).toBe(0.1);
+    expect(budget.temperature).toBe(0.3);
     expect(budget.contextTier).toBe('standard');
     expect(budget.useJudge).toBe(false);
     expect(budget.difficulty).toBe('easy');
@@ -61,7 +61,7 @@ describe('ComputeScaler — Budget Allocation', () => {
     const scaler = createComputeScaler();
     const budget = scaler.getBudget('medium');
 
-    expect(budget.maxTurns).toBe(25);
+    expect(budget.maxTurns).toBe(50);
     expect(budget.verificationDepth).toBe(2);
     expect(budget.parallelCandidates).toBe(2);
     expect(budget.contextTier).toBe('standard');
@@ -73,7 +73,7 @@ describe('ComputeScaler — Budget Allocation', () => {
     const scaler = createComputeScaler();
     const budget = scaler.getBudget('hard');
 
-    expect(budget.maxTurns).toBe(50);
+    expect(budget.maxTurns).toBe(100);
     expect(budget.verificationDepth).toBe(3);
     expect(budget.maxRetries).toBe(3);
     expect(budget.parallelCandidates).toBe(4);
@@ -115,7 +115,7 @@ describe('ComputeScaler — Budget Allocation', () => {
     const budget2 = scaler.getBudget('easy');
 
     budget1.maxTurns = 999;
-    expect(budget2.maxTurns).toBe(10); // Unchanged
+    expect(budget2.maxTurns).toBe(25); // Unchanged
   });
 });
 
@@ -248,7 +248,7 @@ describe('ComputeScaler — allocateBudget', () => {
     const budget = scaler.allocateBudget('hard');
 
     expect(budget.difficulty).toBe('hard');
-    expect(budget.maxTurns).toBe(50);
+    expect(budget.maxTurns).toBe(100);
   });
 
   it('combines with self-assessment when enabled', () => {

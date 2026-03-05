@@ -1,250 +1,306 @@
-// Enemy Grid System
-export default class EnemyGrid {
-    constructor(canvasWidth, canvasHeight, particleSystem, audioController) {
-        this.canvasWidth = canvasWidth;
-        this.canvasHeight = canvasHeight;
-        this.particleSystem = particleSystem;
-        this.audioController = audioController;
+// Enemies - Enemy grid, formation, types A/B/C
+import { CONFIG } from './config.js';
+
+export class Enemy {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+        this.active = true;
+        this.hitFlashTime = 0;
         
+        // Set properties based on type
+        switch(type) {
+            case 'A': // Drone
+                this.hp = CONFIG.ENEMY_A_HP;
+                this.points = CONFIG.ENEMY_A_POINTS;
+                this.speed = CONFIG.ENEMY_A_SPEED;
+                this.color = CONFIG.COLORS.ENEMY_A;
+                break;
+            case 'B': // Tank
+                this.hp = CONFIG.ENEMY_B_HP;
+                this.points = CONFIG.ENEMY_B_POINTS;
+                this.speed = CONFIG.ENEMY_B_SPEED;
+                this.color = CONFIG.COLORS.ENEMY_B;
+                break;
+            case 'C': // Scout
+                this.hp = CONFIG.ENEMY_C_HP;
+                this.points = CONFIG.ENEMY_C_POINTS;
+                this.speed = CONFIG.ENEMY_C_SPEED;
+                this.color = CONFIG.COLORS.ENEMY_C;
+                break;
+        }
+        
+        // Idle animation
+        this.pulsePhase = Math.random() * Math.PI * 2;
+    }
+    
+    hit() {
+        this.hp--;
+        this.hitFlashTime = 0.15;
+        return this.hp <= 0;
+    }
+    
+    update(dt, level) {
+        // Update hit flash
+        if (this.hitFlashTime > 0) {
+            this.hitFlashTime -= dt;
+        }
+        
+        // Update idle animation
+        this.pulsePhase += dt * 3;
+    }
+    
+    draw(ctx) {
+        const alpha = this.hitFlashTime > 0 ? 1 : 0.8 + Math.sin(this.pulsePhase) * 0.2;
+        const drawY = this.y;
+        
+        ctx.globalAlpha = alpha;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.color;
+        ctx.fillStyle = this.hitFlashTime > 0 ? '#ffffff' : this.color;
+        
+        const w = CONFIG.ENEMY_WIDTH;
+        const h = CONFIG.ENEMY_HEIGHT;
+        const cx = this.x + w / 2;
+        const cy = drawY + h / 2;
+        
+        // Draw based on type
+        if (this.type === 'A') {
+            // Diamond shape
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - h/2);
+            ctx.lineTo(cx + w/2, cy);
+            ctx.lineTo(cx, cy + h/2);
+            ctx.lineTo(cx - w/2, cy);
+            ctx.closePath();
+            ctx.fill();
+        } else if (this.type === 'B') {
+            // Hexagon
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i - Math.PI / 6;
+                const px = cx + (w/2) * Math.cos(angle);
+                const py = cy + (h/2) * Math.sin(angle);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+        } else if (this.type === 'C') {
+            // Triangle (pointing up)
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - h/2);
+            ctx.lineTo(cx + w/2, cy + h/2);
+            ctx.lineTo(cx - w/2, cy + h/2);
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+    }
+    
+    getBounds() {
+        return {
+            x: this.x,
+            y: this.y,
+            width: CONFIG.ENEMY_WIDTH,
+            height: CONFIG.ENEMY_HEIGHT
+        };
+    }
+}
+
+export class EnemyGrid {
+    constructor() {
         this.enemies = [];
+        this.gridOffsetX = 0;
+        this.gridOffsetY = 0;
         this.direction = 1; // 1 = right, -1 = left
-        this.speed = 50;
-        this.baseSpeed = 50;
-        this.edgeShiftY = 20;
-        this.fireChance = 0.0005;
-        this.idlePulseTime = 0;
-        
-        this.rows = 5;
-        this.cols = 8;
-        this.startX = 80;
-        this.startY = 60;
-        this.spacingX = 60;
-        this.spacingY = 45;
+        this.moveTimer = 0;
+        this.moveInterval = 1; // seconds between moves
+        this.shootTimer = 0;
+        this.shootInterval = 2; // seconds between shoot attempts
+        this.pendingShooter = null; // queued shooter for main loop to consume
     }
     
     spawn(level) {
         this.enemies = [];
-        this.level = level;
+        this.gridOffsetX = 0;
+        this.gridOffsetY = 0;
+        this.direction = 1;
         
-        // Calculate starting Y based on level (starts lower each level)
-        const startY = Math.max(20, this.startY - (level - 1) * 10);
+        const rows = CONFIG.ENEMY_ROWS;
+        const cols = CONFIG.ENEMY_COLS;
+        const padding = CONFIG.ENEMY_PADDING;
+        const totalWidth = cols * CONFIG.ENEMY_WIDTH + (cols - 1) * padding;
+        const startX = (CONFIG.CANVAS_WIDTH - totalWidth) / 2;
         
         // Determine enemy types based on level
-        const hasTypeB = level >= 2;
-        const hasTypeC = level >= 3;
-        
-        for (let row = 0; row < this.rows; row++) {
-            for (let col = 0; col < this.cols; col++) {
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
                 let type = 'A';
                 
-                if (hasTypeC && row === 0) {
-                    type = 'C'; // Front row = scouts
-                } else if (hasTypeB && row >= this.rows - 2) {
-                    type = 'B'; // Back rows = tanks
+                if (level >= 2) {
+                    // Back rows are B (tank)
+                    if (row >= rows - 2) {
+                        type = 'B';
+                    } else {
+                        type = 'A';
+                    }
                 }
                 
-                const x = this.startX + col * this.spacingX;
-                const y = startY + row * this.spacingY;
+                if (level >= 3) {
+                    // Front row is C (scout)
+                    if (row === 0) {
+                        type = 'C';
+                    } else if (row >= rows - 2) {
+                        type = 'B';
+                    } else {
+                        type = 'A';
+                    }
+                }
                 
-                this.enemies.push(this.createEnemy(x, y, type, row, col));
+                const x = startX + col * (CONFIG.ENEMY_WIDTH + padding);
+                const y = CONFIG.ENEMY_START_Y + row * (CONFIG.ENEMY_HEIGHT + padding) + this.gridOffsetY;
+                
+                this.enemies.push(new Enemy(x, y, type));
             }
         }
-        
-        this.speed = this.baseSpeed;
-        this.direction = 1;
     }
     
-    createEnemy(x, y, type, row, col) {
-        const typeData = {
-            A: { width: 35, height: 25, hp: 1, points: 100, color: '#ff00ff', speedMod: 1.0 },
-            B: { width: 40, height: 30, hp: 2, points: 250, color: '#ff6600', speedMod: 0.7 },
-            C: { width: 30, height: 22, hp: 1, points: 200, color: '#39ff14', speedMod: 1.4 }
-        }[type];
-        
-        return {
-            x: x,
-            y: y,
-            type: type,
-            width: typeData.width,
-            height: typeData.height,
-            hp: typeData.hp,
-            maxHp: typeData.hp,
-            points: typeData.points,
-            color: typeData.color,
-            speedMod: typeData.speedMod,
-            row: row,
-            col: col,
-            pulsePhase: Math.random() * Math.PI * 2,
-            hitFlashTime: 0
-        };
-    }
-    
-    update(dt, playerBulletCount) {
-        const dtSeconds = dt / 1000;
-        
-        // Update idle pulse animation
-        this.idlePulseTime += dtSeconds;
-        
-        // Update hit flash timers
+    update(dt, level) {
+        // Update individual enemies
         this.enemies.forEach(enemy => {
-            if (enemy.hitFlashTime > 0) {
-                enemy.hitFlashTime -= dt;
+            if (enemy.active) {
+                enemy.update(dt, level);
             }
         });
         
-        // Calculate movement speed based on remaining enemies
-        const enemyCount = this.enemies.length;
-        const totalEnemies = this.rows * this.cols;
-        const speedMultiplier = 1 + (totalEnemies - enemyCount) * 0.02;
-        const currentSpeed = this.speed * speedMultiplier;
+        // Formation movement
+        this.moveTimer += dt;
+        const baseInterval = this.getMoveInterval(level);
         
-        // Move enemies
-        let hitEdge = false;
-        let lowestY = 0;
+        if (this.moveTimer >= baseInterval) {
+            this.moveTimer = 0;
+            this.moveFormation();
+        }
         
-        this.enemies.forEach(enemy => {
-            enemy.x += currentSpeed * enemy.speedMod * this.direction * dtSeconds;
-            
-            // Check edges
-            if (this.direction > 0 && enemy.x + enemy.width > this.canvasWidth - 20) {
-                hitEdge = true;
-            } else if (this.direction < 0 && enemy.x < 20) {
-                hitEdge = true;
+        // Random shooting (queue a shooter for main loop to consume)
+        this.shootTimer += dt;
+        const shootInterval = this.getShootInterval(level);
+
+        if (this.shootTimer >= shootInterval) {
+            this.shootTimer = 0;
+            const aliveEnemies = this.enemies.filter(e => e.active);
+            if (aliveEnemies.length > 0) {
+                this.pendingShooter = aliveEnemies[Math.floor(Math.random() * aliveEnemies.length)];
             }
-            
-            // Track lowest enemy
-            if (enemy.y + enemy.height > lowestY) {
-                lowestY = enemy.y + enemy.height;
-            }
-            
-            // Update pulse phase
-            enemy.pulsePhase += 2 * dtSeconds;
+        }
+    }
+    
+    getMoveInterval(level) {
+        // Speed increases as enemies are destroyed and with level
+        const aliveCount = this.getAliveCount();
+        const totalEnemies = CONFIG.ENEMY_ROWS * CONFIG.ENEMY_COLS;
+        const speedMultiplier = 1 + (1 - aliveCount / totalEnemies) * 2;
+        const levelMultiplier = 1 + (level - 1) * 0.1;
+        return Math.max(0.15, CONFIG.FORMATION_MOVE_SPEED / (speedMultiplier * levelMultiplier * 50));
+    }
+    
+    getShootInterval(level) {
+        let interval = 2 - level * 0.15;
+        interval = Math.max(0.5, interval);
+        
+        // Every 5 levels, enemies fire 50% more frequently
+        if (level % CONFIG.LEVEL_BONUS_FREQUENCY === 0) {
+            interval *= (1 / CONFIG.BONUS_FREQUENCY_MULTIPLIER);
+        }
+        
+        return interval;
+    }
+    
+    moveFormation() {
+        const aliveEnemies = this.enemies.filter(e => e.active);
+        if (aliveEnemies.length === 0) return;
+
+        // Find bounds of alive enemies
+        let minX = Infinity, maxX = -Infinity;
+        aliveEnemies.forEach(e => {
+            minX = Math.min(minX, e.x);
+            maxX = Math.max(maxX, e.x + CONFIG.ENEMY_WIDTH);
         });
-        
-        // Shift down and reverse direction if hitting edge
-        if (hitEdge) {
+
+        // Check if we hit the edge
+        if ((this.direction === 1 && maxX > CONFIG.CANVAS_WIDTH - 20) ||
+            (this.direction === -1 && minX < 20)) {
+            // Drop down and reverse
+            aliveEnemies.forEach(e => {
+                e.y += CONFIG.ENEMY_DROP_DISTANCE;
+            });
             this.direction *= -1;
-            this.enemies.forEach(enemy => {
-                enemy.y += this.edgeShiftY;
+        } else {
+            // Move horizontally
+            const step = CONFIG.FORMATION_MOVE_SPEED * this.direction * 0.02;
+            aliveEnemies.forEach(e => {
+                e.x += step;
             });
         }
-        
-        // Random enemy firing
-        const adjustedFireChance = this.fireChance * speedMultiplier * this.getFireMultiplier();
-        this.enemies.forEach(enemy => {
-            if (Math.random() < adjustedFireChance && playerBulletCount < 5) {
-                return { x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, type: enemy.type };
-            }
-            return null;
-        }).filter(fire => fire !== null).forEach(fire => {
-            // This will be handled by the caller
-        });
-        
-        return {
-            lowestY: lowestY,
-            fireCandidates: this.enemies.filter(() => Math.random() < adjustedFireChance)
-        };
     }
     
-    getFireMultiplier() {
-        // Every 5 levels, enemies fire 50% more
-        return Math.floor(this.level / 5) > 0 ? 1.5 : 1.0;
+    consumeShooter() {
+        const shooter = this.pendingShooter;
+        this.pendingShooter = null;
+        return shooter;
     }
     
-    takeDamage(enemy, damage = 1) {
-        enemy.hp -= damage;
-        enemy.hitFlashTime = 100;
-        
-        if (enemy.hp <= 0) {
-            // Enemy destroyed
-            this.particleSystem.createExplosion(
-                enemy.x + enemy.width / 2,
-                enemy.y + enemy.height / 2,
-                enemy.color
-            );
-            this.audioController.playEnemyDestroyed();
-            return { destroyed: true, points: enemy.points };
+    hitEnemy(enemy) {
+        const destroyed = enemy.hit();
+        if (destroyed) {
+            enemy.active = false;
+            return true;
         }
+        return false;
+    }
+    
+    getAliveCount() {
+        return this.enemies.filter(e => e.active).length;
+    }
+    
+    isCleared() {
+        return this.getAliveCount() === 0;
+    }
+    
+    reachesPlayerRow(playerY) {
+        const aliveEnemies = this.enemies.filter(e => e.active);
+        if (aliveEnemies.length === 0) return false;
         
-        return { destroyed: false };
-    }
-    
-    getRandomFireTarget() {
-        if (this.enemies.length === 0) return null;
-        return this.enemies[Math.floor(Math.random() * this.enemies.length)];
-    }
-    
-    isEmpty() {
-        return this.enemies.length === 0;
-    }
-    
-    getEnemyCount() {
-        return this.enemies.length;
+        const lowestEnemy = Math.max(...aliveEnemies.map(e => e.y + CONFIG.ENEMY_HEIGHT));
+        return lowestEnemy >= playerY - 20;
     }
     
     draw(ctx) {
         this.enemies.forEach(enemy => {
-            const centerX = enemy.x + enemy.width / 2;
-            const centerY = enemy.y + enemy.height / 2;
-            
-            // Calculate pulse for idle animation
-            const pulse = 1 + 0.1 * Math.sin(enemy.pulsePhase);
-            const drawWidth = enemy.width * pulse;
-            const drawHeight = enemy.height * pulse;
-            const offsetX = (enemy.width - drawWidth) / 2;
-            const offsetY = (enemy.height - drawHeight) / 2;
-            
-            ctx.save();
-            
-            // Glow effect
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = enemy.hitFlashTime > 0 ? '#ffffff' : enemy.color;
-            
-            // Draw based on type
-            if (enemy.hitFlashTime > 0) {
-                ctx.fillStyle = '#ffffff';
-            } else {
-                ctx.fillStyle = enemy.color;
+            if (enemy.active) {
+                enemy.draw(ctx);
             }
-            
-            switch (enemy.type) {
-                case 'A': // Drone - diamond
-                    ctx.beginPath();
-                    ctx.moveTo(centerX, enemy.y + offsetY);
-                    ctx.lineTo(enemy.x + drawWidth + offsetX, centerY);
-                    ctx.lineTo(centerX, enemy.y + drawHeight + offsetY);
-                    ctx.lineTo(enemy.x + offsetX, centerY);
-                    ctx.closePath();
-                    ctx.fill();
-                    break;
-                    
-                case 'B': // Tank - hexagon
-                    ctx.beginPath();
-                    ctx.moveTo(centerX - drawWidth / 2, centerY - drawHeight / 3);
-                    ctx.lineTo(centerX + drawWidth / 2, centerY - drawHeight / 3);
-                    ctx.lineTo(centerX + drawWidth / 2, centerY + drawHeight / 3);
-                    ctx.lineTo(centerX, centerY + drawHeight / 2);
-                    ctx.lineTo(centerX - drawWidth / 2, centerY + drawHeight / 3);
-                    ctx.closePath();
-                    ctx.fill();
-                    break;
-                    
-                case 'C': // Scout - triangle with jitter
-                    const jitterX = (Math.random() - 0.5) * 2;
-                    ctx.beginPath();
-                    ctx.moveTo(centerX + jitterX, enemy.y + offsetY);
-                    ctx.lineTo(enemy.x + drawWidth + offsetX, enemy.y + drawHeight + offsetY);
-                    ctx.lineTo(enemy.x + offsetX, enemy.y + drawHeight + offsetY);
-                    ctx.closePath();
-                    ctx.fill();
-                    break;
-            }
-            
-            ctx.restore();
         });
     }
     
-    reset() {
-        this.enemies = [];
+    getBounds() {
+        const aliveEnemies = this.enemies.filter(e => e.active);
+        if (aliveEnemies.length === 0) return null;
+        
+        let minX = Infinity, minY = Infinity;
+        let maxX = -Infinity, maxY = -Infinity;
+        
+        aliveEnemies.forEach(e => {
+            minX = Math.min(minX, e.x);
+            minY = Math.min(minY, e.y);
+            maxX = Math.max(maxX, e.x + CONFIG.ENEMY_WIDTH);
+            maxY = Math.max(maxY, e.y + CONFIG.ENEMY_HEIGHT);
+        });
+        
+        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     }
 }

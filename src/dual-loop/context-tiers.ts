@@ -10,8 +10,8 @@
  *     prompt size, never on runtime prediction.
  *   - FastLoop and Coder use independent calls (no KV reuse), so per-call
  *     resizing is free.
- *   - DeepLoop uses multi-turn ReAct (KV reuse across turns), so the tier
- *     is set once at task start and never changed mid-task.
+ *   - DeepLoop uses multi-turn tool calling (KV reuse across turns), so
+ *     the tier is set once at task start and never changed mid-task.
  *
  * See docs/dual-loop-architecture.md Section 28.
  */
@@ -152,7 +152,7 @@ export function selectFastTier(operation: FastOperation): ContextTier {
 
 /**
  * Select the context tier for a DeepLoop task.
- * Set once at task start — never changed mid-ReAct-loop.
+ * Set once at task start — never changed mid-tool-loop.
  */
 export function selectDeepTier(task: Task): ContextTier {
   // Resumed parked tasks had significant context built up.

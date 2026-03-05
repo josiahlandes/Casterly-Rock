@@ -1,25 +1,32 @@
-// Level Manager for progression and wave definitions
-export default class LevelManager {
-    constructor(audioController) {
-        this.audioController = audioController;
+// Levels - Level progression and wave definitions
+import { CONFIG } from './config.js';
+
+export class LevelManager {
+    constructor() {
         this.currentLevel = 1;
-        this.maxLevel = 100;
-        this.transitionTime = 2000;
-        this.transitionTimer = 0;
+        this.transitionTime = 0;
         this.inTransition = false;
+        this.transitionMessage = '';
     }
     
-    startLevel(level) {
-        this.currentLevel = level;
+    startNextLevel() {
+        this.currentLevel++;
         this.inTransition = true;
-        this.transitionTimer = this.transitionTime;
-        this.audioController.playLevelComplete();
+        this.transitionTime = CONFIG.LEVEL_TRANSITION_TIME;
+        this.transitionMessage = `LEVEL ${this.currentLevel}`;
+    }
+    
+    startInitialLevel() {
+        this.currentLevel = 1;
+        this.inTransition = true;
+        this.transitionTime = CONFIG.LEVEL_TRANSITION_TIME;
+        this.transitionMessage = 'LEVEL 1';
     }
     
     update(dt) {
         if (this.inTransition) {
-            this.transitionTimer -= dt;
-            if (this.transitionTimer <= 0) {
+            this.transitionTime -= dt;
+            if (this.transitionTime <= 0) {
                 this.inTransition = false;
                 return true; // Transition complete
             }
@@ -27,36 +34,30 @@ export default class LevelManager {
         return false;
     }
     
-    getTransitionProgress() {
-        if (!this.inTransition) return 1;
-        return 1 - (this.transitionTimer / this.transitionTime);
-    }
-    
     isTransitioning() {
         return this.inTransition;
     }
     
-    getNextLevel() {
-        return Math.min(this.currentLevel + 1, this.maxLevel);
+    getTransitionMessage() {
+        return this.transitionMessage;
     }
     
     getCurrentLevel() {
         return this.currentLevel;
     }
     
-    getStartY() {
-        // Each level starts 10px lower, clamped to minimum 20px
-        return Math.max(20, 60 - (this.currentLevel - 1) * 10);
+    getStartingY() {
+        // Each level starts one row lower
+        return CONFIG.ENEMY_START_Y + (this.currentLevel - 1) * CONFIG.LEVEL_START_Y_OFFSET;
     }
     
-    getFireMultiplier() {
-        // Every 5 levels, enemies fire 50% more
-        return Math.floor(this.currentLevel / 5) > 0 ? 1.5 : 1.0;
+    isBonusFrequencyLevel() {
+        return this.currentLevel % CONFIG.LEVEL_BONUS_FREQUENCY === 0;
     }
     
     reset() {
         this.currentLevel = 1;
         this.inTransition = false;
-        this.transitionTimer = 0;
+        this.transitionTime = 0;
     }
 }

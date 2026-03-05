@@ -108,13 +108,15 @@ const HARD_SIGNALS = [
   'performance', 'optimization', 'security', 'encryption', 'parsing',
   'state machine', 'recursive', 'graph', 'tree traversal', 'async',
   'streaming', 'protocol', 'binary', 'encoding', 'unicode',
+  // Multi-file / greenfield project signals
+  'build a complete', 'complete game', 'complete project', 'from scratch',
+  'every file', 'file structure', 'multiple files', 'multi-file',
 ];
 
-/** Keywords that signal lower difficulty. */
+/** Keywords that signal lower difficulty (only match when they describe the TASK, not the spec). */
 const EASY_SIGNALS = [
-  'rename', 'typo', 'comment', 'formatting', 'import', 'export',
-  'type annotation', 'interface', 'constant', 'config', 'string',
-  'simple', 'straightforward', 'minor',
+  'rename', 'typo', 'comment', 'formatting',
+  'type annotation', 'straightforward', 'minor',
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

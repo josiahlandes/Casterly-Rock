@@ -1,268 +1,267 @@
-// HUD System - Score, Lives, Level, Shield Bar, Combo Display
+// HUD - Score, lives, level, shield bar, combo display
+import { CONFIG } from './config.js';
 
-import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, PLAYER, COMBO, ANIMATION } from './config.js';
-import { HIGH_SCORE_KEY } from './config.js';
-
-class HUD {
+export class HUD {
     constructor() {
         this.score = 0;
         this.highScore = this.loadHighScore();
-        this.lives = PLAYER.shieldMax;
+        this.lives = CONFIG.SHIELD_MAX;
         this.level = 1;
         this.combo = 0;
-        this.comboTimer = 0;
         this.comboMultiplier = 1;
-        
-        // Score pop animation
-        this.scorePopTimer = 0;
-        this.scorePopScale = 1;
-        
-        // Combo flash text
-        this.comboFlashText = '';
-        this.comboFlashTimer = 0;
+        this.lastScore = 0;
+        this.scorePopTime = 0;
+        this.comboText = '';
+        this.comboTextTime = 0;
+        this.shieldFlashTime = 0;
     }
     
     loadHighScore() {
-        const saved = localStorage.getItem(HIGH_SCORE_KEY);
+        const saved = localStorage.getItem(CONFIG.HIGHSCORE_KEY);
         return saved ? parseInt(saved, 10) : 0;
     }
     
     saveHighScore() {
         if (this.score > this.highScore) {
             this.highScore = this.score;
-            localStorage.setItem(HIGH_SCORE_KEY, this.highScore.toString());
+            localStorage.setItem(CONFIG.HIGHSCORE_KEY, this.highScore.toString());
         }
     }
     
-    reset() {
-        this.score = 0;
-        this.lives = PLAYER.shieldMax;
-        this.level = 1;
-        this.combo = 0;
-        this.comboTimer = 0;
-        this.comboMultiplier = 1;
-        this.scorePopTimer = 0;
-        this.comboFlashTimer = 0;
-    }
-    
-    addScore(basePoints) {
-        const points = basePoints * this.comboMultiplier;
+    addScore(basePoints, multiplier) {
+        const points = basePoints * multiplier;
         this.score += points;
-        this.scorePopTimer = ANIMATION.scorePopDuration;
-        this.saveHighScore();
-    }
-    
-    updateCombo(killed) {
-        if (killed) {
-            this.combo++;
-            this.comboTimer = COMBO.maxTime;
-            
-            // Update multiplier
-            const newMultiplier = Math.min(this.combo, COMBO.maxMultiplier);
-            if (newMultiplier > this.comboMultiplier) {
-                this.comboMultiplier = newMultiplier;
-                this.showComboFlash(newMultiplier);
-            }
-        } else {
-            this.comboTimer -= 0.016; // Approximate dt
-            if (this.comboTimer <= 0) {
-                this.combo = 0;
-                this.comboMultiplier = 1;
-            }
+        this.lastScore = points;
+        this.scorePopTime = CONFIG.SCORE_POP_TIME;
+        
+        if (this.score > this.highScore) {
+            this.highScore = this.score;
+            localStorage.setItem(CONFIG.HIGHSCORE_KEY, this.highScore.toString());
         }
     }
     
-    showComboFlash(multiplier) {
-        this.comboFlashText = `x${multiplier} COMBO!`;
-        this.comboFlashTimer = 1.0;
+    updateCombo() {
+        if (this.combo > 1) {
+            this.comboText = `x${this.combo} COMBO!`;
+            this.comboTextTime = CONFIG.COMBO_TEXT_TIME;
+        }
+    }
+    
+    resetCombo() {
+        this.combo = 0;
+        this.comboMultiplier = 1;
+        this.comboText = '';
+    }
+    
+    incrementCombo() {
+        if (this.combo < CONFIG.MAX_COMBO) {
+            this.combo++;
+            this.comboMultiplier = this.combo;
+        } else {
+            this.comboMultiplier = CONFIG.MAX_COMBO;
+        }
+        this.updateCombo();
     }
     
     update(dt) {
-        // Update score pop animation
-        if (this.scorePopTimer > 0) {
-            this.scorePopTimer -= dt;
-            const progress = this.scorePopTimer / ANIMATION.scorePopDuration;
-            this.scorePopScale = 1 + (1 - progress) * (ANIMATION.scorePopScale - 1);
-        } else {
-            this.scorePopScale = 1;
+        if (this.scorePopTime > 0) {
+            this.scorePopTime -= dt;
         }
-        
-        // Update combo timer
-        if (this.comboTimer > 0) {
-            this.comboTimer -= dt;
-            if (this.comboTimer <= 0) {
-                this.combo = 0;
-                this.comboMultiplier = 1;
+        if (this.comboTextTime > 0) {
+            this.comboTextTime -= dt;
+            if (this.comboTextTime <= 0) {
+                this.comboText = '';
             }
         }
-        
-        // Update combo flash text
-        if (this.comboFlashTimer > 0) {
-            this.comboFlashTimer -= dt;
+        if (this.shieldFlashTime > 0) {
+            this.shieldFlashTime -= dt;
         }
+    }
+    
+    hit() {
+        this.lives--;
+        this.shieldFlashTime = CONFIG.SHIELD_FLASH_TIME;
+        this.resetCombo();
+    }
+    
+    addShield() {
+        if (this.lives < CONFIG.SHIELD_MAX) {
+            this.lives++;
+            return true;
+        }
+        return false;
     }
     
     setLevel(level) {
         this.level = level;
     }
     
-    setLives(lives) {
-        this.lives = lives;
-    }
-    
     draw(ctx) {
-        this.drawScore(ctx);
-        this.drawLevel(ctx);
-        this.drawLives(ctx);
-        this.drawShieldBar(ctx);
-        this.drawCombo(ctx);
-        this.drawComboFlash(ctx);
-    }
-    
-    drawScore(ctx) {
-        ctx.save();
-        
-        // Glow effect
-        ctx.shadowBlur = ANIMATION.glowBlur;
-        ctx.shadowColor = COLORS.hudText;
-        
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = 'bold 20px Courier New';
+        ctx.font = '16px Courier New';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         
-        // Apply pop scale
-        ctx.translate(20, 20);
-        ctx.scale(this.scorePopScale, this.scorePopScale);
-        
-        ctx.fillText(`SCORE: ${this.score.toString().padStart(6, '0')}`, 0, 0);
-        
-        ctx.restore();
-    }
-    
-    drawLevel(ctx) {
+        // Score with pop animation
+        const scale = this.scorePopTime > 0 ? 1 + this.scorePopTime / CONFIG.SCORE_POP_TIME : 1;
         ctx.save();
-        
-        ctx.shadowBlur = ANIMATION.glowBlur;
-        ctx.shadowColor = COLORS.hudText;
-        
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = 'bold 20px Courier New';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        
-        ctx.fillText(`LEVEL ${this.level}`, CANVAS_WIDTH / 2, 20);
-        
+        ctx.translate(20, 10);
+        ctx.scale(scale, scale);
+        ctx.fillStyle = CONFIG.COLORS.PLAYER;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = CONFIG.COLORS.PLAYER;
+        ctx.fillText(`SCORE: ${this.score}`, 0, 0);
         ctx.restore();
-    }
-    
-    drawLives(ctx) {
-        ctx.save();
         
-        ctx.shadowBlur = ANIMATION.glowBlur;
-        ctx.shadowColor = COLORS.hudText;
+        // High score
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowBlur = 0;
+        ctx.fillText(`HI: ${this.highScore}`, 20, 30);
         
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = 'bold 20px Courier New';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'top';
+        // Level
+        ctx.fillStyle = CONFIG.COLORS.PLAYER;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = CONFIG.COLORS.PLAYER;
+        ctx.fillText(`LEVEL: ${this.level}`, CONFIG.CANVAS_WIDTH / 2 - 40, 10);
         
-        ctx.fillText(`LIVES: ${this.lives}`, CANVAS_WIDTH - 20, 20);
+        // Shield bar
+        this.drawShieldBar(ctx);
         
-        ctx.restore();
+        // Combo display
+        if (this.comboTextTime > 0) {
+            this.drawCombo(ctx);
+        }
     }
     
     drawShieldBar(ctx) {
-        const barWidth = 100;
-        const barHeight = 10;
-        const barX = CANVAS_WIDTH / 2 - barWidth / 2;
-        const barY = 55;
+        const barWidth = 150;
+        const barHeight = 12;
+        const x = CONFIG.CANVAS_WIDTH - barWidth - 20;
+        const y = 10;
         
         // Background
-        ctx.save();
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fillRect(x, y, barWidth, barHeight);
         
-        // Gradient fill
-        const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
-        gradient.addColorStop(0, COLORS.shieldBarStart);
-        gradient.addColorStop(1, COLORS.shieldBarEnd);
+        // Shield segments
+        const segmentWidth = barWidth / CONFIG.SHIELD_MAX;
+        for (let i = 0; i < CONFIG.SHIELD_MAX; i++) {
+            const alpha = this.shieldFlashTime > 0 && i >= this.lives ? 
+                (Math.sin(Date.now() / 50) > 0 ? 0.3 : 1) : 1;
+            
+            if (i < this.lives) {
+                // Gradient from cyan to magenta
+                const gradient = ctx.createLinearGradient(x + i * segmentWidth, y, x + (i + 1) * segmentWidth, y);
+                gradient.addColorStop(0, CONFIG.COLORS.PLAYER);
+                gradient.addColorStop(1, CONFIG.COLORS.ENEMY_A);
+                
+                ctx.globalAlpha = alpha;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = CONFIG.COLORS.PLAYER;
+                ctx.fillStyle = gradient;
+                ctx.fillRect(x + i * segmentWidth + 1, y + 1, segmentWidth - 2, barHeight - 2);
+                ctx.globalAlpha = 1;
+            }
+        }
         
-        ctx.fillStyle = gradient;
-        const fillWidth = (this.lives / PLAYER.shieldMax) * barWidth;
-        ctx.fillRect(barX, barY, fillWidth, barHeight);
-        
-        // Border
-        ctx.strokeStyle = COLORS.hudText;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(barX, barY, barWidth, barHeight);
-        
-        ctx.restore();
+        ctx.shadowBlur = 0;
         
         // Label
-        ctx.save();
-        ctx.shadowBlur = ANIMATION.glowBlur;
-        ctx.shadowColor = COLORS.hudText;
-        
-        ctx.fillStyle = COLORS.hudText;
+        ctx.fillStyle = '#ffffff';
         ctx.font = '12px Courier New';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('SHIELD', CANVAS_WIDTH / 2, barY + barHeight + 12);
-        
-        ctx.restore();
+        ctx.textAlign = 'right';
+        ctx.fillText('SHIELD', x - 10, y + barHeight / 2 + 4);
     }
     
     drawCombo(ctx) {
-        if (this.combo <= 1) return;
-        
         ctx.save();
+        ctx.translate(CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2);
         
-        const alpha = Math.min(1, this.comboTimer / 0.5);
-        ctx.globalAlpha = alpha;
+        const scale = 1 + Math.sin(this.comboTextTime * 5) * 0.2;
+        ctx.scale(scale, scale);
         
-        ctx.shadowBlur = ANIMATION.glowBlur;
-        ctx.shadowColor = COLORS.powerup;
+        const text = this.comboText;
+        const width = ctx.measureText(text).width;
         
-        ctx.fillStyle = COLORS.powerup;
-        ctx.font = 'bold 16px Courier New';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'top';
-        
-        ctx.fillText(`x${this.comboMultiplier} COMBO`, CANVAS_WIDTH - 20, 50);
-        
-        ctx.restore();
-    }
-    
-    drawComboFlash(ctx) {
-        if (this.comboFlashTimer <= 0) return;
-        
-        ctx.save();
-        
-        const alpha = this.comboFlashTimer;
-        ctx.globalAlpha = alpha;
-        
-        // Glow effect
-        ctx.shadowBlur = 30;
-        ctx.shadowColor = COLORS.powerup;
-        
-        ctx.fillStyle = COLORS.powerup;
         ctx.font = 'bold 48px Courier New';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         
-        ctx.fillText(this.comboFlashText, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 50);
+        // Glow
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = CONFIG.COLORS.POWERUP;
+        ctx.fillStyle = CONFIG.COLORS.COMBO_TEXT;
+        ctx.fillText(text, 0, 0);
         
         ctx.restore();
     }
     
-    getScore() {
-        return this.score;
+    drawGameOver(ctx) {
+        ctx.save();
+        
+        // Flash effect
+        ctx.fillStyle = `rgba(255, 255, 255, ${this.shieldFlashTime})`;
+        ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+        
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // Game Over text
+        ctx.font = 'bold 64px Courier New';
+        ctx.shadowBlur = 30;
+        ctx.shadowColor = CONFIG.COLORS.ENEMY_A;
+        ctx.fillStyle = CONFIG.COLORS.ENEMY_A;
+        ctx.fillText('GAME OVER', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 - 60);
+        
+        // Final score
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = CONFIG.COLORS.PLAYER;
+        ctx.fillStyle = CONFIG.COLORS.PLAYER;
+        ctx.font = '32px Courier New';
+        ctx.fillText(`Final Score: ${this.score}`, CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 10);
+        
+        // Level reached
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '24px Courier New';
+        ctx.fillText(`Level: ${this.level}`, CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 50);
+        
+        // Restart prompt
+        ctx.font = '20px Courier New';
+        ctx.fillStyle = '#00fff5';
+        ctx.fillText('Press ENTER to restart', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 100);
+        
+        ctx.restore();
     }
     
-    getHighScore() {
-        return this.highScore;
+    drawLevelTransition(ctx, levelManager) {
+        ctx.save();
+
+        const transitionTime = levelManager.transitionTime;
+        const message = levelManager.transitionMessage || `LEVEL ${levelManager.getCurrentLevel()}`;
+
+        // Fade effect
+        const alpha = Math.sin((CONFIG.LEVEL_TRANSITION_TIME - transitionTime) / CONFIG.LEVEL_TRANSITION_TIME * Math.PI);
+        ctx.fillStyle = `rgba(0, 0, 0, ${1 - alpha})`;
+        ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+        ctx.fillStyle = CONFIG.COLORS.PLAYER;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 64px Courier New';
+        ctx.shadowBlur = 30;
+        ctx.shadowColor = CONFIG.COLORS.PLAYER;
+        ctx.fillText(message, CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2);
+
+        ctx.restore();
+    }
+    
+    reset() {
+        this.score = 0;
+        this.lives = CONFIG.SHIELD_MAX;
+        this.level = 1;
+        this.resetCombo();
+        this.scorePopTime = 0;
+        this.comboTextTime = 0;
+        this.shieldFlashTime = 0;
     }
 }
-
-export default HUD;

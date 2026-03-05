@@ -3,7 +3,7 @@
  *
  * The DeepLoop (122B) self-reviews its own output before marking
  * tasks as complete. The review is a single structured-output call
- * (not a ReAct tool loop) that runs after implementation.
+ * (not an iterative tool loop) that runs after implementation.
  *
  * See docs/dual-loop-architecture.md Section 5.4 and Section 4 (Phase 4).
  */
@@ -108,7 +108,7 @@ Respond with a JSON object:
 ];
 
 /**
- * System prompt for the ReAct integration review pass.
+ * System prompt for the tool-calling integration review pass.
  * This pass uses tool calls (validate_project, read_file) to verify
  * cross-module wiring before final approval.
  *

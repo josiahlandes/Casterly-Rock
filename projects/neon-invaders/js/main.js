@@ -1,17 +1,24 @@
-// Main Game Entry Point - Game Loop, State Machine, Module Integration
-
-import { CANVAS_WIDTH, CANVAS_HEIGHT, STATES, PLAYER, HIGH_SCORE_KEY, COLORS } from './config.js';
-import InputHandler from './input.js';
-import Background from './background.js';
-import ParticleSystem from './particles.js';
-import Player from './player.js';
-import EnemyGrid from './enemies.js';
-import ProjectileManager from './projectiles.js';
-import PowerUpManager from './powerups.js';
-import LevelManager from './levels.js';
-import HUD from './hud.js';
-import audio from './audio.js';
+// Main - Game loop, state machine, entry point
+import { CONFIG } from './config.js';
+import { InputHandler } from './input.js';
+import { AudioHandler } from './audio.js';
+import { Background } from './background.js';
+import { ParticleSystem } from './particles.js';
+import { ProjectileManager } from './projectiles.js';
+import { EnemyGrid } from './enemies.js';
+import { Player } from './player.js';
+import { PowerUpManager } from './powerups.js';
+import { LevelManager } from './levels.js';
+import { HUD } from './hud.js';
 import { checkCollision } from './collision.js';
+
+// Game states
+const STATE = {
+    MENU: 'menu',
+    PLAYING: 'playing',
+    LEVEL_TRANSITION: 'levelTransition',
+    GAME_OVER: 'gameOver'
+};
 
 class Game {
     constructor() {
@@ -20,301 +27,389 @@ class Game {
         
         // Initialize systems
         this.input = new InputHandler();
-        this.background = new Background();
+        this.audio = new AudioHandler();
+        this.background = new Background(CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
         this.particles = new ParticleSystem();
-        this.player = new Player(0, 0);
-        this.enemyGrid = new EnemyGrid();
         this.projectiles = new ProjectileManager();
+        this.enemies = new EnemyGrid();
+        this.player = new Player(
+            CONFIG.CANVAS_WIDTH / 2 - CONFIG.PLAYER_WIDTH / 2,
+            CONFIG.CANVAS_HEIGHT - 60
+        );
         this.powerups = new PowerUpManager();
         this.levelManager = new LevelManager();
         this.hud = new HUD();
         
         // Game state
-        this.state = STATES.MENU;
-        this.time = 0;
+        this.state = STATE.MENU;
         this.lastTime = 0;
+        this.comboTimer = 0;
+        this.flashTime = 0;
         
         // Bind methods
         this.loop = this.loop.bind(this);
         
-        // Start the game loop
+        // Handle window focus
+        window.addEventListener('focus', () => {
+            this.audio.enable();
+        });
+    }
+    
+    start() {
+        this.lastTime = performance.now();
         requestAnimationFrame(this.loop);
     }
     
-    startGame() {
-        this.hud.reset();
-        this.levelManager.startLevel(1);
-        this.player.reset(CANVAS_WIDTH / 2 - PLAYER.width / 2, CANVAS_HEIGHT - 60);
-        this.enemyGrid.spawn(1);
-        this.projectiles.clear();
-        this.powerups.clear();
-        this.particles.clear();
-        this.state = STATES.PLAYING;
-        audio.playLevelComplete();
-    }
-    
-    restartGame() {
-        this.startGame();
+    loop(currentTime) {
+        const dt = Math.min((currentTime - this.lastTime) / 1000, 0.05);
+        this.lastTime = currentTime;
+        
+        this.update(dt);
+        this.draw();
+        
+        requestAnimationFrame(this.loop);
     }
     
     update(dt) {
-        this.time += dt;
+        // Update background
+        this.background.update(dt);
         
         switch (this.state) {
-            case STATES.MENU:
+            case STATE.MENU:
                 this.updateMenu(dt);
                 break;
-                
-            case STATES.PLAYING:
+            case STATE.PLAYING:
                 this.updatePlaying(dt);
                 break;
-                
-            case STATES.LEVEL_TRANSITION:
+            case STATE.LEVEL_TRANSITION:
                 this.updateLevelTransition(dt);
                 break;
-                
-            case STATES.GAME_OVER:
+            case STATE.GAME_OVER:
                 this.updateGameOver(dt);
                 break;
         }
         
-        this.background.update(dt, this.time);
+        // Update particles
         this.particles.update(dt);
+        
+        // Update flash
+        if (this.flashTime > 0) {
+            this.flashTime -= dt;
+        }
     }
     
     updateMenu(dt) {
-        // Update background for visual interest
-        
-        // Start game on Enter
-        if (this.input.isStarting()) {
-            audio.resume();
+        if (this.input.isStart()) {
+            this.audio.enable();
+            this.audio.playLevelComplete();
             this.startGame();
         }
     }
     
+    startGame() {
+        this.hud.reset();
+        this.levelManager.startInitialLevel();
+        this.player.reset();
+        this.projectiles.clear();
+        this.particles.clear();
+        this.powerups.clear();
+        this.comboTimer = 0;
+        
+        this.enemies.spawn(1);
+        this.state = STATE.LEVEL_TRANSITION;
+    }
+    
     updatePlaying(dt) {
         // Update player
-        this.player.update(dt, this.input, this.particles);
+        this.player.update(dt, this.input);
         
-        // Update enemy grid
-        const allDestroyed = this.enemyGrid.update(dt, this.time, this.levelManager.getCurrentLevel());
-        
-        // Check if all enemies destroyed
-        if (allDestroyed) {
-            this.levelManager.nextLevel();
-            this.state = STATES.LEVEL_TRANSITION;
-            audio.playLevelComplete();
-            return;
+        // Player shooting
+        if (this.input.isShoot() && this.player.shoot()) {
+            this.audio.playShoot();
+            
+            const bulletX = this.player.x + this.player.width / 2;
+            const bulletY = this.player.y;
+            
+            if (this.player.hasSpreadShot()) {
+                this.projectiles.createSpreadBullets(bulletX, bulletY);
+            } else {
+                this.projectiles.createPlayerBullet(bulletX, bulletY);
+            }
         }
         
         // Update projectiles
         this.projectiles.update(dt);
         
+        // Update enemies
+        const level = this.levelManager.getCurrentLevel();
+        this.enemies.update(dt, level);
+        
+        // Enemy shooting (consume queued shooter from timer)
+        const shooter = this.enemies.consumeShooter();
+        if (shooter) {
+            this.audio.playEnemyShoot();
+            this.projectiles.createEnemyBullet(
+                shooter.x + CONFIG.ENEMY_WIDTH / 2,
+                shooter.y
+            );
+        }
+        
         // Update power-ups
         this.powerups.update(dt);
         
-        // Check player bullet collisions with enemies
-        const playerBullets = this.player.getBulletRects();
-        const hits = this.enemyGrid.checkBulletCollisions(playerBullets);
-        
-        hits.forEach(hit => {
-            // Remove hit bullet
-            if (hit.bulletIndex < playerBullets.length) {
-                this.player.bullets.splice(hit.bulletIndex, 1);
-            }
-            
-            // Create explosion
-            const enemy = hit.enemy;
-            this.particles.createExplosion(
-                enemy.x + enemy.width / 2,
-                enemy.y + enemy.height / 2,
-                enemy.color
-            );
-            
-            // Add score with combo
-            this.hud.addScore(hit.points);
-            this.hud.updateCombo(true);
-            
-            // Spawn power-up
-            this.powerups.spawn(
-                enemy.x + enemy.width / 2,
-                enemy.y + enemy.height / 2
-            );
-        });
-        
-        // Check enemy bullet collisions with player
-        const enemyBullets = this.projectiles.getEnemyProjectiles();
-        const playerRect = {
-            x: this.player.x,
-            y: this.player.y,
-            width: this.player.width,
-            height: this.player.height
-        };
-        
-        for (let i = enemyBullets.length - 1; i >= 0; i--) {
-            const bullet = enemyBullets[i];
-            const bulletRect = bullet.getRect();
-            
-            if (checkCollision(playerRect, bulletRect)) {
-                // Remove bullet
-                this.projectiles.getAllProjectiles().splice(
-                    this.projectiles.getAllProjectiles().indexOf(bullet), 1
-                );
-                
-                // Create impact effect
-                this.particles.createImpact(bullet.x, bullet.y, COLORS.enemyBullet);
-                
-                // Damage player
-                if (this.player.takeDamage()) {
-                    this.triggerGameOver();
-                } else {
-                    audio.playPlayerHit();
-                    this.hud.setLives(this.player.shield);
-                }
-                
-                break;
+        // Update combo timer
+        if (this.comboTimer > 0) {
+            this.comboTimer -= dt;
+            if (this.comboTimer <= 0) {
+                this.hud.resetCombo();
             }
         }
         
-        // Check power-up collection
-        const powerupType = this.powerups.checkPlayerCollision(this.player);
-        if (powerupType) {
-            this.player.applyPowerup(powerupType);
-            this.particles.createPowerupCollect(
-                this.player.x + this.player.width / 2,
-                this.player.y + this.player.height / 2
-            );
-            audio.playPowerupCollect();
+        // Check collisions
+        this.checkCollisions();
+        
+        // Check level complete
+        if (this.enemies.isCleared()) {
+            this.audio.playLevelComplete();
+            this.levelManager.startNextLevel();
+            this.state = STATE.LEVEL_TRANSITION;
+            this.hud.setLevel(this.levelManager.getCurrentLevel());
         }
         
-        // Check enemy collision with player
-        if (this.enemyGrid.checkPlayerCollision(this.player)) {
-            if (this.player.takeDamage()) {
-                this.triggerGameOver();
-            } else {
-                audio.playPlayerHit();
-                this.hud.setLives(this.player.shield);
-            }
-        }
-        
-        // Check if enemies reached player row
-        if (this.enemyGrid.getBottomEdge() >= this.player.y) {
-            this.triggerGameOver();
+        // Check if enemies reached player
+        if (this.enemies.reachesPlayerRow(this.player.y)) {
+            this.gameOver();
         }
         
         // Update HUD
         this.hud.update(dt);
-        this.hud.updateCombo(false); // Decrement combo timer
     }
     
     updateLevelTransition(dt) {
-        const complete = this.levelManager.update(dt);
-        
-        if (complete) {
-            this.state = STATES.PLAYING;
-            this.player.reset(CANVAS_WIDTH / 2 - PLAYER.width / 2, CANVAS_HEIGHT - 60);
-            this.enemyGrid.spawn(this.levelManager.getCurrentLevel());
-            this.projectiles.clear();
-            this.powerups.clear();
-            this.hud.setLevel(this.levelManager.getCurrentLevel());
+        if (this.levelManager.update(dt)) {
+            // Transition complete, spawn next wave
+            this.enemies.spawn(this.levelManager.getCurrentLevel());
+            this.state = STATE.PLAYING;
         }
     }
     
     updateGameOver(dt) {
-        if (this.input.isStarting()) {
-            this.restartGame();
+        if (this.input.isRestart()) {
+            this.hud.reset();
+            this.levelManager.startInitialLevel();
+            this.player.reset();
+            this.projectiles.clear();
+            this.particles.clear();
+            this.powerups.clear();
+            this.comboTimer = 0;
+            this.enemies.spawn(1);
+            this.state = STATE.LEVEL_TRANSITION;
         }
     }
     
-    triggerGameOver() {
-        this.state = STATES.GAME_OVER;
-        audio.playGameOver();
-        this.particles.createExplosion(
-            this.player.x + this.player.width / 2,
-            this.player.y + this.player.height / 2,
-            COLORS.player
-        );
+    checkCollisions() {
+        const playerBounds = this.player.getBounds();
+        
+        // Player bullets vs enemies
+        const playerProjectiles = this.projectiles.getPlayerProjectiles();
+        for (let i = playerProjectiles.length - 1; i >= 0; i--) {
+            const bullet = playerProjectiles[i];
+            const bulletBounds = bullet.getBounds();
+            
+            for (const enemy of this.enemies.enemies) {
+                if (!enemy.active) continue;
+                
+                const enemyBounds = enemy.getBounds();
+                if (checkCollision(bulletBounds, enemyBounds)) {
+                    bullet.active = false;
+                    this.particles.createImpact(
+                        bullet.x, bullet.y, bullet.color
+                    );
+                    
+                    const destroyed = this.enemies.hitEnemy(enemy);
+                    if (destroyed) {
+                        this.audio.playEnemyDestroyed();
+                        this.particles.createExplosion(
+                            enemy.x + CONFIG.ENEMY_WIDTH / 2,
+                            enemy.y + CONFIG.ENEMY_HEIGHT / 2,
+                            enemy.color
+                        );
+                        
+                        // Add score with combo
+                        this.hud.incrementCombo();
+                        this.hud.addScore(enemy.points, this.hud.comboMultiplier);
+                        this.comboTimer = CONFIG.COMBO_WINDOW;
+                        
+                        // Drop power-up
+                        this.powerups.createDrop(
+                            enemy.x + CONFIG.ENEMY_WIDTH / 2,
+                            enemy.y + CONFIG.ENEMY_HEIGHT / 2
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Enemy bullets vs player
+        const enemyProjectiles = this.projectiles.getEnemyProjectiles();
+        for (const bullet of enemyProjectiles) {
+            const bulletBounds = bullet.getBounds();
+            if (checkCollision(bulletBounds, playerBounds)) {
+                if (!this.player.isInvulnerable()) {
+                    bullet.active = false;
+                    this.particles.createImpact(
+                        bullet.x, bullet.y, bullet.color
+                    );
+                    
+                    this.audio.playPlayerHit();
+                    this.hud.hit();
+                    if (this.player.hit()) {
+                        this.gameOver();
+                    }
+                }
+            }
+        }
+
+        // Player vs power-ups
+        const activePowerups = this.powerups.getActive();
+        for (const powerup of activePowerups) {
+            const powerupBounds = powerup.getBounds();
+            if (checkCollision(playerBounds, powerupBounds)) {
+                powerup.collect();
+                this.audio.playPowerupCollect();
+                this.particles.createPowerupCollect(
+                    powerup.x + CONFIG.POWERUP_WIDTH / 2,
+                    powerup.y + CONFIG.POWERUP_HEIGHT / 2
+                );
+                
+                // Apply power-up effect
+                switch (powerup.type) {
+                    case 'R':
+                        this.player.activateRapidFire();
+                        break;
+                    case 'S':
+                        this.player.addShield();
+                        this.hud.addShield();
+                        break;
+                    case 'W':
+                        this.player.activateSpreadShot();
+                        break;
+                }
+            }
+        }
+        
+        // Enemy collisions with player
+        for (const enemy of this.enemies.enemies) {
+            if (!enemy.active) continue;
+            
+            const enemyBounds = enemy.getBounds();
+            if (checkCollision(enemyBounds, playerBounds)) {
+                if (!this.player.isInvulnerable()) {
+                    this.particles.createExplosion(
+                        enemy.x + CONFIG.ENEMY_WIDTH / 2,
+                        enemy.y + CONFIG.ENEMY_HEIGHT / 2,
+                        enemy.color
+                    );
+                    enemy.active = false;
+                    
+                    if (this.player.hit()) {
+                        this.audio.playPlayerHit();
+                        this.hud.hit();
+                        this.gameOver();
+                    }
+                }
+            }
+        }
+    }
+    
+    gameOver() {
+        this.audio.playGameOver();
+        this.hud.saveHighScore();
+        this.flashTime = 0.3;
+        this.state = STATE.GAME_OVER;
     }
     
     draw() {
         // Clear canvas
-        this.ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        this.ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
+        this.ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
         
         // Draw background
         this.background.draw(this.ctx);
         
         switch (this.state) {
-            case STATES.MENU:
+            case STATE.MENU:
                 this.drawMenu();
                 break;
-                
-            case STATES.PLAYING:
+            case STATE.PLAYING:
                 this.drawPlaying();
                 break;
-                
-            case STATES.LEVEL_TRANSITION:
+            case STATE.LEVEL_TRANSITION:
                 this.drawPlaying();
-                this.levelManager.drawTransition(this.ctx);
+                this.hud.drawLevelTransition(this.ctx, this.levelManager);
                 break;
-                
-            case STATES.GAME_OVER:
-                this.drawGameOver();
+            case STATE.GAME_OVER:
+                this.drawPlaying();
+                this.hud.drawGameOver(this.ctx);
                 break;
         }
         
-        // Draw particles
-        this.particles.draw(this.ctx);
+        // Draw flash
+        if (this.flashTime > 0) {
+            this.ctx.fillStyle = `rgba(255, 255, 255, ${this.flashTime})`;
+            this.ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+        }
     }
     
     drawMenu() {
-        const ctx = this.ctx;
+        this.ctx.save();
         
-        // Draw title with glow
-        ctx.save();
-        ctx.shadowBlur = 30;
-        ctx.shadowColor = COLORS.hudText;
+        // Title
+        this.ctx.fillStyle = CONFIG.COLORS.PLAYER;
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
         
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = 'bold 64px Courier New';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('NEON INVADERS', CANVAS_WIDTH / 2, 200);
+        this.ctx.font = 'bold 72px Courier New';
+        this.ctx.shadowBlur = 30;
+        this.ctx.shadowColor = CONFIG.COLORS.PLAYER;
+        this.ctx.fillText('NEON INVADERS', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 - 80);
         
-        ctx.restore();
+        // Subtitle
+        this.ctx.font = '24px Courier New';
+        this.ctx.shadowBlur = 15;
+        this.ctx.shadowColor = CONFIG.COLORS.ENEMY_A;
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillText('A Space Invaders Tribute', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 - 20);
         
-        // Draw subtitle
-        ctx.save();
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = COLORS.hudText;
+        // High score
+        this.ctx.font = '20px Courier New';
+        this.ctx.fillStyle = CONFIG.COLORS.POWERUP;
+        this.ctx.shadowColor = CONFIG.COLORS.POWERUP;
+        this.ctx.fillText(`HIGH SCORE: ${this.hud.highScore}`, CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 40);
         
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = '20px Courier New';
-        ctx.fillText('Press ENTER to Start', CANVAS_WIDTH / 2, 280);
+        // Start prompt
+        const pulse = 0.5 + Math.sin(Date.now() / 300) * 0.5;
+        this.ctx.globalAlpha = pulse;
+        this.ctx.fillStyle = CONFIG.COLORS.PLAYER;
+        this.ctx.shadowColor = CONFIG.COLORS.PLAYER;
+        this.ctx.font = '24px Courier New';
+        this.ctx.fillText('Press ENTER to start', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 100);
         
-        ctx.restore();
+        // Controls
+        this.ctx.globalAlpha = 0.7;
+        this.ctx.font = '16px Courier New';
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.shadowBlur = 0;
+        this.ctx.fillText('Arrow Keys / A-D to move', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 140);
+        this.ctx.fillText('Space to shoot', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 165);
         
-        // Draw high score
-        ctx.save();
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = '16px Courier New';
-        ctx.textAlign = 'center';
-        ctx.fillText(`HIGH SCORE: ${this.hud.getHighScore().toString().padStart(6, '0')}`, CANVAS_WIDTH / 2, 340);
-        ctx.restore();
-        
-        // Draw controls hint
-        ctx.save();
-        ctx.globalAlpha = 0.7;
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = '14px Courier New';
-        ctx.textAlign = 'center';
-        ctx.fillText('Arrow Keys / A-D to Move', CANVAS_WIDTH / 2, 420);
-        ctx.fillText('Space to Shoot', CANVAS_WIDTH / 2, 445);
-        ctx.restore();
+        this.ctx.restore();
     }
     
     drawPlaying() {
         // Draw enemies
-        this.enemyGrid.draw(this.ctx, this.time);
+        this.enemies.draw(this.ctx);
         
         // Draw player
         this.player.draw(this.ctx);
@@ -325,94 +420,16 @@ class Game {
         // Draw power-ups
         this.powerups.draw(this.ctx);
         
+        // Draw particles
+        this.particles.draw(this.ctx);
+        
         // Draw HUD
         this.hud.draw(this.ctx);
-    }
-    
-    drawGameOver() {
-        // Flash effect
-        const ctx = this.ctx;
-        
-        // Draw semi-transparent overlay
-        ctx.save();
-        ctx.globalAlpha = 0.7;
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-        ctx.restore();
-        
-        // Draw "GAME OVER" text
-        ctx.save();
-        ctx.shadowBlur = 30;
-        ctx.shadowColor = '#ff0000';
-        
-        ctx.fillStyle = '#ff0000';
-        ctx.font = 'bold 64px Courier New';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('GAME OVER', CANVAS_WIDTH / 2, 200);
-        
-        ctx.restore();
-        
-        // Draw final score
-        ctx.save();
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = COLORS.hudText;
-        
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = '24px Courier New';
-        ctx.textAlign = 'center';
-        ctx.fillText(`FINAL SCORE: ${this.hud.getScore().toString().padStart(6, '0')}`, CANVAS_WIDTH / 2, 280);
-        
-        ctx.restore();
-        
-        // Draw high score
-        ctx.save();
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = '18px Courier New';
-        ctx.textAlign = 'center';
-        ctx.fillText(`HIGH SCORE: ${this.hud.getHighScore().toString().padStart(6, '0')}`, CANVAS_WIDTH / 2, 330);
-        
-        ctx.restore();
-        
-        // Draw level reached
-        ctx.save();
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = '18px Courier New';
-        ctx.textAlign = 'center';
-        ctx.fillText(`LEVEL REACHED: ${this.levelManager.getCurrentLevel()}`, CANVAS_WIDTH / 2, 370);
-        
-        ctx.restore();
-        
-        // Draw restart prompt
-        ctx.save();
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = COLORS.hudText;
-        
-        ctx.fillStyle = COLORS.hudText;
-        ctx.font = '20px Courier New';
-        ctx.fillText('Press ENTER to Restart', CANVAS_WIDTH / 2, 450);
-        
-        ctx.restore();
-    }
-    
-    loop(currentTime) {
-        // Calculate delta time
-        const dt = (currentTime - this.lastTime) / 1000;
-        this.lastTime = currentTime;
-        
-        // Cap delta time to prevent huge jumps
-        const cappedDt = Math.min(dt, 0.1);
-        
-        // Update and draw
-        this.update(cappedDt);
-        this.draw();
-        
-        // Continue loop
-        requestAnimationFrame(this.loop);
     }
 }
 
 // Initialize game when DOM is ready
 window.addEventListener('DOMContentLoaded', () => {
-    new Game();
+    const game = new Game();
+    game.start();
 });

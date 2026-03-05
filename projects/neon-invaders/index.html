@@ -12,7 +12,7 @@
         }
         
         body {
-            background-color: #0a0a15;
+            background: #0a0a15;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -20,14 +20,22 @@
             font-family: 'Courier New', monospace;
         }
         
-        canvas {
+        #game-container {
+            position: relative;
             border: 2px solid #00fff5;
             box-shadow: 0 0 20px rgba(0, 255, 245, 0.3);
+        }
+        
+        canvas {
+            display: block;
+            background: #1a1a2e;
         }
     </style>
 </head>
 <body>
-    <canvas id="gameCanvas"></canvas>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+    </div>
     <script type="module" src="js/main.js"></script>
 </body>
 </html>

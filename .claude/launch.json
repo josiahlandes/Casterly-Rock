@@ -4,7 +4,7 @@
     {
       "name": "neon-invaders",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["workspace/neon-invaders/serve.mjs", "8085"],
+      "runtimeArgs": ["projects/neon-invaders/serve.mjs", "8085"],
       "port": 8085
     }
   ]

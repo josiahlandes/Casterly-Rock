@@ -1,126 +1,109 @@
-import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './config.js';
+// Background - Animated grid, stars, and scanlines
+import { CONFIG } from './config.js';
 
-export default class Background {
-    constructor() {
-        this.stars = this.generateStars();
-        this.scanLineOffset = 0;
+export class Background {
+    constructor(width, height) {
+        this.width = width;
+        this.height = height;
+        this.stars = this.createStars();
         this.gridOffset = 0;
+        this.scanlineOffset = 0;
     }
     
-    generateStars() {
+    createStars() {
         const stars = [];
-        const numStars = 100;
-        
-        for (let i = 0; i < numStars; i++) {
+        // Two depth layers
+        for (let i = 0; i < 80; i++) {
             stars.push({
-                x: Math.random() * CANVAS_WIDTH,
-                y: Math.random() * CANVAS_HEIGHT,
-                size: Math.random() * 1.5 + 0.5,
-                brightness: Math.random() * 0.5 + 0.5,
-                depth: Math.random() < 0.5 ? 0.5 : 1,
-                twinkleSpeed: Math.random() * 2 + 1,
-                twinkleOffset: Math.random() * Math.PI * 2
+                x: Math.random() * this.width,
+                y: Math.random() * this.height,
+                size: Math.random() * 2 + 0.5,
+                brightness: Math.random(),
+                depth: Math.random() > 0.5 ? 1 : 2,
+                speed: Math.random() * 0.5 + 0.2
             });
         }
-        
         return stars;
     }
     
-    update(dt, gameSpeed = 0) {
-        // Update scan line position
-        this.scanLineOffset = (this.scanLineOffset + dt * 50) % 20;
-        
-        // Update grid offset for subtle movement
-        this.gridOffset = (this.gridOffset + dt * 20) % 40;
-        
-        // Update stars
+    update(dt) {
+        // Move stars slowly
         this.stars.forEach(star => {
-            // Move stars based on depth (parallax)
-            star.x -= dt * star.depth * 10;
-            
-            // Wrap around
-            if (star.x < 0) {
-                star.x = CANVAS_WIDTH;
+            star.y += star.speed * 10 * dt;
+            if (star.y > this.height) {
+                star.y = 0;
+                star.x = Math.random() * this.width;
             }
+            // Twinkle
+            star.brightness += (Math.random() - 0.5) * 0.1;
+            star.brightness = Math.max(0.3, Math.min(1, star.brightness));
         });
+        
+        // Move grid
+        this.gridOffset += 20 * dt;
+        if (this.gridOffset > 40) {
+            this.gridOffset = 0;
+        }
+        
+        // Move scanlines
+        this.scanlineOffset += 2 * dt;
+        if (this.scanlineOffset > 4) {
+            this.scanlineOffset = 0;
+        }
     }
     
     draw(ctx) {
-        // Draw background
-        ctx.fillStyle = COLORS.background;
-        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        // Background fill
+        ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Draw stars (parallax)
+        this.stars.forEach(star => {
+            ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.size * (star.depth === 1 ? 0.7 : 1), 0, Math.PI * 2);
+            ctx.fill();
+        });
         
         // Draw perspective grid
         this.drawGrid(ctx);
         
-        // Draw stars
-        this.drawStars(ctx);
-        
-        // Draw scan lines
-        this.drawScanLines(ctx);
+        // Draw scanlines
+        this.drawScanlines(ctx);
     }
     
     drawGrid(ctx) {
-        ctx.save();
-        
-        // Perspective grid lines (horizontal)
-        const horizonY = CANVAS_HEIGHT * 0.3;
-        const floorHeight = CANVAS_HEIGHT - horizonY;
-        
-        ctx.strokeStyle = 'rgba(0, 255, 245, 0.1)';
+        ctx.strokeStyle = CONFIG.COLORS.GRID;
         ctx.lineWidth = 1;
         
-        // Horizontal perspective lines
-        for (let i = 0; i < 15; i++) {
-            const y = horizonY + Math.pow(i / 15, 2) * floorHeight;
-            ctx.globalAlpha = 0.1 + (1 - i / 15) * 0.2;
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(CANVAS_WIDTH, y);
-            ctx.stroke();
-        }
+        const vanishingPointY = this.height * 0.3;
+        const gridSpacing = 40;
         
         // Vertical perspective lines
-        const centerX = CANVAS_WIDTH / 2;
+        const centerX = this.width / 2;
         for (let i = -10; i <= 10; i++) {
-            const x = centerX + i * 60;
-            ctx.globalAlpha = 0.05 + (1 - Math.abs(i) / 10) * 0.15;
+            const x = centerX + i * gridSpacing;
             ctx.beginPath();
-            ctx.moveTo(x, horizonY);
-            ctx.lineTo(centerX + i * 200, CANVAS_HEIGHT);
+            ctx.moveTo(x, vanishingPointY);
+            ctx.lineTo(x * 0.3 + centerX * 0.7, this.height);
             ctx.stroke();
         }
         
-        ctx.restore();
-    }
-    
-    drawStars(ctx) {
-        this.stars.forEach(star => {
-            const twinkle = Math.sin(Date.now() / 1000 * star.twinkleSpeed + star.twinkleOffset);
-            const alpha = star.brightness * (0.7 + twinkle * 0.3);
-            
-            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+        // Horizontal lines (perspective)
+        for (let i = 0; i < 15; i++) {
+            const y = vanishingPointY + Math.pow(i / 15, 2) * (this.height - vanishingPointY);
+            const yOffset = (i === 14) ? this.gridOffset : 0;
             ctx.beginPath();
-            ctx.arc(star.x, star.y, star.size * star.depth, 0, Math.PI * 2);
-            ctx.fill();
-        });
-    }
-    
-    drawScanLines(ctx) {
-        ctx.save();
-        ctx.fillStyle = COLORS.scanLine;
-        
-        // Draw scrolling scan lines
-        for (let y = this.scanLineOffset; y < CANVAS_HEIGHT; y += 20) {
-            ctx.fillRect(0, y, CANVAS_WIDTH, 2);
+            ctx.moveTo(0, y + yOffset);
+            ctx.lineTo(this.width, y + yOffset);
+            ctx.stroke();
         }
-        
-        ctx.restore();
     }
     
-    reset() {
-        this.stars = this.generateStars();
-        this.scanLineOffset = 0;
-        this.gridOffset = 0;
+    drawScanlines(ctx) {
+        ctx.fillStyle = CONFIG.COLORS.SCANLINE;
+        for (let y = this.scanlineOffset; y < this.height; y += 4) {
+            ctx.fillRect(0, y, this.width, 1);
+        }
     }
 }

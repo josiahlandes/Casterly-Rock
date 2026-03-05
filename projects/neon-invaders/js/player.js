@@ -1,175 +1,156 @@
-// Player Ship Controller
-export default class Player {
-    constructor(x, y, particleSystem) {
+// Player - Player ship with movement, shooting, and shield
+import { CONFIG } from './config.js';
+
+export class Player {
+    constructor(x, y) {
         this.x = x;
         this.y = y;
-        this.width = 40;
-        this.height = 30;
         this.vx = 0;
-        this.speed = 500;
-        this.maxSpeed = 400;
-        this.acceleration = 800;
-        this.deceleration = 600;
-        this.shield = 3;
-        this.maxShield = 3;
-        this.lastShotTime = 0;
-        this.fireCooldown = 250;
-        this.rapidFireCooldown = 125;
+        this.shield = CONFIG.SHIELD_MAX;
+        this.shieldFlashTime = 0;
+        this.shootCooldown = 0;
+        this.width = CONFIG.PLAYER_WIDTH;
+        this.height = CONFIG.PLAYER_HEIGHT;
+        
+        // Power-up states
         this.rapidFireTime = 0;
         this.spreadShotTime = 0;
-        this.spreadAngle = 0.3;
-        this.bulletWidth = 4;
-        this.bulletHeight = 15;
-        this.color = '#00fff5';
-        this.invulnerable = false;
-        this.invulnerableTime = 0;
-        this.blinkTime = 0;
     }
     
-    update(dt, input, canvasWidth, particleSystem) {
-        const dtSeconds = dt / 1000;
-        
-        // Update power-up timers
-        if (this.rapidFireTime > 0) {
-            this.rapidFireTime -= dt;
-            if (this.rapidFireTime <= 0) this.rapidFireTime = 0;
-        }
-        
-        if (this.spreadShotTime > 0) {
-            this.spreadShotTime -= dt;
-            if (this.spreadShotTime <= 0) this.spreadShotTime = 0;
-        }
-        
-        // Update invulnerability
-        if (this.invulnerable) {
-            this.invulnerableTime -= dt;
-            this.blinkTime += dt;
-            if (this.invulnerableTime <= 0) {
-                this.invulnerable = false;
-                this.blinkTime = 0;
-            }
-        }
-        
-        // Movement with acceleration/deceleration
+    reset() {
+        this.x = CONFIG.CANVAS_WIDTH / 2 - this.width / 2;
+        this.y = CONFIG.CANVAS_HEIGHT - 60;
+        this.vx = 0;
+        this.shield = CONFIG.SHIELD_MAX;
+        this.shieldFlashTime = 0;
+        this.shootCooldown = 0;
+        this.rapidFireTime = 0;
+        this.spreadShotTime = 0;
+    }
+    
+    update(dt, input) {
+        // Horizontal movement with acceleration
         if (input.isLeft()) {
-            this.vx -= this.acceleration * dtSeconds;
+            this.vx -= CONFIG.PLAYER_SPEED_ACCEL * dt;
         } else if (input.isRight()) {
-            this.vx += this.acceleration * dtSeconds;
+            this.vx += CONFIG.PLAYER_SPEED_ACCEL * dt;
         } else {
-            // Decelerate
+            // Deceleration
             if (this.vx > 0) {
-                this.vx = Math.max(0, this.vx - this.deceleration * dtSeconds);
+                this.vx -= CONFIG.PLAYER_SPEED_DECEL * dt;
+                if (this.vx < 0) this.vx = 0;
             } else if (this.vx < 0) {
-                this.vx = Math.min(0, this.vx + this.deceleration * dtSeconds);
+                this.vx += CONFIG.PLAYER_SPEED_DECEL * dt;
+                if (this.vx > 0) this.vx = 0;
             }
         }
         
         // Clamp velocity
-        this.vx = Math.max(-this.maxSpeed, Math.min(this.maxSpeed, this.vx));
+        this.vx = Math.max(-CONFIG.PLAYER_SPEED, Math.min(CONFIG.PLAYER_SPEED, this.vx));
         
         // Update position
-        this.x += this.vx * dtSeconds;
+        this.x += this.vx * dt;
         
         // Clamp to screen
-        this.x = Math.max(0, Math.min(canvasWidth - this.width, this.x));
+        this.x = Math.max(0, Math.min(CONFIG.CANVAS_WIDTH - this.width, this.x));
         
-        // Thruster particles when moving
-        if (Math.abs(this.vx) > 50) {
-            particleSystem.createThruster(this.x + this.width / 2, this.y + this.height);
+        // Update timers
+        if (this.shieldFlashTime > 0) {
+            this.shieldFlashTime -= dt;
+        }
+        if (this.shootCooldown > 0) {
+            this.shootCooldown -= dt;
+        }
+        if (this.rapidFireTime > 0) {
+            this.rapidFireTime -= dt;
+        }
+        if (this.spreadShotTime > 0) {
+            this.spreadShotTime -= dt;
         }
     }
     
-    shoot(currentTime) {
-        const cooldown = this.rapidFireTime > 0 ? this.rapidFireCooldown : this.fireCooldown;
-        
-        if (currentTime - this.lastShotTime > cooldown) {
-            this.lastShotTime = currentTime;
-            
-            if (this.spreadShotTime > 0) {
-                // Spread shot - 3 bullets
-                return [
-                    { x: this.x + this.width / 2 - this.bulletWidth / 2, y: this.y, vx: 0 },
-                    { x: this.x + this.width / 2 - this.bulletWidth / 2, y: this.y, vx: -Math.sin(this.spreadAngle) * this.speed * 0.5 },
-                    { x: this.x + this.width / 2 - this.bulletWidth / 2, y: this.y, vx: Math.sin(this.spreadAngle) * this.speed * 0.5 }
-                ];
-            } else {
-                // Single bullet
-                return [{ x: this.x + this.width / 2 - this.bulletWidth / 2, y: this.y, vx: 0 }];
-            }
+    shoot() {
+        const cooldown = this.rapidFireTime > 0 ? CONFIG.SHOOT_COOLDOWN / 2 : CONFIG.SHOOT_COOLDOWN;
+        if (this.shootCooldown <= 0) {
+            this.shootCooldown = cooldown;
+            return true;
         }
-        return [];
+        return false;
     }
     
-    takeDamage() {
-        if (this.invulnerable) return false;
+    getShootCooldown() {
+        return this.rapidFireTime > 0 ? CONFIG.SHOOT_COOLDOWN / 2 : CONFIG.SHOOT_COOLDOWN;
+    }
+    
+    hit() {
+        if (this.shieldFlashTime > 0) return false; // Invulnerable
         
         this.shield--;
-        if (this.shield <= 0) {
-            this.shield = 0;
-            return true; // Game over
-        } else {
-            this.invulnerable = true;
-            this.invulnerableTime = 2000;
-            this.blinkTime = 0;
-            return false;
-        }
+        this.shieldFlashTime = CONFIG.SHIELD_FLASH_TIME;
+        return this.shield <= 0;
     }
     
-    restoreShield() {
-        this.shield = Math.min(this.shield + 1, this.maxShield);
+    addShield() {
+        if (this.shield < CONFIG.SHIELD_MAX) {
+            this.shield++;
+            return true;
+        }
+        return false;
     }
     
     activateRapidFire() {
-        this.rapidFireTime = 8000;
+        this.rapidFireTime = CONFIG.POWERUP_DURATION;
     }
     
     activateSpreadShot() {
-        this.spreadShotTime = 8000;
+        this.spreadShotTime = CONFIG.POWERUP_DURATION;
     }
     
-    isAlive() {
-        return this.shield > 0;
+    hasRapidFire() {
+        return this.rapidFireTime > 0;
+    }
+    
+    hasSpreadShot() {
+        return this.spreadShotTime > 0;
+    }
+    
+    isInvulnerable() {
+        return this.shieldFlashTime > 0;
     }
     
     draw(ctx) {
-        // Check if should blink (invulnerable)
-        if (this.invulnerable) {
-            const blinkInterval = 100;
-            if (Math.floor(this.blinkTime / blinkInterval) % 2 === 0) {
-                return; // Skip drawing this frame
-            }
-        }
+        const alpha = this.isInvulnerable() ? (Math.sin(Date.now() / 50) > 0 ? 0.5 : 1) : 1;
         
-        const centerX = this.x + this.width / 2;
-        const centerY = this.y + this.height / 2;
+        ctx.globalAlpha = alpha;
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = CONFIG.COLORS.PLAYER;
         
-        ctx.save();
+        const cx = this.x + this.width / 2;
+        const cy = this.y + this.height / 2;
         
-        // Glow effect
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = this.color;
-        
-        // Draw ship body (triangle shape)
-        ctx.fillStyle = this.color;
+        // Draw ship
+        ctx.fillStyle = CONFIG.COLORS.PLAYER;
         ctx.beginPath();
-        ctx.moveTo(centerX, this.y);
+        
+        // Main body (triangle pointing up)
+        ctx.moveTo(cx, this.y);
         ctx.lineTo(this.x + this.width, this.y + this.height);
-        ctx.lineTo(this.x + this.width / 2, this.y + this.height - 8);
+        ctx.lineTo(cx, this.y + this.height - 8);
         ctx.lineTo(this.x, this.y + this.height);
         ctx.closePath();
         ctx.fill();
         
-        // White core
-        ctx.fillStyle = '#ffffff';
+        // Core (white center)
+        ctx.fillStyle = CONFIG.COLORS.PLAYER_CORE;
         ctx.beginPath();
-        ctx.moveTo(centerX, this.y + 5);
-        ctx.lineTo(this.x + this.width - 8, this.y + this.height - 5);
-        ctx.lineTo(centerX, this.y + this.height - 12);
-        ctx.lineTo(this.x + 8, this.y + this.height - 5);
+        ctx.moveTo(cx, this.y + 5);
+        ctx.lineTo(cx + 5, this.y + this.height - 5);
+        ctx.lineTo(cx - 5, this.y + this.height - 5);
         ctx.closePath();
         ctx.fill();
         
-        ctx.restore();
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
     }
     
     getBounds() {
