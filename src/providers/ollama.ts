@@ -7,6 +7,7 @@ import type {
   NativeToolCall,
 } from '../tools/schemas/types.js';
 import type { OllamaTool } from '../tools/schemas/registry.js';
+import { repairToolArgs } from '../tools/schemas/repair.js';
 import { Agent, setGlobalDispatcher } from 'undici';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -143,12 +144,9 @@ function parseToolCalls(toolCalls: OllamaToolCall[] | undefined): NativeToolCall
       // Ollama returns arguments as a parsed object — use directly
       input = args as Record<string, unknown>;
     } else if (typeof args === 'string') {
-      // OpenAI-compat: arguments is a JSON string
-      try {
-        input = JSON.parse(args);
-      } catch {
-        input = { raw: args };
-      }
+      // 3-tier parse: strict JSON → auto-repair → heuristic extraction
+      const result = repairToolArgs(args);
+      input = result.parsed;
     }
 
     return {

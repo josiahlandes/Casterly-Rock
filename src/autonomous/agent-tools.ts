@@ -76,6 +76,7 @@ import type { MemoryChecker, ExistingKnowledge } from './memory/checker.js';
 import type { SkillFilesManager } from './memory/skill-files.js';
 import type { ConcurrentDreamExecutor } from './memory/concurrent-dreams.js';
 import type { GraphMemory, NodeType, EdgeType } from './memory/graph-memory.js';
+import { createDelegateAgent, resultToMessage } from '../dual-loop/agent.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -3625,101 +3626,47 @@ function buildExecutors(
           ? `\n\nContext files:\n\n${fileContents.join('\n\n')}`
           : '';
 
-        const request: GenerateRequest = {
-          prompt: `${taskResult.value}${contextSection}`,
-          systemPrompt: toolsMode === 'read-only'
-            ? 'You are a specialist assistant with read-only access to the codebase. Use the provided tools to search and read files as needed. Complete the task precisely and return your result.'
-            : 'You are a specialist assistant. Complete the task precisely and return your result.',
-          maxTokens: 4096,
-          temperature: 0.2,
-        };
+        // Build tool set based on access level
+        const readOnlySchemas: ToolSchema[] = [
+          READ_FILE_SCHEMA,
+          GREP_SCHEMA,
+          GLOB_SCHEMA,
+          GIT_DIFF_SCHEMA,
+        ];
+
+        const delegateTools = toolsMode === 'read-only' ? readOnlySchemas : [];
+        const systemPrompt = toolsMode === 'read-only'
+          ? 'You are a specialist assistant with read-only access to the codebase. Use the provided tools to search and read files as needed. Complete the task precisely and return your result.'
+          : 'You are a specialist assistant. Complete the task precisely and return your result.';
 
         tracer.log('agent-loop', 'info', `Delegating to ${modelResult.value} (tools=${toolsMode}): ${taskResult.value.slice(0, 100)}...`);
 
-        // Read-only mode: mini ReAct loop with read-only tools
-        if (toolsMode === 'read-only') {
-          const readOnlySchemas: ToolSchema[] = [
-            READ_FILE_SCHEMA,
-            GREP_SCHEMA,
-            GLOB_SCHEMA,
-            GIT_DIFF_SCHEMA,
-          ];
-
-          const maxDelegateTurns = 10;
-          let currentRequest = request;
-          const previousResults: ToolResultMessage[] = [];
-          let finalText = '';
-
-          for (let turn = 0; turn < maxDelegateTurns; turn++) {
-            const response = await delegateProvider.generateWithTools(
-              currentRequest,
-              readOnlySchemas,
-              previousResults.length > 0 ? previousResults : undefined,
-            );
-
-            // No tool calls → delegate is done
-            if (response.toolCalls.length === 0) {
-              finalText = response.text;
-              break;
+        // Create a delegate agent via the composable Agent interface
+        const agent = createDelegateAgent({
+          role: `delegate-${modelResult.value}`,
+          provider: delegateProvider,
+          systemPrompt,
+          tools: delegateTools,
+          executeTool: async (tc) => {
+            const executor = executors.get(tc.name);
+            if (!executor) {
+              return { toolCallId: tc.id, success: false, error: `Tool "${tc.name}" not found.` };
             }
+            return executor(tc);
+          },
+          maxTurns: 10,
+        });
 
-            // Execute read-only tool calls
-            for (const tc of response.toolCalls) {
-              // Only allow read-only tools
-              const allowed = ['read_file', 'grep_files', 'glob_files', 'git_diff'];
-              if (!allowed.includes(tc.name)) {
-                previousResults.push({
-                  callId: tc.id,
-                  result: `Tool "${tc.name}" is not available in read-only mode.`,
-                  isError: true,
-                });
-                continue;
-              }
+        const result = await agent.execute({
+          prompt: `${taskResult.value}${contextSection}`,
+        });
 
-              // Reuse the executor from the main loop
-              const executor = executors.get(tc.name);
-              if (!executor) {
-                previousResults.push({
-                  callId: tc.id,
-                  result: `Tool "${tc.name}" not found.`,
-                  isError: true,
-                });
-                continue;
-              }
-
-              const result = await executor(tc);
-              previousResults.push({
-                callId: tc.id,
-                result: result.output ?? result.error ?? '(no output)',
-                isError: !result.success,
-              });
-            }
-
-            // Continue the conversation with tool results
-            currentRequest = {
-              ...request,
-              prompt: response.text || 'Continue.',
-            };
-            finalText = response.text;
-          }
-
-          tracer.log('agent-loop', 'info', `Delegation complete (read-only). Response: ${finalText.length} chars`);
-
-          return successResult(
-            call.id,
-            `[Delegation to ${modelResult.value} (read-only tools)]\n\n${finalText}`,
-            config.maxOutputChars,
-          );
-        }
-
-        // Text-only mode (legacy)
-        const response = await delegateProvider.generateWithTools(request, []);
-
-        tracer.log('agent-loop', 'info', `Delegation complete. Response: ${response.text.length} chars`);
+        const toolsSuffix = toolsMode !== 'none' ? ` (${toolsMode} tools, ${result.turnsUsed} turns)` : '';
+        tracer.log('agent-loop', 'info', `Delegation complete${toolsSuffix}. Response: ${result.text.length} chars`);
 
         return successResult(
           call.id,
-          `[Delegation to ${modelResult.value}]\n\n${response.text}`,
+          `[Delegation to ${modelResult.value}${toolsSuffix}]\n\n${result.text}`,
           config.maxOutputChars,
         );
       } catch (err) {
