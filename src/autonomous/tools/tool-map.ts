@@ -1,7 +1,7 @@
 /**
  * Tool Map — Lightweight manifest for progressive schema hydration.
  *
- * This is the key optimization for small models: instead of sending all 96 tool
+ * This is the key optimization for small models: instead of sending all 99 tool
  * schemas (thousands of tokens), send this compact map first. The model identifies
  * which categories it needs, and only those get "hydrated" (full schemas loaded).
  *
@@ -38,6 +38,7 @@ export const TOOL_MAP: Record<string, ToolMapEntry> = {
   // ── core ──
   think:       { category: 'core', brief: 'Reason step-by-step before acting' },
   read_file:   { category: 'core', brief: 'Read file contents with line numbers' },
+  read_files:  { category: 'core', brief: 'Read multiple files in a single call' },
   edit_file:   { category: 'core', brief: 'Replace text in a file' },
   create_file: { category: 'core', brief: 'Create a new file' },
   grep:        { category: 'core', brief: 'Search file contents by regex' },
@@ -45,9 +46,11 @@ export const TOOL_MAP: Record<string, ToolMapEntry> = {
   bash:        { category: 'core', brief: 'Execute a shell command' },
 
   // ── quality ──
-  run_tests: { category: 'quality', brief: 'Run the test suite' },
-  typecheck: { category: 'quality', brief: 'Run TypeScript type checker' },
-  lint:      { category: 'quality', brief: 'Run the project linter' },
+  run_tests:        { category: 'quality', brief: 'Run the test suite' },
+  typecheck:        { category: 'quality', brief: 'Run TypeScript type checker' },
+  lint:             { category: 'quality', brief: 'Run the project linter' },
+  validate_project: { category: 'quality', brief: 'Validate cross-file API consistency' },
+  browser_test:     { category: 'quality', brief: 'Test HTML/JS project in headless browser' },
 
   // ── git ──
   git_status: { category: 'git', brief: 'Show git branch and working tree status' },

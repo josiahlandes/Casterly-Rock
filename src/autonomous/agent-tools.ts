@@ -13,7 +13,7 @@
  *   - SEARCH: grep, glob (via existing executors)
  *   - SYSTEM: bash (via existing executor, with safety checks)
  *   - GIT: git_status, git_diff, git_commit, git_log
- *   - QUALITY: run_tests, typecheck, lint
+ *   - QUALITY: run_tests, typecheck, lint, validate_project
  *   - STATE: file_issue, close_issue, update_goal, update_world_model
  *   - REASONING: think (no-op for explicit reasoning steps)
  *   - DELEGATION: delegate (send sub-task to a specific model)
@@ -39,7 +39,7 @@ import { getTracer } from './debug.js';
 import type { GoalStack, GoalStatus, GoalSource } from './goal-stack.js';
 import type { IssueLog, IssuePriority, Issue } from './issue-log.js';
 import type { WorldModel } from './world-model.js';
-import type { ToolSchema, NativeToolCall, NativeToolResult } from '../tools/schemas/types.js';
+import type { ToolSchema, NativeToolCall, NativeToolResult, ToolResultMessage } from '../tools/schemas/types.js';
 import type { ContextManager } from './context-manager.js';
 import type { Journal } from './journal.js';
 import type { LlmProvider, GenerateRequest } from '../providers/base.js';
@@ -47,6 +47,8 @@ import { AdversarialTester } from './reasoning/adversarial.js';
 import type { PromptStore } from './prompt-store.js';
 import type { ShadowStore } from './shadow-store.js';
 import type { ToolSynthesizer } from '../tools/synthesizer.js';
+import { executeValidateProject } from '../tools/executors/validate-project.js';
+import { executeBrowserTest } from '../tools/executors/browser-test.js';
 import type { ChallengeGenerator } from './dream/challenge-generator.js';
 import type { ChallengeEvaluator } from './dream/challenge-evaluator.js';
 import type { PromptEvolution } from './dream/prompt-evolution.js';
@@ -473,13 +475,14 @@ const READ_FILES_SCHEMA: ToolSchema = {
       paths: {
         type: 'array',
         description: 'File paths to read (relative to project root).',
-        items: { type: 'string' },
+        items: { type: 'string', description: 'File path relative to project root.' },
       },
       glob_pattern: {
         type: 'string',
         description: 'Glob pattern to match files (e.g., "src/**/*.ts"). Ignores node_modules, .git, dist.',
       },
     },
+    required: [],
   },
 };
 
@@ -629,6 +632,42 @@ const LINT_SCHEMA: ToolSchema = {
     type: 'object',
     properties: {},
     required: [],
+  },
+};
+
+const VALIDATE_PROJECT_SCHEMA: ToolSchema = {
+  name: 'validate_project',
+  description: 'Static analysis: validate cross-file API consistency (imports, exports, method calls, uncaptured returns).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      directory: {
+        type: 'string',
+        description: 'Project directory to validate (relative to project root)',
+      },
+    },
+    required: ['directory'],
+  },
+};
+
+const BROWSER_TEST_SCHEMA: ToolSchema = {
+  name: 'browser_test',
+  description:
+    'Launch a headless browser to test an HTML/JS project. Serves the directory via HTTP, opens index.html, waits, then collects console errors, DOM snapshot, and canvas status. Requires Playwright.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      directory: {
+        type: 'string',
+        description: 'Project directory containing index.html (relative to project root)',
+      },
+      wait_ms: {
+        type: 'number',
+        description:
+          'Milliseconds to wait after page load before collecting results (default: 3000)',
+      },
+    },
+    required: ['directory'],
   },
 };
 
@@ -2862,7 +2901,7 @@ function buildExecutors(
 
         tracer.logIO('agent-loop', 'read', filePath, 0, {
           success: true,
-          bytesOrLines: cacheHit ? 0 : lines.length,
+          bytesOrLines: lines.length,
         });
 
         return successResult(call.id, output, config.maxOutputChars);
@@ -3296,6 +3335,22 @@ function buildExecutors(
           error: 'Lint errors found',
         };
       }
+    });
+  });
+
+  // ── validate_project ──────────────────────────────────────────────────────
+
+  executors.set('validate_project', async (call) => {
+    return tracer.withSpan('agent-loop', 'validate_project', async () => {
+      return executeValidateProject(call, config.projectRoot);
+    });
+  });
+
+  // ── browser_test ────────────────────────────────────────────────────────
+
+  executors.set('browser_test', async (call) => {
+    return tracer.withSpan('agent-loop', 'browser_test', async () => {
+      return executeBrowserTest(call, config.projectRoot);
     });
   });
 
@@ -6623,6 +6678,8 @@ export function buildAgentToolkit(
     RUN_TESTS_SCHEMA,
     TYPECHECK_SCHEMA,
     LINT_SCHEMA,
+    VALIDATE_PROJECT_SCHEMA,
+    BROWSER_TEST_SCHEMA,
     GIT_STATUS_SCHEMA,
     GIT_DIFF_SCHEMA,
     GIT_COMMIT_SCHEMA,

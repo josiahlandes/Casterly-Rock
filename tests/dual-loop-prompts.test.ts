@@ -96,6 +96,15 @@ describe('Review Prompt', () => {
       expect(REVIEW_SYSTEM_PROMPT).toContain('Correctness');
       expect(REVIEW_SYSTEM_PROMPT).toContain('Security');
     });
+
+    it('does NOT contain "When in doubt, approve"', () => {
+      expect(REVIEW_SYSTEM_PROMPT).not.toContain('When in doubt, approve');
+    });
+
+    it('instructs to request changes when in doubt', () => {
+      // The review prompt should bias toward caution, not rubber-stamping
+      expect(REVIEW_SYSTEM_PROMPT).toContain('request changes');
+    });
   });
 
   describe('buildReviewPrompt', () => {
@@ -175,9 +184,9 @@ describe('Review Prompt', () => {
       expect(result.feedback).toBe('Add input validation in handleLogin()');
     });
 
-    it('defaults to approved on invalid JSON', () => {
+    it('defaults to changes_requested on invalid JSON', () => {
       const result = parseReviewResponse('garbage');
-      expect(result.result).toBe('approved');
+      expect(result.result).toBe('changes_requested');
       expect(result.notes).toContain('parse failure');
     });
   });

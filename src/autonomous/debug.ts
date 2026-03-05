@@ -50,7 +50,8 @@ export type DebugSubsystem =
   | 'task-board'
   | 'fast-loop'
   | 'deep-loop'
-  | 'coordinator';
+  | 'coordinator'
+  | 'loop-detector';
 
 export type DebugLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 

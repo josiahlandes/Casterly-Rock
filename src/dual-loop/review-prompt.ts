@@ -70,8 +70,14 @@ Respond with a JSON object:
   "feedback": "Specific changes needed (only for changes_requested)"
 }
 
-When in doubt, approve. The deep thinker has more context than you.
-Only request changes for clear correctness, security, or file structure issues.`;
+When in doubt about runtime behavior or cross-module wiring, request changes.
+Only request changes for clear correctness, security, or file structure issues.
+
+Verification checklist:
+- All imports resolve to exported symbols
+- Method calls on imported objects match the actual API surface
+- Data flows are complete (return values captured, callbacks wired, events subscribed)
+- No standalone function calls that ignore return values needed by the system`;
 
 /**
  * Cascade review prompts — each pass focuses on a different concern.
@@ -91,7 +97,7 @@ Focus exclusively on:
 
 Do NOT repeat correctness feedback — that was handled in the first pass.
 Only request changes for genuine security vulnerabilities or robustness gaps.
-When in doubt, approve — you have the full implementation context.
+When in doubt, request changes. API surface mismatches are security-relevant.
 
 Respond with a JSON object:
 {
@@ -100,6 +106,28 @@ Respond with a JSON object:
   "feedback": "Specific fixes needed (only for changes_requested)"
 }`,
 ];
+
+/**
+ * System prompt for the ReAct integration review pass.
+ * This pass uses tool calls (validate_project, read_file) to verify
+ * cross-module wiring before final approval.
+ *
+ * See docs/roadmap.md Tier 2, Item 7 (cascade review).
+ */
+export const INTEGRATION_REVIEW_SYSTEM_PROMPT = `You are a code integration reviewer. Your job is to verify that a multi-file project works correctly by checking cross-module wiring.
+
+PROCEDURE:
+1. First, run validate_project on the project directory to get a static analysis report
+2. For each issue found, read the relevant files to verify
+3. Trace critical data flows end-to-end:
+   - Are all imported functions/methods actually exported by their source module?
+   - Are return values from functions captured and used where needed?
+   - Are event handlers and callbacks properly wired?
+   - Do constructor calls match the class signatures?
+4. Check that the entry point (index.html, main.js, etc.) correctly imports and initializes all modules
+
+OUTPUT: Respond with JSON: { "result": "approved" | "changes_requested", "issues": string[] }
+If any cross-module wiring issue is found, result MUST be "changes_requested".`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Prompt Builders
@@ -162,21 +190,21 @@ export function countDiffLines(artifacts: TaskArtifact[]): number {
 }
 
 /**
- * Parse the review response from the LLM. Falls back to 'approved' on parse failure.
+ * Parse the review response from the LLM. Falls back to 'changes_requested' on parse failure.
  */
 export function parseReviewResponse(text: string): ReviewOutcome {
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>;
     return {
-      result: (parsed['result'] as ReviewResult) ?? 'approved',
+      result: (parsed['result'] as ReviewResult) ?? 'changes_requested',
       notes: (parsed['notes'] as string) ?? '',
       feedback: parsed['feedback'] as string | undefined,
     };
   } catch {
-    // On parse failure, approve — don't block the pipeline on a parsing issue
+    // On parse failure, reject — don't let unparseable output bypass review
     return {
-      result: 'approved',
-      notes: 'Review parse failure — defaulting to approved',
+      result: 'changes_requested',
+      notes: 'Review parse failure — defaulting to changes_requested',
     };
   }
 }

@@ -28,6 +28,7 @@ import type { FastTierConfig, ContextTier } from './context-tiers.js';
 import { selectFastTier, selectReviewTier, resolveNumCtx, estimateTokens } from './context-tiers.js';
 import {
   TRIAGE_SYSTEM_PROMPT,
+  TRIAGE_FORMAT_SCHEMA,
   buildTriagePrompt,
   parseTriageResponse,
 } from './triage-prompt.js';
@@ -40,7 +41,6 @@ import {
   countDiffLines,
   parseReviewResponse,
 } from './review-prompt.js';
-import type { TriageResult } from './triage-prompt.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

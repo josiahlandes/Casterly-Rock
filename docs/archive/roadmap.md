@@ -352,7 +352,7 @@ Experimental capabilities that push the boundaries of what's possible with local
 
 Patterns extracted from the [Qwen Code](https://github.com/QwenLM/qwen-code) codebase study (`docs/qwen-code-vs-deeploop.md`). These address real failure modes observed during Neon Invaders testing and long autonomous cycles.
 
-### 14. [ ] Step-Scoped Context for Multi-File Plans
+### 14. [x] Step-Scoped Context for Multi-File Plans (2026-03-04)
 
 **What:** Change the planner to output a `context` field per step containing only the spec sections relevant to that step. `executeStep` uses `step.context` instead of the full `task.originalMessage`, so the coder model only sees what it needs for the current chunk of work.
 
@@ -376,7 +376,7 @@ This mirrors how humans work with coding agents: you describe one chunk of work 
 
 ---
 
-### 15. [ ] Warm-Tier Compression Before Eviction
+### 15. [x] Warm-Tier Compression Before Eviction (2026-03-04)
 
 **What:** Add a compression step before warm-tier LRU eviction. Instead of silently dropping the oldest entries, summarize them into a structured XML `<state_snapshot>` via a fast-model call, then replace N evicted entries with 1 summary entry.
 
@@ -399,7 +399,7 @@ This mirrors how humans work with coding agents: you describe one chunk of work 
 
 ---
 
-### 16. [ ] Loop Detection (3-Layer)
+### 16. [x] Loop Detection (3-Layer) (2026-03-04)
 
 **What:** Add a `LoopDetector` to the agent loop that detects when the model is stuck in semantic loops — doing the same thing repeatedly with slight variations. Three detection layers: tool call hash matching, content repetition detection, and LLM-based cognitive assessment.
 
@@ -420,7 +420,7 @@ This mirrors how humans work with coding agents: you describe one chunk of work 
 
 ---
 
-### 17. [ ] Delegate with Read-Only Tools
+### 17. [x] Delegate with Read-Only Tools (2026-03-04)
 
 **What:** Extend the `delegate` tool to optionally provide a subset of read-only tools to the delegate. Currently, delegated subagents are text-only — they receive context but cannot read files, search, or inspect code.
 
@@ -443,7 +443,7 @@ This mirrors how humans work with coding agents: you describe one chunk of work 
 
 ---
 
-### 18. [ ] Structured Handoff Format
+### 18. [x] Structured Handoff Format (2026-03-04)
 
 **What:** Define a structured handoff format (XML) for cross-cycle context transfer. Replace free-form handoff notes with explicit fields: `files_modified`, `decisions_made`, `blockers_encountered`, `next_steps`, `key_learnings`.
 
@@ -472,7 +472,7 @@ This mirrors how humans work with coding agents: you describe one chunk of work 
 
 ---
 
-### 19. [ ] Meaningful Task Acknowledgments and Progress Updates
+### 19. [x] Meaningful Task Acknowledgments and Progress Updates (2026-03-04)
 
 **What:** Replace the generic "Got it — working on that now." acknowledgment with a plan-aware initial message, and add proactive progress updates during multi-step task execution. The user should know *what* Tyrion is about to do before he does it, and get periodic updates as steps complete.
 
@@ -529,7 +529,7 @@ The `buildStatusReport()` method (line 509) already has decent step-level progre
 
 ---
 
-### 20. [ ] Batch File Read Tool
+### 20. [x] Batch File Read Tool (2026-03-04)
 
 **What:** Add a `read_files` tool that reads multiple files in a single tool call, accepting an array of paths or glob patterns. Returns all file contents in one response, cutting multi-file exploration from N tool turns to 1.
 
@@ -555,7 +555,7 @@ Qwen Code's `ReadManyFilesTool` solves this with glob pattern support and batch 
 
 ---
 
-### 21. [ ] File-Change Delta Tracking
+### 21. [x] File-Change Delta Tracking (2026-03-04)
 
 **What:** When the model re-reads a file it already read earlier in the same cycle, send only the diff from the last read instead of the full file contents. Track file read timestamps and content hashes to detect re-reads and compute minimal deltas.
 
@@ -624,7 +624,7 @@ Qwen Code's `ReadManyFilesTool` solves this with glob pattern support and batch 
 
 ---
 
-### 23. [ ] Playwright Desktop Interaction
+### 23. [~] Playwright Desktop Interaction (Phase 1: 2026-03-04)
 
 **What:** Give Tyrion the ability to "see" and interact with the desktop via Playwright. Launch a browser or desktop app, take screenshots, read visual state, click elements, type text, and navigate — the same way a human would. This enables GUI-dependent tasks: testing web UIs, filling forms, reading visual dashboards, interacting with apps that have no CLI/API.
 

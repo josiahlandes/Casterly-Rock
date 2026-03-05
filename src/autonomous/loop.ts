@@ -19,6 +19,9 @@ import type {
   PendingBranch,
 } from './types.js';
 
+// State Manager (optional — provides unified store lifecycle)
+import { StateManager } from '../state/state-manager.js';
+
 // Phase 2: Agent Loop imports
 import { AgentLoop, createAgentLoop } from './agent-loop.js';
 import type { AgentTrigger, AgentLoopConfig, AgentOutcome, RuntimeContext } from './agent-loop.js';
@@ -145,6 +148,8 @@ export interface LoopOptions {
   approvalBridge?: ApprovalBridge | undefined;
   /** iMessage recipient for approval requests (owner's phone or Apple ID) */
   approvalRecipient?: string | undefined;
+  /** Optional StateManager — when provided, delegates store lifecycle to it */
+  stateManager?: StateManager | undefined;
 }
 
 export class AutonomousLoop {
@@ -253,6 +258,9 @@ export class AutonomousLoop {
   private jobStore: import('../scheduler/store.js').JobStore | null = null;
   private concurrentProvider: import('../providers/concurrent.js').ConcurrentProvider | null = null;
 
+  // Optional StateManager — when provided, delegates store lifecycle
+  private stateManager: StateManager | null = null;
+
   constructor(
     config: AutonomousConfig,
     projectRoot: string,
@@ -266,6 +274,7 @@ export class AutonomousLoop {
     this.provider = provider;
     this.approvalBridge = options?.approvalBridge;
     this.approvalRecipient = options?.approvalRecipient;
+    this.stateManager = options?.stateManager ?? null;
 
     // Create the LlmProvider (with tool-use support) for the agent loop.
     // The AutonomousProvider (this.provider) is the legacy 4-phase provider
@@ -474,6 +483,17 @@ export class AutonomousLoop {
   async loadState(): Promise<void> {
     const tracer = getTracer();
     tracer.log('agent-loop', 'debug', 'Loading persistent state');
+
+    // When a StateManager is wired, delegate store loading to it.
+    // We still load dream meta separately — it's loop-specific, not a store.
+    if (this.stateManager) {
+      await Promise.all([
+        this.stateManager.load(),
+        this.loadDreamMeta(),
+      ]);
+      return;
+    }
+
     await Promise.all([
       this.worldModel.load(),
       this.goalStack.load(),
@@ -513,6 +533,17 @@ export class AutonomousLoop {
   async saveState(): Promise<void> {
     const tracer = getTracer();
     tracer.log('agent-loop', 'debug', 'Saving persistent state');
+
+    // When a StateManager is wired, delegate store saving to it.
+    // Dream meta is loop-specific and always saved here.
+    if (this.stateManager) {
+      await Promise.all([
+        this.stateManager.save(),
+        this.saveDreamMeta(),
+      ]);
+      return;
+    }
+
     await Promise.all([
       this.worldModel.save(),
       this.goalStack.save(),

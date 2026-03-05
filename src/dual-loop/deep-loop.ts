@@ -19,7 +19,7 @@ import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
 import type { GoalStack } from '../autonomous/goal-stack.js';
 import type { AgentToolkit } from '../autonomous/tools/types.js';
-import type { ToolResultMessage } from '../tools/schemas/types.js';
+import type { ToolResultMessage, ToolSchema } from '../tools/schemas/types.js';
 import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
 import { readFile } from 'node:fs/promises';
@@ -30,13 +30,23 @@ import { detectProjectDir, writeProjectMd } from './project-store.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
 import { selectDeepTier, selectDeepReviewTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
 import type { ReviewResult } from './task-board-types.js';
-import { REVIEW_SYSTEM_PROMPT, REVIEW_FORMAT_SCHEMA, CASCADE_REVIEW_PROMPTS, buildReviewPrompt, parseReviewResponse } from './review-prompt.js';
+import { REVIEW_SYSTEM_PROMPT, REVIEW_FORMAT_SCHEMA, CASCADE_REVIEW_PROMPTS, INTEGRATION_REVIEW_SYSTEM_PROMPT, buildReviewPrompt, parseReviewResponse } from './review-prompt.js';
 import { runIdleCheck } from './deep-loop-events.js';
 import type { DeepLoopEventConfig } from './deep-loop-events.js';
 import { ComputeScaler } from '../autonomous/reasoning/compute-scaler.js';
 import type { ComputeBudget } from '../autonomous/reasoning/compute-scaler.js';
 import { ReasoningScaler } from '../autonomous/reasoning/scaling.js';
 import type { SkillFilesManager, SkillFile } from '../autonomous/memory/skill-files.js';
+import {
+  extractImportBindings,
+  extractMemberAccesses,
+  extractAPISurface,
+  extractObjectPropertyNames,
+  resolveImportPath,
+} from '../tools/static-analysis.js';
+
+// State Manager (optional — provides role-scoped views of system state)
+import type { StateManager } from '../state/state-manager.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -215,13 +225,19 @@ Choose the right number of steps for the task complexity:
   freely search in one continuous loop. Single-step plans preserve context
   across all tool calls.
 
+**1-2 steps** — Greenfield multi-file projects (building a complete project from a spec):
+  Prefer 1 step (or 2 max: create + verify). Single-step preserves cross-file
+  context, avoids re-reading previously created files, and uses the full 50-turn
+  budget. Only split into more steps when later steps truly DEPEND on earlier
+  results (e.g., need runtime output from step 1 to inform step 2).
+
 **2-5 steps** — Bug fixes, small features, refactors:
   - Bug fixes: diagnose → fix → test.
   - Features: read context → implement → test.
   - Refactors: analyze → transform → verify.
 
-**5-12 steps** — Multi-file projects (games, apps, full features):
-  When creating multiple files, give each logical module its OWN step.
+**5-12 steps** — Iterative/incremental changes to existing codebases (NOT greenfield builds):
+  When modifying multiple files in an existing project, give each logical module its OWN step.
   This is critical: each step has a turn budget, and cramming too many
   files into one step risks timeout or incomplete output.
 
@@ -288,6 +304,8 @@ export class DeepLoop {
   private taskTurnCount: number = 0;
   /** Skill files manager for skill-assisted planning and post-task learning */
   private skillFilesManager: SkillFilesManager | null = null;
+  /** Optional StateManager — provides role-scoped views of system state */
+  private stateManager: StateManager | null = null;
 
   constructor(
     provider: LlmProvider,
@@ -296,6 +314,7 @@ export class DeepLoop {
     eventBus: EventBus,
     config?: Partial<DeepLoopConfig>,
     toolkit?: AgentToolkit,
+    stateManager?: StateManager,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.provider = provider;
@@ -303,11 +322,18 @@ export class DeepLoop {
     this.taskBoard = taskBoard;
     this.eventBus = eventBus;
     this.toolkit = toolkit ?? null;
+    this.stateManager = stateManager ?? null;
     this.computeScaler = new ComputeScaler();
     this.reasoningScaler = new ReasoningScaler({
       codingModel: this.config.coderModel,
       reasoningModel: this.config.model,
     });
+
+    // If stateManager is provided, pull goalStack and skillFilesManager from it
+    if (stateManager) {
+      this.goalStack = stateManager.goalStack;
+      this.skillFilesManager = stateManager.skillFiles;
+    }
   }
 
   // ── Main Work Loop ──────────────────────────────────────────────────────
@@ -384,6 +410,8 @@ export class DeepLoop {
   /**
    * Set the GoalStack for idle-time goal work. Optional — if not set,
    * the DeepLoop only processes events during idle, not goals.
+   *
+   * @deprecated Pass a StateManager to the constructor instead.
    */
   setGoalStack(goalStack: GoalStack, config?: DeepLoopEventConfig): void {
     this.goalStack = goalStack;
@@ -394,9 +422,21 @@ export class DeepLoop {
    * Set the SkillFilesManager for skill-assisted planning and post-task learning.
    * When set, the planner injects relevant learned skills as prior art,
    * and successful tasks trigger skill learning.
+   *
+   * @deprecated Pass a StateManager to the constructor instead.
    */
   setSkillFilesManager(manager: SkillFilesManager): void {
     this.skillFilesManager = manager;
+  }
+
+  /**
+   * Set the StateManager after construction. Useful when the StateManager
+   * is created after the DeepLoop.
+   */
+  setStateManager(sm: StateManager): void {
+    this.stateManager = sm;
+    this.goalStack = sm.goalStack;
+    this.skillFilesManager = sm.skillFiles;
   }
 
   /** Whether the loop is currently running */
@@ -617,6 +657,39 @@ export class DeepLoop {
       }
     }
 
+    // If a StateManager is available, inject a concise planner context summary
+    // (~500-1500 tokens) covering world model health, active goals, and recent journal entries.
+    let plannerContext = '';
+    if (this.stateManager) {
+      const view = this.stateManager.plannerView();
+      const parts: string[] = [];
+
+      // World model summary (~200 tokens)
+      const worldSummary = view.worldModel.getSummary();
+      if (worldSummary) {
+        parts.push(`**World Model:** ${worldSummary.slice(0, 600)}`);
+      }
+
+      // Active goals (~200 tokens)
+      const goalSummary = view.goalStack.getSummaryText();
+      if (goalSummary) {
+        parts.push(`**Active Goals:**\n${goalSummary.slice(0, 500)}`);
+      }
+
+      // Recent journal entries (~200 tokens)
+      const recentEntries = view.journal.getRecent(3);
+      if (recentEntries.length > 0) {
+        const journalLines = recentEntries.map(
+          (e) => `- [${e.type}] ${e.content.slice(0, 120)}`,
+        );
+        parts.push(`**Recent Journal:**\n${journalLines.join('\n')}`);
+      }
+
+      if (parts.length > 0) {
+        plannerContext = `\n## System Context\n\n${parts.join('\n\n')}`;
+      }
+    }
+
     const prompt = [
       `## User Request\n\n${task.originalMessage ?? '(no message)'}`,
       task.triageNotes ? `\n## Triage Notes\n\n${task.triageNotes}` : '',
@@ -627,6 +700,7 @@ export class DeepLoop {
           : '',
       existingProjectContext,
       skillContext,
+      plannerContext,
     ].join('');
 
     let rawResponse: string | null = null;
@@ -1144,6 +1218,7 @@ export class DeepLoop {
     reviewResult: ReviewResult;
     reviewNotes: string;
     reviewFeedback?: string;
+    passName?: string;
   }> {
     const tracer = getTracer();
     const plan = task.plan ?? '(no plan)';
@@ -1151,12 +1226,51 @@ export class DeepLoop {
     const totalPasses = task.verificationPasses ?? 1;
     let currentPass = task.currentVerificationPass ?? 0;
 
+    // Integration review for multi-file tasks (runs before structured passes)
+    const isMultiFile = (task.workspaceManifest?.length ?? 0) >= 2;
+    if (isMultiFile && this.toolkit) {
+      const outcome = await this.integrationReview(task);
+      if (outcome.result !== 'approved') {
+        return {
+          approved: false,
+          reviewResult: 'changes_requested',
+          reviewNotes: outcome.issues.join('\n'),
+          reviewFeedback: outcome.issues.join('\n'),
+          passName: 'integration',
+        };
+      }
+    }
+
+    // Build reviewer context from StateManager if available (~200-400 tokens)
+    let reviewerContext = '';
+    if (this.stateManager) {
+      const view = this.stateManager.reviewerView();
+      const parts: string[] = [];
+
+      const issueSummary = view.issueLog.getSummaryText();
+      if (issueSummary) {
+        parts.push(`Known Issues: ${issueSummary.slice(0, 300)}`);
+      }
+
+      const goalSummary = view.goalStack.getSummaryText();
+      if (goalSummary) {
+        parts.push(`Active Goals: ${goalSummary.slice(0, 200)}`);
+      }
+
+      if (parts.length > 0) {
+        reviewerContext = `\n\n## Reviewer Context\n\n${parts.join('\n')}`;
+      }
+    }
+
     while (currentPass < totalPasses) {
       const systemPrompt = currentPass === 0
         ? REVIEW_SYSTEM_PROMPT
         : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
 
-      const reviewPrompt = buildReviewPrompt({ plan, artifacts });
+      const baseReviewPrompt = buildReviewPrompt({ plan, artifacts });
+      const reviewPrompt = reviewerContext
+        ? baseReviewPrompt + reviewerContext
+        : baseReviewPrompt;
 
       // Select tier based on measured content size
       const tier = selectDeepReviewTier(
@@ -1213,6 +1327,105 @@ export class DeepLoop {
       reviewResult: 'approved',
       reviewNotes: `All ${totalPasses} review pass(es) approved`,
     };
+  }
+
+  // ── Integration Review ──────────────────────────────────────────────────
+
+  /**
+   * Integration review — uses a ReAct tool loop with read-only tools to
+   * verify cross-module wiring for multi-file tasks.
+   *
+   * Filters the toolkit to read-only tools (read_file, grep, glob,
+   * validate_project) and runs the INTEGRATION_REVIEW_SYSTEM_PROMPT.
+   * If a StateManager is available, injects reviewer context (known issues,
+   * active goals) into the prompt.
+   *
+   * Returns { result: 'approved' | 'changes_requested', issues: string[] }.
+   */
+  private async integrationReview(task: Task): Promise<{
+    result: 'approved' | 'changes_requested';
+    issues: string[];
+  }> {
+    const tracer = getTracer();
+    tracer.log('deep-loop', 'info', `Integration review for ${task.id}`);
+
+    if (!this.toolkit) {
+      return { result: 'approved', issues: [] };
+    }
+
+    // Filter toolkit to read-only tools
+    const readOnlyNames = new Set(['read_file', 'grep', 'glob', 'validate_project']);
+    const readOnlyToolSchemas = this.toolkit.schemas.filter(
+      (s) => readOnlyNames.has(s.name),
+    );
+
+    // Build prompt with workspace manifest
+    const manifestLines = (task.workspaceManifest ?? []).map(
+      (f) => `- ${f.path} (${f.action}${f.lines !== undefined ? `, ${f.lines} lines` : ''})`,
+    );
+
+    const promptParts: string[] = [
+      `## Task\n\n${task.originalMessage ?? task.plan ?? '(no description)'}`,
+      `\n## Workspace Manifest\n\n${manifestLines.length > 0 ? manifestLines.join('\n') : '(no files)'}`,
+    ];
+
+    // Inject reviewer context from StateManager if available
+    if (this.stateManager) {
+      const view = this.stateManager.reviewerView();
+      const contextParts: string[] = [];
+
+      const issueSummary = view.issueLog.getSummaryText();
+      if (issueSummary) {
+        contextParts.push(`Known Issues: ${issueSummary.slice(0, 300)}`);
+      }
+
+      const goalSummary = view.goalStack.getSummaryText();
+      if (goalSummary) {
+        contextParts.push(`Active Goals: ${goalSummary.slice(0, 200)}`);
+      }
+
+      if (contextParts.length > 0) {
+        promptParts.push(`\n## Reviewer Context\n\n${contextParts.join('\n')}`);
+      }
+    }
+
+    const request: GenerateRequest = {
+      prompt: promptParts.join('\n'),
+      systemPrompt: INTEGRATION_REVIEW_SYSTEM_PROMPT,
+      temperature: 0.1,
+      maxTokens: 2048,
+    };
+
+    try {
+      const responseText = await this.executeWithTools(request, 15, readOnlyToolSchemas);
+
+      // Parse the last model message as JSON
+      try {
+        const { json } = extractJsonFromResponse(responseText);
+        const result = json['result'] === 'approved' ? 'approved' as const : 'changes_requested' as const;
+        const issues = Array.isArray(json['issues'])
+          ? (json['issues'] as unknown[]).map(String)
+          : [];
+
+        tracer.log('deep-loop', 'info', `Integration review result: ${result}`, {
+          issueCount: issues.length,
+        });
+
+        return { result, issues };
+      } catch {
+        tracer.log('deep-loop', 'warn', 'Integration review output could not be parsed as JSON');
+        return {
+          result: 'changes_requested',
+          issues: ['Review output could not be parsed'],
+        };
+      }
+    } catch (error) {
+      tracer.log('deep-loop', 'warn', `Integration review failed: ${error instanceof Error ? error.message : String(error)}`);
+      return {
+        result: 'changes_requested',
+        issues: [`Integration review error: ${error instanceof Error ? error.message : String(error)}`],
+      };
+    }
   }
 
   // ── Coder Dispatch ──────────────────────────────────────────────────────
@@ -1294,10 +1507,16 @@ Other rules:
    * Calls the model, executes any tool calls, feeds results back, and
    * repeats until the model stops calling tools (or maxTurns is reached).
    * Falls back to a plain no-tools call when no toolkit is configured.
+   *
+   * @param toolOverride - When provided, these tool schemas are sent to the
+   *   model instead of the full toolkit schemas. The executor still uses the
+   *   full toolkit to dispatch calls, so only the model's visible tool set is
+   *   restricted (e.g., read-only tools for integration review).
    */
   private async executeWithTools(
     request: GenerateRequest,
     maxTurns: number = 20,
+    toolOverride?: ToolSchema[],
   ): Promise<string> {
     if (!this.toolkit) {
       const response = await this.provider.generateWithTools(request, []);
@@ -1305,7 +1524,9 @@ Other rules:
     }
 
     const tracer = getTracer();
-    const tools = this.toolkit.schemas;
+    // Use toolOverride for the schemas sent to the model if provided,
+    // but always use the full toolkit for actual execution dispatch.
+    const tools = toolOverride ?? this.toolkit.schemas;
     let lastText = '';
 
     // Accumulate full conversation history so each turn sees ALL prior
@@ -1952,35 +2173,13 @@ Other rules:
       if (!baseName) continue;
 
       // Check if the import target exists in the manifest (by basename or full path)
-      const fullPath = this.resolveImportPath(filePath, target);
+      const fullPath = resolveImportPath(filePath, target);
       if (!knownPaths.has(fullPath) && !knownBaseNames.has(baseName)) {
         warnings.push(`imports '${target}' but no matching file exists in the workspace`);
       }
     }
 
     return warnings;
-  }
-
-  /**
-   * Resolve a relative import path against the importing file's directory.
-   * E.g., resolveImportPath('projects/game/js/main.js', './config.js')
-   *       → 'projects/game/js/config.js'
-   */
-  private resolveImportPath(fromFile: string, importTarget: string): string {
-    const fromParts = fromFile.split('/');
-    fromParts.pop(); // remove filename, keep directory
-    const targetParts = importTarget.split('/');
-
-    const resolved = [...fromParts];
-    for (const part of targetParts) {
-      if (part === '.') continue;
-      if (part === '..') {
-        resolved.pop();
-      } else {
-        resolved.push(part);
-      }
-    }
-    return resolved.join('/');
   }
 
   /**
@@ -2012,7 +2211,7 @@ Other rules:
 
       for (const binding of bindings) {
         // 3. Resolve the source path
-        const resolvedSource = this.resolveImportPath(filePath, binding.source);
+        const resolvedSource = resolveImportPath(filePath, binding.source);
 
         // Find source content (try exact path, then basename match)
         let sourceContent = fileContents.get(resolvedSource);
@@ -2065,254 +2264,17 @@ Other rules:
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cross-File API Validation Helpers
+// Cross-File API Validation Helpers (re-exported from static-analysis module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Binding entry: a local variable name mapped to the source file it was imported from. */
-export interface ImportBinding {
-  localName: string;
-  source: string;
-  isDefault: boolean;
-}
-
-/**
- * Parse import statements and map each local binding name to the source file path.
- * Only returns relative imports (starting with . or /).
- */
-export function extractImportBindings(content: string): ImportBinding[] {
-  const bindings: ImportBinding[] = [];
-
-  // Strip comments to avoid false positives
-  const stripped = content
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-
-  // Combined default + named: import Foo, { A, B } from './bar.js'
-  for (const m of stripped.matchAll(
-    /\bimport\s+(\w+)\s*,\s*\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]/g,
-  )) {
-    const source = m[3]!;
-    bindings.push({ localName: m[1]!, source, isDefault: true });
-    for (const name of m[2]!.split(',')) {
-      const trimmed = name.trim();
-      if (!trimmed) continue;
-      const parts = trimmed.split(/\s+as\s+/);
-      const local = (parts.length > 1 ? parts[1] : parts[0])!.trim();
-      if (local) bindings.push({ localName: local, source, isDefault: false });
-    }
-  }
-
-  // Default import: import Foo from './bar.js'
-  // Must NOT match combined imports (already handled above)
-  for (const m of stripped.matchAll(
-    /\bimport\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g,
-  )) {
-    // Skip if this was already captured as a combined import
-    const alreadyCaptured = bindings.some(
-      (b) => b.localName === m[1]! && b.source === m[2]!,
-    );
-    if (!alreadyCaptured) {
-      bindings.push({ localName: m[1]!, source: m[2]!, isDefault: true });
-    }
-  }
-
-  // Named imports: import { A, B as C } from './config.js'
-  // Must NOT match combined imports
-  for (const m of stripped.matchAll(
-    /\bimport\s*\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]/g,
-  )) {
-    const source = m[2]!;
-    // Skip if already captured from combined
-    const existingForSource = bindings.filter((b) => b.source === source && !b.isDefault);
-    if (existingForSource.length > 0) continue;
-
-    for (const name of m[1]!.split(',')) {
-      const trimmed = name.trim();
-      if (!trimmed) continue;
-      const parts = trimmed.split(/\s+as\s+/);
-      const local = (parts.length > 1 ? parts[1] : parts[0])!.trim();
-      if (local) bindings.push({ localName: local, source, isDefault: false });
-    }
-  }
-
-  // Namespace import: import * as Foo from './bar.js'
-  for (const m of stripped.matchAll(
-    /\bimport\s*\*\s*as\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g,
-  )) {
-    bindings.push({ localName: m[1]!, source: m[2]!, isDefault: false });
-  }
-
-  // Only keep relative imports
-  return bindings.filter((b) => b.source.startsWith('.') || b.source.startsWith('/'));
-}
-
-/**
- * Find all `identifier.memberName` patterns in file content.
- * Returns deduplicated member names.
- */
-export function extractMemberAccesses(content: string, identifier: string): string[] {
-  const members = new Set<string>();
-
-  // Strip comments
-  const stripped = content
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-
-  const escaped = identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`\\b${escaped}\\.(\\w+)`, 'g');
-  for (const m of stripped.matchAll(regex)) {
-    members.add(m[1]!);
-  }
-  return [...members];
-}
-
-/** Keywords that look like method definitions but aren't. */
-const METHOD_EXCLUDE = new Set([
-  'if', 'for', 'while', 'switch', 'catch', 'constructor',
-  'return', 'throw', 'new', 'typeof', 'delete', 'void',
-]);
-
-/**
- * Extract the publicly-accessible API surface from a module's source code.
- * Returns a set of method/property/function names.
- */
-export function extractAPISurface(content: string): Set<string> {
-  const api = new Set<string>();
-
-  // Strip comments
-  const stripped = content
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-
-  // Exported functions: export (default )?(async )?function name(
-  for (const m of stripped.matchAll(
-    /\bexport\s+(?:default\s+)?(?:async\s+)?function\s+(\w+)/g,
-  )) {
-    api.add(m[1]!);
-  }
-
-  // Exported variables: export (const|let|var) name
-  for (const m of stripped.matchAll(
-    /\bexport\s+(?:const|let|var)\s+(\w+)/g,
-  )) {
-    api.add(m[1]!);
-  }
-
-  // Re-exports: export { A, B }
-  for (const m of stripped.matchAll(/\bexport\s*\{([^}]+)\}/g)) {
-    for (const name of m[1]!.split(',')) {
-      const trimmed = name.trim().split(/\s+as\s+/);
-      const exported = (trimmed.length > 1 ? trimmed[1] : trimmed[0])!.trim();
-      if (exported) api.add(exported);
-    }
-  }
-
-  // Class methods — find class bodies and extract method definitions
-  // Track brace depth to isolate class body
-  const classStarts = [...stripped.matchAll(/\bclass\s+\w+[^{]*\{/g)];
-  for (const classMatch of classStarts) {
-    const startIdx = classMatch.index! + classMatch[0].length;
-    let depth = 1;
-    let classEnd = startIdx;
-    for (let i = startIdx; i < stripped.length && depth > 0; i++) {
-      if (stripped[i] === '{') depth++;
-      else if (stripped[i] === '}') {
-        depth--;
-        if (depth === 0) classEnd = i;
-      }
-    }
-
-    const classBody = stripped.slice(startIdx, classEnd);
-
-    // Method definitions at class body level (depth 0 within class)
-    // Match: methodName( or async methodName(
-    for (const m of classBody.matchAll(
-      /^\s+(?:async\s+)?(\w+)\s*\(/gm,
-    )) {
-      const name = m[1]!;
-      if (!METHOD_EXCLUDE.has(name)) {
-        api.add(name);
-      }
-    }
-
-    // Getters and setters: get name( / set name(
-    for (const m of classBody.matchAll(/^\s+(?:get|set)\s+(\w+)\s*\(/gm)) {
-      api.add(m[1]!);
-    }
-  }
-
-  // Default export of instantiated class: export default new ClassName()
-  // The API is the class's methods — already captured above if class is in same file
-  for (const m of stripped.matchAll(
-    /\bexport\s+default\s+new\s+(\w+)/g,
-  )) {
-    // Class methods already captured — just note the class name for reference
-    api.add(m[1]!);
-  }
-
-  return api;
-}
-
-/**
- * For config-like modules, extract top-level property keys from an object literal
- * assigned to the given variable name.
- * e.g., `export const ENEMIES = { baseSpeed: 50, rows: 5 }` → ['baseSpeed', 'rows']
- */
-export function extractObjectPropertyNames(content: string, varName: string): string[] {
-  // Strip comments
-  const stripped = content
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-
-  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const assignMatch = stripped.match(
-    new RegExp(`(?:export\\s+)?(?:const|let|var)\\s+${escaped}\\s*=\\s*\\{`),
-  );
-  if (!assignMatch) return [];
-
-  const startIdx = assignMatch.index! + assignMatch[0].length - 1; // position of '{'
-
-  // Find balanced closing brace
-  let depth = 0;
-  let endIdx = startIdx;
-  for (let i = startIdx; i < stripped.length; i++) {
-    if (stripped[i] === '{') depth++;
-    else if (stripped[i] === '}') {
-      depth--;
-      if (depth === 0) {
-        endIdx = i;
-        break;
-      }
-    }
-  }
-
-  if (endIdx <= startIdx) return [];
-
-  const body = stripped.slice(startIdx + 1, endIdx);
-
-  // Extract top-level property keys (only lines at depth 0 within this body)
-  // We need to track nested braces to only get top-level keys
-  const keys: string[] = [];
-  let innerDepth = 0;
-  for (const line of body.split('\n')) {
-    // Extract keys BEFORE counting braces so that `player: {` is captured at depth 0
-    // but `width: 40` inside the nested object (depth 1) is skipped
-    if (innerDepth === 0) {
-      const keyMatch = line.match(/^\s*(\w+)\s*:/);
-      if (keyMatch) {
-        keys.push(keyMatch[1]!);
-      }
-    }
-
-    // Count braces on this line for depth tracking (after key extraction)
-    for (const ch of line) {
-      if (ch === '{' || ch === '[' || ch === '(') innerDepth++;
-      else if (ch === '}' || ch === ']' || ch === ')') innerDepth--;
-    }
-  }
-
-  return keys;
-}
+export {
+  extractImportBindings,
+  extractMemberAccesses,
+  extractAPISurface,
+  extractObjectPropertyNames,
+  resolveImportPath,
+  type ImportBinding,
+} from '../tools/static-analysis.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Factory

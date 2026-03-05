@@ -93,9 +93,9 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AgentToolkit — Schema Validation', () => {
-  it('exposes all 96 tool schemas', () => {
-    expect(toolkit.schemas).toHaveLength(96);
-    expect(toolkit.toolNames).toHaveLength(96);
+  it('exposes all 99 tool schemas', () => {
+    expect(toolkit.schemas).toHaveLength(99);
+    expect(toolkit.toolNames).toHaveLength(99);
   });
 
   it('includes all expected tool names', () => {
@@ -103,7 +103,7 @@ describe('AgentToolkit — Schema Validation', () => {
     const expected = [
       'think', 'read_file', 'edit_file', 'create_file',
       'grep', 'glob', 'bash',
-      'run_tests', 'typecheck', 'lint',
+      'run_tests', 'typecheck', 'lint', 'browser_test',
       'git_status', 'git_diff', 'git_commit', 'git_log',
       'file_issue', 'close_issue', 'update_goal',
       'delegate', 'message_user',
@@ -270,8 +270,7 @@ describe('AgentToolkit — read_file caching', () => {
     // Second read — warning about redundancy
     const result2 = await toolkit.execute(makeCall('read_file', { path: 'src/repeat.ts' }));
     expect(result2.success).toBe(true);
-    expect(result2.output).toContain('already read');
-    expect(result2.output).toContain('cached content');
+    expect(result2.output).toContain('unchanged since first read');
   });
 
   it('cache is invalidated after edit_file modifies the file', async () => {
