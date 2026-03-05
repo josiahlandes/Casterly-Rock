@@ -48,6 +48,10 @@ import {
 // State Manager (optional — provides role-scoped views of system state)
 import type { StateManager } from '../state/state-manager.js';
 
+// Metacognition — preflection and confabulation guard
+import { preflectHeuristic, buildKnowledgeManifest, buildContextualGuard, CONFABULATION_GUARD_PROMPT } from '../metacognition/index.js';
+import type { PreflectionResult, KnowledgeSource } from '../metacognition/index.js';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -626,6 +630,47 @@ export class DeepLoop {
     const tracer = getTracer();
     const tier = selectDeepTier(task);
 
+    // ── Metacognition: Preflection ──────────────────────────────────────
+    // Run a heuristic preflection to determine what knowledge sources are
+    // relevant and whether confabulation risk is high. This is instant
+    // (no LLM call) and informs what context to inject into the prompt.
+    let preflection: PreflectionResult | null = null;
+    let metacognitionContext = '';
+    if (this.stateManager) {
+      const cogMap = this.stateManager.cognitiveMap;
+      const manifest = buildKnowledgeManifest({
+        cognitiveMap: cogMap,
+        worldModel: this.stateManager.worldModel,
+        goalStack: this.stateManager.goalStack,
+        issueLog: this.stateManager.issueLog,
+        journal: this.stateManager.journal,
+        hasCrystals: false, // TODO: wire crystal store check
+        hasConstitution: false, // TODO: wire constitution store check
+        hasSelfModel: true,
+        hasSkillFiles: this.skillFilesManager !== null,
+        hasGraphMemory: this.stateManager.graphMemory !== null,
+      });
+
+      const taskMessage = task.originalMessage ?? task.triageNotes ?? '';
+      preflection = preflectHeuristic(taskMessage, manifest.sources);
+
+      tracer.log('deep-loop', 'debug', 'Preflection result', {
+        confidence: preflection.confidence,
+        confabulationRisk: preflection.confabulationRisk,
+        isSelfReferential: preflection.isSelfReferential,
+        retrieveCount: preflection.retrieve.length,
+      });
+
+      // If self-referential or high confabulation risk, inject cognitive map context
+      if (preflection.isSelfReferential || preflection.confabulationRisk === 'high') {
+        const cogSummary = cogMap.buildSummary();
+        if (cogSummary) {
+          metacognitionContext += `\n## My Environment\n\n${cogSummary}`;
+        }
+        metacognitionContext += `\n\n## Knowledge Sources\n\n${manifest.prompt}`;
+      }
+    }
+
     // If continuing an existing project, inject its PROJECT.md as context
     let existingProjectContext = '';
     if (task.projectDir) {
@@ -701,7 +746,13 @@ export class DeepLoop {
       existingProjectContext,
       skillContext,
       plannerContext,
+      metacognitionContext,
     ].join('');
+
+    // Build system prompt — append confabulation guard when preflection flags risk
+    const systemPrompt = preflection && preflection.confabulationRisk !== 'low'
+      ? PLANNING_SYSTEM_PROMPT + '\n\n' + buildContextualGuard(preflection)
+      : PLANNING_SYSTEM_PROMPT;
 
     let rawResponse: string | null = null;
 
@@ -710,7 +761,7 @@ export class DeepLoop {
       // We extract the <think> block separately and parse only the JSON output.
       rawResponse = await this.callWithTier(tier, {
         prompt,
-        systemPrompt: PLANNING_SYSTEM_PROMPT,
+        systemPrompt,
         temperature: 0.2,
         maxTokens: 4096,
       });
