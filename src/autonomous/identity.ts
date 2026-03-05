@@ -105,7 +105,7 @@ export interface IdentityPromptResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: IdentityConfig = {
-  maxChars: 10000, // ~2,500 tokens at 4 chars/token (increased for metacognition sections)
+  maxChars: 12000, // ~3,000 tokens at 4 chars/token (includes metacognition sections)
   includeSelfModel: true,
   maxGoalsInPrompt: 5,
   maxIssuesInPrompt: 5,
@@ -334,6 +334,13 @@ export function buildIdentityPrompt(
       sections,
       generatedAt: new Date().toISOString(),
     };
+
+    // Warn if any sections were dropped due to budget
+    const allSectionKeys = Object.keys(sections) as Array<keyof typeof sections>;
+    const droppedSections = allSectionKeys.filter((k) => !sections[k] && k !== 'character');
+    if (droppedSections.length > 0 && totalChars >= cfg.maxChars * 0.9) {
+      tracer.log('identity', 'warn', `Identity prompt near budget limit (${totalChars}/${cfg.maxChars} chars). Dropped sections: ${droppedSections.join(', ')}. Consider increasing maxChars.`);
+    }
 
     tracer.log('identity', 'info', 'Identity prompt built', {
       charCount: result.charCount,
