@@ -1,21 +1,29 @@
 /**
- * Embedding Provider — On-device embeddings via Ollama
+ * Embedding Provider — On-device embeddings via ANE or Ollama
  *
- * Wraps Ollama's /api/embed endpoint to compute embedding vectors for
- * semantic memory search. Uses nomic-embed-text (~40MB, 768 dimensions)
- * by default, with an in-memory LRU cache keyed by content hash.
+ * Wraps embedding computation with a two-tier strategy:
+ *   1. ANE (Apple Neural Engine) — zero-cost NPU inference when available
+ *   2. Ollama /api/embed — GPU-based fallback via nomic-embed-text
+ *
+ * Uses nomic-embed-text (~40MB, 768 dimensions) by default, with an
+ * in-memory LRU cache keyed by content hash.
  *
  * Design:
  *   - Local-only: all computation stays on-device.
+ *   - ANE-first: when the CoreML bridge is running, embeddings route to
+ *     the Neural Engine (19 TFLOPS at 2.8W), freeing the GPU for main
+ *     inference models.
  *   - LRU cache: avoids redundant API calls for repeated content.
- *   - Graceful degradation: if Ollama is unreachable or the model isn't
- *     loaded, returns null instead of throwing. Callers fall back to
- *     keyword-only recall.
+ *   - Graceful degradation: if both ANE and Ollama are unreachable,
+ *     returns null instead of throwing. Callers fall back to keyword-only
+ *     recall.
  *
  * Part of Supporting Work: Semantic Memory.
+ * ANE integration: docs/roadmap.md Tier 4, Item 11.
  */
 
 import { createHash } from 'node:crypto';
+import type { AneProvider } from './ane.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -120,10 +128,19 @@ class LRUCache<V> {
 export class EmbeddingProvider {
   private readonly config: EmbeddingProviderConfig;
   private readonly cache: LRUCache<number[]>;
+  private aneProvider: AneProvider | null = null;
 
   constructor(config?: Partial<EmbeddingProviderConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.cache = new LRUCache(this.config.cacheSize);
+  }
+
+  /**
+   * Attach an ANE provider for NPU-accelerated embeddings.
+   * When set, embed() tries ANE first and falls back to Ollama.
+   */
+  setAneProvider(ane: AneProvider): void {
+    this.aneProvider = ane;
   }
 
   /**
@@ -139,6 +156,20 @@ export class EmbeddingProvider {
     const cached = this.cache.get(key);
     if (cached) return cached;
 
+    // Try ANE first (NPU — frees GPU for main inference)
+    if (this.aneProvider) {
+      try {
+        const aneResult = await this.aneProvider.embed(text);
+        if (aneResult) {
+          this.cache.set(key, aneResult.embedding);
+          return aneResult.embedding;
+        }
+      } catch {
+        // ANE failed, fall through to Ollama
+      }
+    }
+
+    // Fall back to Ollama (GPU)
     try {
       const response = await this.callOllamaEmbed([text]);
       if (!response || response.length === 0) return null;
@@ -179,6 +210,48 @@ export class EmbeddingProvider {
 
     if (toCompute.length === 0) return results;
 
+    // Try ANE first for uncached texts
+    if (this.aneProvider) {
+      try {
+        const aneResults = await this.aneProvider.embedBatch(toCompute.map((t) => t.text));
+        const remaining: Array<{ index: number; text: string }> = [];
+
+        for (let i = 0; i < toCompute.length; i++) {
+          const aneResult = aneResults[i];
+          const item = toCompute[i]!;
+          if (aneResult) {
+            results[item.index] = aneResult.embedding;
+            this.cache.set(this.cacheKey(item.text), aneResult.embedding);
+          } else {
+            remaining.push(item);
+          }
+        }
+
+        // If ANE handled everything, return early
+        if (remaining.length === 0) return results;
+
+        // Fall back to Ollama for items ANE couldn't handle
+        try {
+          const embeddings = await this.callOllamaEmbed(remaining.map((t) => t.text));
+          if (embeddings) {
+            for (let i = 0; i < remaining.length && i < embeddings.length; i++) {
+              const embedding = embeddings[i]!;
+              const item = remaining[i]!;
+              results[item.index] = embedding;
+              this.cache.set(this.cacheKey(item.text), embedding);
+            }
+          }
+        } catch {
+          // Graceful degradation
+        }
+
+        return results;
+      } catch {
+        // ANE batch failed entirely, fall through to full Ollama fallback
+      }
+    }
+
+    // Ollama fallback (no ANE or ANE failed)
     try {
       const embeddings = await this.callOllamaEmbed(toCompute.map((t) => t.text));
       if (embeddings) {

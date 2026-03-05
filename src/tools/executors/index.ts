@@ -8,6 +8,7 @@
 
 import type { ToolOrchestrator } from '../orchestrator.js';
 import { createReadFileExecutor } from './read-file.js';
+import { createReadFilesExecutor } from './read-files.js';
 import { createWriteFileExecutor } from './write-file.js';
 import { createListFilesExecutor } from './list-files.js';
 import { createSearchFilesExecutor } from './search-files.js';
@@ -22,6 +23,7 @@ import { createReminderCreateExecutor } from './reminder-create.js';
 import { createHttpGetExecutor } from './http-get.js';
 
 export { createReadFileExecutor } from './read-file.js';
+export { createReadFilesExecutor } from './read-files.js';
 export { createWriteFileExecutor } from './write-file.js';
 export { createListFilesExecutor } from './list-files.js';
 export { createSearchFilesExecutor } from './search-files.js';
@@ -42,6 +44,7 @@ export { createHttpGetExecutor } from './http-get.js';
 export function registerNativeExecutors(orchestrator: ToolOrchestrator): void {
   // Core file tools
   orchestrator.registerExecutor(createReadFileExecutor());
+  orchestrator.registerExecutor(createReadFilesExecutor());
   orchestrator.registerExecutor(createWriteFileExecutor());
   orchestrator.registerExecutor(createListFilesExecutor());
   orchestrator.registerExecutor(createSearchFilesExecutor());

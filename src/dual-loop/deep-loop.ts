@@ -24,7 +24,8 @@ import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Task, TaskArtifact, PlanStep, FileOperation } from './task-board-types.js';
+import type { Task, TaskArtifact, PlanStep, FileOperation, HandoffSnapshot } from './task-board-types.js';
+import { buildHandoffSnapshot, serializeHandoff } from './handoff.js';
 import { detectProjectDir, writeProjectMd } from './project-store.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
 import { selectDeepTier, selectDeepReviewTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
@@ -32,6 +33,10 @@ import type { ReviewResult } from './task-board-types.js';
 import { REVIEW_SYSTEM_PROMPT, REVIEW_FORMAT_SCHEMA, CASCADE_REVIEW_PROMPTS, buildReviewPrompt, parseReviewResponse } from './review-prompt.js';
 import { runIdleCheck } from './deep-loop-events.js';
 import type { DeepLoopEventConfig } from './deep-loop-events.js';
+import { ComputeScaler } from '../autonomous/reasoning/compute-scaler.js';
+import type { ComputeBudget } from '../autonomous/reasoning/compute-scaler.js';
+import { ReasoningScaler } from '../autonomous/reasoning/scaling.js';
+import type { SkillFilesManager, SkillFile } from '../autonomous/memory/skill-files.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -186,10 +191,19 @@ You MUST respond with ONLY a valid JSON object (no additional text outside the J
 {
   "plan": "High-level description of the approach",
   "steps": [
-    { "description": "Step 1: ...", "status": "pending" },
-    { "description": "Step 2: ...", "status": "pending" }
+    { "description": "Step 1: ...", "status": "pending", "context": "Only the spec sections relevant to this step" },
+    { "description": "Step 2: ...", "status": "pending", "context": "Only the spec sections relevant to this step" }
   ]
 }
+
+## Step Context (CRITICAL)
+
+For each step, include a "context" field containing ONLY the parts of the user request that are relevant to that step. Do NOT repeat the full specification in every step. The coder executing each step will ONLY see the step's context, not the full request. This prevents the coder from running ahead and implementing future steps.
+
+Example: If the user asks for a game with a player, enemies, and particles:
+- Step 1 context: "Create project structure. index.html with canvas element, config.js with screen dimensions and colors."
+- Step 2 context: "Create player.js. Player class with x/y position, speed=5, draw() method on canvas, moveLeft/moveRight responding to arrow keys."
+- Step 3 context: "Create enemies.js. Enemy grid 5x4, each enemy 30x30px, move horizontally and drop when hitting edges."
 
 ## Step Sizing Guidelines
 
@@ -264,6 +278,16 @@ export class DeepLoop {
   private exportSummaries: Map<string, string> = new Map();
   /** Reference to the full workspace manifest for import validation across steps */
   private currentManifest: FileOperation[] = [];
+  /** Test-time compute scaler — allocates compute budgets per task difficulty */
+  private readonly computeScaler: ComputeScaler;
+  /** Heuristic difficulty assessor */
+  private readonly reasoningScaler: ReasoningScaler;
+  /** Active compute budget for the current task (set at start of processTask) */
+  private activeBudget: ComputeBudget | null = null;
+  /** Tracks turn count for current task (for calibration recording) */
+  private taskTurnCount: number = 0;
+  /** Skill files manager for skill-assisted planning and post-task learning */
+  private skillFilesManager: SkillFilesManager | null = null;
 
   constructor(
     provider: LlmProvider,
@@ -279,6 +303,11 @@ export class DeepLoop {
     this.taskBoard = taskBoard;
     this.eventBus = eventBus;
     this.toolkit = toolkit ?? null;
+    this.computeScaler = new ComputeScaler();
+    this.reasoningScaler = new ReasoningScaler({
+      codingModel: this.config.coderModel,
+      reasoningModel: this.config.model,
+    });
   }
 
   // ── Main Work Loop ──────────────────────────────────────────────────────
@@ -361,6 +390,15 @@ export class DeepLoop {
     this.eventConfig = config;
   }
 
+  /**
+   * Set the SkillFilesManager for skill-assisted planning and post-task learning.
+   * When set, the planner injects relevant learned skills as prior art,
+   * and successful tasks trigger skill learning.
+   */
+  setSkillFilesManager(manager: SkillFilesManager): void {
+    this.skillFilesManager = manager;
+  }
+
   /** Whether the loop is currently running */
   isRunning(): boolean {
     return this.running;
@@ -384,6 +422,19 @@ export class DeepLoop {
       origin: task.origin,
       priority: task.priority,
       hasParkedState: !!task.parkedState,
+    });
+
+    // Assess difficulty and allocate compute budget (test-time compute scaling)
+    const taskDescription = task.originalMessage ?? task.triageNotes ?? '';
+    const heuristicDifficulty = this.reasoningScaler.assessDifficulty(taskDescription);
+    this.activeBudget = this.computeScaler.allocateBudget(heuristicDifficulty);
+    this.taskTurnCount = 0;
+
+    tracer.log('deep-loop', 'info', `Compute budget: ${this.activeBudget.difficulty}`, {
+      maxTurns: this.activeBudget.maxTurns,
+      verificationDepth: this.activeBudget.verificationDepth,
+      maxRetries: this.activeBudget.maxRetries,
+      parallelCandidates: this.activeBudget.parallelCandidates,
     });
 
     try {
@@ -448,12 +499,13 @@ export class DeepLoop {
         }
       }
 
-      // Verification cascade: multi-file tasks get 2 review passes (correctness + security).
-      // Single-file or simple tasks get the standard single review pass.
+      // Verification cascade: compute budget determines depth, with heuristic override
+      // for high-stakes multi-file tasks.
       const fileCount = outcome.workspaceManifest?.length ?? 0;
       const stepCount = planned?.planSteps?.length ?? 0;
       const isHighStakes = fileCount >= 3 || stepCount >= 3;
-      const verificationPasses = isHighStakes ? 2 : 1;
+      const budgetVerification = this.activeBudget?.verificationDepth ?? 1;
+      const verificationPasses = Math.max(budgetVerification, isHighStakes ? 2 : 1);
 
       // Update task with implementation results before self-review
       this.taskBoard.update(task.id, {
@@ -486,6 +538,9 @@ export class DeepLoop {
           resolvedAt: new Date().toISOString(),
         });
         tracer.log('deep-loop', 'info', `Task ${task.id} self-review approved, marking done`);
+
+        // Post-task skill learning: capture multi-step patterns as reusable skills
+        this.tryLearnSkillFromTask(task, planned);
       } else {
         this.taskBoard.update(task.id, {
           status: 'revision',
@@ -503,6 +558,21 @@ export class DeepLoop {
       });
       this.failTask(task.id, error instanceof Error ? error.message : String(error));
     } finally {
+      // Record outcome for calibration (test-time compute scaling)
+      if (this.activeBudget) {
+        const finalTask = this.taskBoard.get(task.id);
+        const succeeded = finalTask?.status === 'done';
+        const revisions = this.revisionCounts.get(task.id) ?? 0;
+        this.computeScaler.recordOutcome(
+          this.activeBudget.difficulty,
+          this.taskTurnCount,
+          revisions,
+          succeeded,
+          (task.originalMessage ?? task.triageNotes ?? '').slice(0, 100),
+        );
+      }
+      this.activeBudget = null;
+      this.taskTurnCount = 0;
       this.currentTask = null;
     }
   }
@@ -528,11 +598,35 @@ export class DeepLoop {
       }
     }
 
+    // Search learned skills for prior art to inject into the planning prompt
+    let skillContext = '';
+    if (this.skillFilesManager) {
+      const taskDescription = task.originalMessage ?? task.triageNotes ?? '';
+      const matchingSkills = this.skillFilesManager.search(taskDescription);
+      // Only inject proficient/expert skills — novice/competent skills aren't reliable enough
+      const reliableSkills = matchingSkills.filter(
+        (s) => s.mastery === 'proficient' || s.mastery === 'expert',
+      );
+      if (reliableSkills.length > 0) {
+        const skillLines = reliableSkills.slice(0, 3).map((s) => {
+          const steps = s.steps.map((step, i) => `  ${i + 1}. ${step}`).join('\n');
+          return `### ${s.name} (${s.mastery}, ${s.useCount} uses, ${Math.round((s.successCount / Math.max(s.useCount, 1)) * 100)}% success)\n${s.description}\n**Steps:**\n${steps}`;
+        });
+        skillContext = `\n## Prior Art (Learned Skills)\n\nThese skills have been used successfully before for similar tasks. Use them as suggested approaches — adapt as needed, don't follow blindly.\n\n${skillLines.join('\n\n')}`;
+        tracer.log('deep-loop', 'info', `Injected ${reliableSkills.length} skills as prior art`);
+      }
+    }
+
     const prompt = [
       `## User Request\n\n${task.originalMessage ?? '(no message)'}`,
       task.triageNotes ? `\n## Triage Notes\n\n${task.triageNotes}` : '',
-      task.parkedState?.contextSnapshot ? `\n## Previous Progress\n\n${task.parkedState.contextSnapshot}` : '',
+      task.parkedState?.handoff
+        ? `\n## Previous Progress (Structured)\n\n${serializeHandoff(task.parkedState.handoff)}`
+        : task.parkedState?.contextSnapshot
+          ? `\n## Previous Progress\n\n${task.parkedState.contextSnapshot}`
+          : '',
       existingProjectContext,
+      skillContext,
     ].join('');
 
     let rawResponse: string | null = null;
@@ -621,10 +715,17 @@ export class DeepLoop {
         const preemptor = this.checkForPreemption(task.priority);
         if (preemptor) {
           // Park this task and let the higher-priority one run
+          const handoff = buildHandoffSnapshot({
+            steps,
+            artifacts,
+            manifest: task.workspaceManifest ?? [],
+          });
+
           this.taskBoard.parkTask(task.id, {
             parkedAtTurn: i,
             reason: `Preempted by higher-priority task ${preemptor.id}`,
-            contextSnapshot: `Completed ${stepsCompleted} of ${steps.length} steps. Artifacts: ${artifacts.length}`,
+            contextSnapshot: serializeHandoff(handoff),
+            handoff,
           });
 
           // Save progress
@@ -842,9 +943,15 @@ export class DeepLoop {
     // Inject workspace manifest so the model knows what files exist
     const manifestContext = this.formatWorkspaceManifest(manifest);
 
+    // Use step-scoped context when available (from planner), otherwise fall
+    // back to the full task message. Step-scoped context prevents the coder
+    // from running ahead — it only sees spec sections relevant to this step.
+    const taskContext = step.context
+      ? `## Task Overview: ${(task.plan ?? task.originalMessage ?? '(no message)').slice(0, 150)}\n\n## Step Context\n${step.context}`
+      : `## Task: ${task.originalMessage ?? '(no message)'}\n\n## Plan: ${task.plan ?? '(no plan)'}`;
+
     const prompt = [
-      `## Task: ${task.originalMessage ?? '(no message)'}`,
-      `## Plan: ${task.plan ?? '(no plan)'}`,
+      taskContext,
       manifestContext,
       priorContext,
       `## Current Step (${stepIndex + 1}/${allSteps.length}): ${step.description}`,
@@ -853,15 +960,19 @@ export class DeepLoop {
       `## Instructions\nComplete ALL work described in the current step before stopping. Create every file mentioned, write complete implementations (not stubs), and verify imports match existing files in the workspace manifest. If files already exist from a prior step, read them and verify cross-file API compatibility: every method/property call on an imported object must exist in that module's source code. Fix mismatches using edit_file.`,
     ].filter(Boolean).join('\n\n');
 
+    // Compute budget determines turn limits — falls back to config defaults
+    const budgetMaxTask = this.activeBudget?.maxTurns ?? this.config.maxTurnsPerTask;
+    const budgetMaxStep = totalSteps <= 1
+      ? budgetMaxTask
+      : Math.min(this.config.maxTurnsPerStep, budgetMaxTask);
+
     // Single-step tasks get the full task budget; multi-step get per-step cap
-    let maxTurns = totalSteps <= 1
-      ? this.config.maxTurnsPerTask
-      : this.config.maxTurnsPerStep;
+    let maxTurns = totalSteps <= 1 ? budgetMaxTask : budgetMaxStep;
 
     // Review/verify/test/fix steps get double the turn budget so the model
     // has room to read dependencies, cross-check APIs, and apply fixes.
     if (/\b(test|verify|review|validate|integration|fix)\b/i.test(step.description)) {
-      maxTurns = Math.min(maxTurns * 2, this.config.maxTurnsPerTask);
+      maxTurns = Math.min(maxTurns * 2, budgetMaxTask);
     }
     const response = await this.dispatchToCoder(prompt, '', maxTurns);
 
@@ -1207,6 +1318,7 @@ Other rules:
     const warnAtTurn = Math.max(1, maxTurns - 2);
 
     for (let turn = 0; turn < maxTurns; turn++) {
+      this.taskTurnCount++;
       // When approaching the turn limit, inject a budget warning.
       const effectiveRequest: GenerateRequest = {
         ...(turn === warnAtTurn
@@ -1414,6 +1526,66 @@ Other rules:
       resolvedAt: new Date().toISOString(),
     });
     this.revisionCounts.delete(id);
+  }
+
+  /**
+   * Try to learn a reusable skill from a successfully completed multi-step task.
+   * Only learns when:
+   *   - SkillFilesManager is available
+   *   - Task had 2+ plan steps (single-step tasks aren't interesting patterns)
+   *   - No existing skill already matches this task closely
+   */
+  private tryLearnSkillFromTask(task: Task, planned: Task | null): void {
+    if (!this.skillFilesManager || !planned?.planSteps) return;
+
+    const steps = planned.planSteps;
+    if (steps.length < 2) return; // Single-step tasks aren't learnable patterns
+
+    const tracer = getTracer();
+    const taskDescription = task.originalMessage ?? task.triageNotes ?? '';
+
+    // Check if an existing skill already covers this pattern
+    const existingSkills = this.skillFilesManager.search(taskDescription);
+    const alreadyCovered = existingSkills.some(
+      (s) => s.mastery === 'proficient' || s.mastery === 'expert',
+    );
+
+    if (alreadyCovered) {
+      // Record use of matching skill instead of creating a new one
+      const bestMatch = existingSkills[0];
+      if (bestMatch) {
+        this.skillFilesManager.recordUse(bestMatch.id, true);
+        tracer.log('deep-loop', 'info', `Recorded successful use of skill: ${bestMatch.name}`);
+      }
+      return;
+    }
+
+    // Extract a skill name from the task description
+    const name = taskDescription
+      .slice(0, 60)
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      || `task-pattern-${Date.now().toString(36)}`;
+
+    const skillSteps = steps
+      .filter((s) => s.status === 'done')
+      .map((s) => s.description);
+
+    if (skillSteps.length < 2) return;
+
+    const result = this.skillFilesManager.learn({
+      name,
+      description: taskDescription.slice(0, 200),
+      steps: skillSteps,
+      tags: ['auto-learned', 'deep-loop'],
+    });
+
+    if (result.success) {
+      tracer.log('deep-loop', 'info', `Learned new skill: ${name} (${result.skillId})`);
+    }
   }
 
   /**

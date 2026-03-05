@@ -18,6 +18,7 @@ import { PROFILES } from '../interface/context-profiles.js';
 import type { LlmProvider } from '../providers/base.js';
 import type { ToolSchema, GenerateWithToolsResponse } from '../tools/schemas/types.js';
 import type { ClassificationResult, TaskClass } from './types.js';
+import type { AneProvider, TaskCategory } from '../providers/ane.js';
 
 /**
  * Tool schema that forces the model to output a structured classification.
@@ -150,11 +151,53 @@ function parseClassification(response: GenerateWithToolsResponse): Classificatio
   return result;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ANE Pre-Filter (NPU-accelerated classification)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Map ANE TaskCategory to our TaskClass.
+ * ANE categories are more granular — we map them to conversation/task classes.
+ */
+function mapAneCategory(category: TaskCategory): TaskClass {
+  switch (category) {
+    case 'conversation':
+      return 'conversation';
+    case 'coding':
+    case 'review':
+      return 'complex_task';
+    case 'analysis':
+    case 'planning':
+      return 'complex_task';
+    default:
+      return 'conversation';
+  }
+}
+
+/** Shared ANE provider instance — set via setClassifierAneProvider() */
+let classifierAne: AneProvider | null = null;
+
+/**
+ * Attach an ANE provider to the classifier for NPU-accelerated pre-filtering.
+ * When set, high-confidence ANE classifications skip the LLM call entirely.
+ */
+export function setClassifierAneProvider(ane: AneProvider): void {
+  classifierAne = ane;
+}
+
+/**
+ * ANE confidence threshold for skipping the LLM classifier.
+ * Only skip when ANE is very confident to avoid misrouting.
+ */
+const ANE_SKIP_THRESHOLD = 0.85;
+
 /**
  * Classify an incoming message as conversation, simple task, or complex task.
  *
- * Uses a focused LLM call with the classify_message tool as the only
- * available tool, forcing structured output.
+ * Uses a two-tier strategy:
+ *   1. ANE pre-filter (NPU) — if the ANE classifier returns high confidence
+ *      (≥0.85), skip the LLM call entirely. This is essentially free compute.
+ *   2. LLM classification — focused call with the classify_message tool.
  *
  * @param message - The user's message to classify
  * @param recentHistory - Last 2-3 formatted conversation exchanges for context
@@ -166,6 +209,29 @@ export async function classifyMessage(
   recentHistory: string[],
   provider: LlmProvider
 ): Promise<ClassificationResult> {
+  // Try ANE pre-filter first (zero-cost NPU inference)
+  if (classifierAne) {
+    try {
+      const aneResult = await classifierAne.classify(message);
+      if (aneResult.source === 'ane' && aneResult.confidence >= ANE_SKIP_THRESHOLD) {
+        const taskClass = mapAneCategory(aneResult.category as TaskCategory);
+        safeLogger.info('ANE pre-filter classified message', {
+          aneCategory: aneResult.category,
+          mappedClass: taskClass,
+          confidence: aneResult.confidence,
+        });
+        return {
+          taskClass,
+          confidence: aneResult.confidence,
+          reason: `ANE pre-filter: ${aneResult.category} (confidence ${aneResult.confidence.toFixed(2)})`,
+          taskType: aneResult.category,
+        };
+      }
+      // ANE not confident enough or used fallback — proceed to LLM
+    } catch {
+      // ANE failed, proceed to LLM classification
+    }
+  }
   const context = buildClassifierContext(message, recentHistory);
 
   try {

@@ -2,68 +2,70 @@
 
 Casterly is a local-only AI assistant running on Mac Studio M4 Max with 128GB unified memory. All inference happens on-device via Ollama. No data ever leaves the machine.
 
-This document provides a high-level overview and links to detailed docs for each subsystem.
-
 ## System Overview
+
+Casterly runs a **dual-loop architecture** where two LLM models operate concurrently through a shared TaskBoard:
 
 ```
 Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
          │
          ▼
-┌─────────────────────┐
-│   Trigger Router    │  Normalize all inputs into uniform Trigger shape
-└────────┬────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│              Loop Coordinator                                │
+│                                                              │
+│  ┌─────────────────────┐    ┌───────────────────────────┐   │
+│  │     FastLoop         │    │       DeepLoop             │   │
+│  │  (qwen3.5:35b-a3b)  │    │    (qwen3.5:122b)         │   │
+│  │                      │    │                            │   │
+│  │  • Triage messages   │    │  • Plan complex tasks      │   │
+│  │  • Answer simple Qs  │    │  • Execute via tools       │   │
+│  │  • Deliver responses │    │  • Generate code            │   │
+│  │  • Progress updates  │    │  • Handle events & goals   │   │
+│  │                      │    │                            │   │
+│  │  ~2s heartbeat       │    │  Natural pace (10-60s)     │   │
+│  └──────────┬───────────┘    └──────────┬─────────────────┘   │
+│             │                           │                     │
+│             └───────────┬───────────────┘                     │
+│                         ▼                                     │
+│              ┌──────────────────┐                             │
+│              │    TaskBoard     │  In-memory shared state     │
+│              │  (JSON-backed)   │  Sole communication channel │
+│              └──────────────────┘                             │
+└─────────────────────────────────────────────────────────────┘
          │
          ▼
-┌─────────────────────────────────────────────────────┐
-│                  Agent Loop (unified)                │
-│                                                     │
-│  1. Load state (journal, world model, goals, issues, │
-│     crystals, constitution, vision stores)           │
-│  2. Build identity prompt + crystals + rules         │
-│  3. ReAct cycle:                                    │
-│     ┌──────────────────────────────────┐            │
-│     │  Call LLM (Ollama)               │            │
-│     │  ↓                               │            │
-│     │  Tool calls? ──yes──→ Execute    │            │
-│     │       │                  │       │            │
-│     │       no                 └───────┘            │
-│     │       ↓                                       │
-│     │  Done (text response = summary)  │            │
-│     └──────────────────────────────────┘            │
-│  4. Write handoff note to journal                   │
-│  5. Save state                                      │
-└────────┬────────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────────┐
-│  Tools / Delegation / State Mutation / Response      │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  Voice Filter → Response Delivery (iMessage / CLI)           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Module Index
+The two loops never call each other directly. All coordination happens through the TaskBoard. See [dual-loop.md](dual-loop.md) for details.
 
-| Subsystem | Summary | Detail Doc |
-|-----------|---------|------------|
-| **Agent Loop** | ReAct cycle engine — triggers, identity prompt, tool preset selection, tool execution, handoff notes, tiered memory | [agent-loop.md](agent-loop.md) |
-| **Triggers** | Event sources normalized into uniform Trigger shape | [triggers.md](triggers.md) |
-| **Task Execution** | Classifier, planner, runner, verifier pipeline | [task-execution.md](task-execution.md) |
-| **Skills & Tools** | Tool registry, native executors, bash safety gates, OpenClaw skills | [skills-and-tools.md](skills-and-tools.md) |
-| **Coding Interface** | Aider-style repo map, context budgeting, validation, modes | [coding-interface.md](coding-interface.md) |
-| **iMessage** | Daemon polling, SQLite reader, AppleScript sender, tool filter | [imessage.md](imessage.md) |
-| **Memory & State** | Journal, world model, user model, goal stack, issue log, crystals, constitution, traces, prompt store, shadow store | [memory-and-state.md](memory-and-state.md) |
-| **Providers & Routing** | Ollama provider, model registry, task classifier, voice filter | [providers-and-routing.md](providers-and-routing.md) |
-| **Security & Privacy** | Sensitive data detection, redaction, safe logging, command gates | [security-and-privacy.md](security-and-privacy.md) |
-| **Configuration** | YAML + Zod validation, model routing, data layout | [configuration-and-environment.md](configuration-and-environment.md) |
-| **Testing & Quality Gates** | 5-gate pipeline, trace collection, test cases, benchmarking | [testing-and-quality-gates.md](testing-and-quality-gates.md) |
-| **Autonomous Agent** | ReAct loop, agent tools (81), budget controls, identity, dream cycles, self-knowledge (crystals, constitution, traces), self-improvement (prompts, shadows, tools), advanced self-improvement (challenges, evolution, LoRA), roadmap tools (meta, classify, plan, verify, introspection, context control, scheduling, semantic recall, parallel reasoning), dream cycle phase tools (consolidate_reflections, reorganize_goals, explore_codebase, rebuild_self_model, write_retrospective), advanced memory tools (link_memories, get_links, traverse_links, audn_enqueue, audn_status, entropy_score, evaluate_tiers, snapshot_memory, list_snapshots, diff_snapshots). **Vision Tier 2/3 stores** wired via `AgentState` and toggled by `config/autonomous.yaml` vision tier settings. **Communication** — `message_user` routes through `MessagePolicy` (throttle, quiet hours, event filtering) and `MessageDelivery` (iMessage or console JSONL outbox), configured via `communication` section in `config/autonomous.yaml`. **Dream scheduling** — dream cycles auto-trigger after each agent cycle when the configured interval has elapsed (default 24h), passing all Vision Tier stores and journal to `DreamCycleRunner`; meta persisted to `~/.casterly/dream-meta.json`. The legacy 4-phase `runCycle()` pipeline (analyze → hypothesize → implement → validate) has been retired; `runAgentCycle()` is now the sole execution path. **Status dashboard** — instant iMessage commands (`status`, `goals`, `issues`, `health`, `activity`) bypass the LLM and return formatted state directly from `GoalStack`, `IssueLog`, `WorldModel`, and `Journal`; see `status-report.ts`. | [autonomous-agent.md](autonomous-agent.md) |
-| **API Reference** | Provider interface, tool schemas, key function signatures | [api-reference.md](api-reference.md) |
-| **Error Codes** | Structured error system (E1xx–E9xx), auto-detection | [error-codes.md](error-codes.md) |
-| **Installation** | Prerequisites, setup, configuration | [install.md](install.md) |
+## Memory Budget
 
-> **NOTE — Architecture Status**
->
-> The system overview diagram above accurately reflects the current implementation. All triggers — including iMessage user messages — flow through the agent loop as the single execution path. The legacy pipeline (`processChatMessage()`, session manager, mode managers, skill registry, task pipeline, tool orchestrator) has been removed from the iMessage daemon. User messages enter via `triggerFromMessage()` → `autonomousController.runTriggeredCycle()` → agent loop. Responses pass through the voice filter (personality rewrite) before delivery.
+| Component | VRAM | Role |
+|-----------|------|------|
+| qwen3.5:122b | ~81 GB | DeepLoop: reasoning, planning, code generation |
+| qwen3.5:35b-a3b | ~24 GB | FastLoop: triage, review, acknowledgment (MoE: 3B active/token) |
+| **Total** | **~105 GB** | ~23 GB headroom on 128 GB |
+
+Both models loaded with `keep_alive: -1` (never unloaded).
+
+## Module Map
+
+| Module | Source | Purpose |
+|--------|--------|---------|
+| **Dual-Loop** | `src/dual-loop/` | FastLoop, DeepLoop, TaskBoard, Coordinator, context tiers |
+| **Agent Loop** | `src/autonomous/agent-loop.ts` | ReAct reasoning engine used by DeepLoop |
+| **Triggers** | `src/autonomous/trigger-router.ts` | Normalize events into uniform trigger shape |
+| **Tools** | `src/tools/`, `src/autonomous/tools/` | Tool registry, executors, agent toolkit (96 tools) |
+| **Coding** | `src/coding/` | Repo map, context budgeting, validation, editing modes |
+| **iMessage** | `src/imessage/` | Daemon, SQLite reader, AppleScript sender, voice filter |
+| **Memory** | `src/autonomous/` | Journal, world model, goals, issues, crystals, constitution |
+| **Providers** | `src/providers/` | Ollama provider, concurrent inference, model registry |
+| **Security** | `src/security/` | Sensitive detection, redaction, output sanitizer |
+| **Config** | `src/config/` | YAML loader, Zod schemas |
+| **Testing** | `src/testing/` | Trace collector, test runner |
 
 ## Source Layout
 
@@ -71,23 +73,30 @@ Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
 src/
 ├── index.ts                  # CLI entry point
 ├── imessage-daemon.ts        # iMessage daemon entry
-├── config/                   # YAML loader, Zod schemas
-├── providers/                # LlmProvider interface, Ollama client
-├── security/                 # Sensitive content detection, redaction
-├── logging/                  # Privacy-aware safe logger
-├── interface/                # Bootstrap, prompt builder, session, memory
-├── imessage/                 # Daemon, reader, sender, tool filter
-├── tools/                    # Tool schemas, registry, executor, orchestrator
-├── skills/                   # Skill types, discovery, tool registration
+├── dual-loop/                # FastLoop, DeepLoop, TaskBoard, Coordinator
+├── autonomous/               # Agent loop, tools, memory stores, dream cycles
+│   ├── dream/                # Challenge gen/eval, prompt evolution, LoRA
+│   ├── memory/               # Advanced memory (links, evolution, AUDN)
+│   ├── tools/                # Agent tool registry and map
+│   ├── watchers/             # File, git, issue watchers
+│   └── communication/        # Message delivery and policy
+├── providers/                # LlmProvider interface, Ollama, concurrent
+├── security/                 # Detection, redaction, sanitizer
+├── imessage/                 # Daemon, reader, sender, voice filter, input guard
+├── tools/                    # Core tool schemas, registry, executor
+├── skills/                   # Skill types, discovery, registration
 ├── coding/                   # Repo map, context manager, validation, modes
-├── autonomous/               # Agent loop, tools, journal, world model,
-│                             # goal stack, issue log, context manager,
-│                             # events, triggers, identity, delegation,
-│                             # crystal store, constitution, trace replay,
-│                             # prompt store, shadow store,
-│                             # communication/ (delivery backends, policy),
-│                             # dream/ (challenge gen/eval, prompt evolution,
-│                             #         training extractor, LoRA trainer)
-├── utils/                    # Shared utilities (semaphore)
-└── testing/                  # Trace collector, test cases, test runner
+├── config/                   # YAML loader, Zod schemas
+├── logging/                  # Privacy-safe logger
+├── errors/                   # Structured error codes
+└── testing/                  # Trace collector, test runner
 ```
+
+## Key Architectural Principles
+
+1. **Dual-loop concurrency** — FastLoop for responsiveness, DeepLoop for depth. Both run as async coroutines in the same Node.js process.
+2. **Data-structure coupling** — Loops communicate only through the TaskBoard. No direct RPC.
+3. **LLM-driven execution** — The LLM drives the ReAct loop, chooses tools, manages context. The system provides capability; the LLM provides judgment.
+4. **Local-only inference** — All computation via Ollama on localhost. No cloud APIs, no outbound network.
+5. **Defense-in-depth security** — Input guard → sensitive detector → tool gates → output sanitizer → safe logger.
+6. **Free tokens change everything** — Unlimited local inference enables self-correction loops, redundant verification, exploration, and dream cycles.
