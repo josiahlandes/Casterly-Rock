@@ -1225,16 +1225,16 @@ export class DeepLoop {
         .join('\n');
 
       const prompt = [
-        `Summarize what was done for this task for the user.`,
-        ` Include the key results or data the user asked for in your summary.`,
-        `\n\n## Original Request\n${task.originalMessage ?? '(unknown)'}`,
-        `\n## Plan\n${task.plan ?? '(no plan)'}`,
-        stepResults ? `\n## Step Results\n${stepResults}` : '',
+        `The user asked: "${task.originalMessage ?? '(unknown)'}"`,
+        `\n\nHere is what was found/done:`,
+        `\n${task.plan ?? '(no plan)'}`,
+        stepResults ? `\n\n## Step Results\n${stepResults}` : '',
+        `\n\nWrite a direct reply to the user answering their original question.`,
       ].join('');
 
       const response = await this.callWithTier('compact', {
         prompt,
-        systemPrompt: 'Write a concise summary of the completed work that includes the actual results or data the user requested. Keep it under 150 words. Plain text only, no markdown.',
+        systemPrompt: 'You are replying directly to the user via text message. Answer their question or tell them what you did. Be direct — speak TO them, not ABOUT them. Never describe yourself in third person or narrate what "the system" did. Just give the answer. Keep it under 100 words. Plain text only, no markdown.',
         temperature: 0.3,
         maxTokens: 512,
         providerOptions: { think: false }, // Prevent thinking chain from leaking

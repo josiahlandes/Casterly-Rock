@@ -346,11 +346,13 @@ export class OllamaProvider implements LlmProvider {
         const toolCalls = parseToolCalls(data.message?.tool_calls);
         const stopReason = getStopReason(data);
 
-        // Thinking models (Qwen3, DeepSeek-R1) may put output in `thinking`
-        // with an empty `content`. Use thinking as fallback when content is empty.
+        // Thinking models (Qwen3, DeepSeek-R1) return reasoning in `thinking`
+        // and the actual answer in `content`. Only fall back to `thinking` when
+        // think was NOT explicitly disabled — otherwise the raw chain-of-thought
+        // leaks into user-facing responses.
         const content = data.message?.content ?? '';
         const thinking = data.message?.thinking ?? '';
-        const text = content || thinking;
+        const text = content || (effectiveThink !== false ? thinking : '');
 
         return {
           text,
