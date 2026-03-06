@@ -9,7 +9,6 @@ const ALLOWED_CONSOLE_LOG_FILES = new Set([
   'src/test-cli.ts',
   'src/autonomous/loop.ts',  // Daemon needs to log output
   'src/benchmark-cli.ts',    // Benchmark CLI needs console output
-  'src/terminal-repl.ts',    // Terminal REPL needs console output
   'tests/validation-parser.test.ts',  // Test fixtures contain console.log in code strings
   'tests/integration-system-health.test.ts',  // Test assertions reference console.log as expected lint output
   'src/autonomous/debug.ts'  // Debug tracer applies redaction before console output
