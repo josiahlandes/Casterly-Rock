@@ -75,22 +75,35 @@ function autoRepair(raw: string): { fixed: string; repairs: string[] } {
     repairs.push('added missing outer braces');
   }
 
-  // 3. Replace single quotes with double quotes (outside of already-double-quoted strings)
-  // Simple approach: replace ' with " when it looks like a JSON boundary
-  const singleQuoteFixed = s.replace(
-    /(?<=[\[{,:\s])'/g, '"'
-  ).replace(
-    /(?<=[^\\"\\])'/g, '"'
-  );
-  if (singleQuoteFixed !== s) {
-    s = singleQuoteFixed;
-    repairs.push('replaced single quotes with double quotes');
+  // 3. Replace single quotes with double quotes
+  // Only apply if the string uses single quotes as JSON delimiters
+  // (i.e., has patterns like {'key': 'value'} rather than legitimate
+  // apostrophes inside double-quoted strings)
+  if (/[{,]\s*'/.test(s) || /:\s*'/.test(s)) {
+    // Replace all single quotes that act as JSON string delimiters.
+    // Walk the string and swap ' for " when not inside a double-quoted string.
+    let singleQuoteFixed = '';
+    let inDouble = false;
+    let prevEscaped = false;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i]!;
+      if (prevEscaped) { singleQuoteFixed += ch; prevEscaped = false; continue; }
+      if (ch === '\\') { singleQuoteFixed += ch; prevEscaped = true; continue; }
+      if (ch === '"') { inDouble = !inDouble; singleQuoteFixed += ch; continue; }
+      if (ch === "'" && !inDouble) { singleQuoteFixed += '"'; continue; }
+      singleQuoteFixed += ch;
+    }
+    if (singleQuoteFixed !== s) {
+      s = singleQuoteFixed;
+      repairs.push('replaced single quotes with double quotes');
+    }
   }
 
   // 4. Quote unquoted keys: key: value → "key": value
+  // Use a capture group for the delimiter instead of variable-length lookbehind
   const unquotedKeyFixed = s.replace(
-    /(?<=[\{,]\s*)([a-zA-Z_]\w*)\s*:/g,
-    '"$1":'
+    /([\{,]\s*)([a-zA-Z_]\w*)\s*:/g,
+    '$1"$2":'
   );
   if (unquotedKeyFixed !== s) {
     s = unquotedKeyFixed;

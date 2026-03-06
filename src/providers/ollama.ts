@@ -229,12 +229,10 @@ export class OllamaProvider implements LlmProvider {
             role: 'assistant',
             content: assistantMsg.text,
             tool_calls: assistantMsg.toolCalls.map((tc) => {
-              let parsedArgs: unknown;
-              try {
-                parsedArgs = JSON.parse(tc.arguments);
-              } catch {
-                parsedArgs = tc.arguments;
-              }
+              // Use 3-tier repair for arguments that may contain
+              // malformed JSON from a previous local-model turn
+              const repairResult = repairToolArgs(tc.arguments);
+              const parsedArgs: unknown = repairResult.parsed;
               return {
                 id: tc.id,
                 type: 'function' as const,

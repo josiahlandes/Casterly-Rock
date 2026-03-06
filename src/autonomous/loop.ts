@@ -1076,6 +1076,7 @@ export class AutonomousLoop {
         this.skillFilesManager,
         this.concurrentDreamExecutor,
         this.graphMemory,
+        this.stateManager?.cognitiveMap ?? undefined,
       );
 
       this.lastDreamCycleDate = today;

@@ -39,10 +39,10 @@ import { getTracer } from './debug.js';
 import type { GoalStack, GoalStatus, GoalSource } from './goal-stack.js';
 import type { IssueLog, IssuePriority, Issue } from './issue-log.js';
 import type { WorldModel } from './world-model.js';
-import type { ToolSchema, NativeToolCall, NativeToolResult, ToolResultMessage } from '../tools/schemas/types.js';
+import type { ToolSchema, NativeToolCall, NativeToolResult } from '../tools/schemas/types.js';
 import type { ContextManager } from './context-manager.js';
 import type { Journal } from './journal.js';
-import type { LlmProvider, GenerateRequest } from '../providers/base.js';
+import type { LlmProvider } from '../providers/base.js';
 import { AdversarialTester } from './reasoning/adversarial.js';
 import type { PromptStore } from './prompt-store.js';
 import type { ShadowStore } from './shadow-store.js';
@@ -76,7 +76,7 @@ import type { MemoryChecker, ExistingKnowledge } from './memory/checker.js';
 import type { SkillFilesManager } from './memory/skill-files.js';
 import type { ConcurrentDreamExecutor } from './memory/concurrent-dreams.js';
 import type { GraphMemory, NodeType, EdgeType } from './memory/graph-memory.js';
-import { createDelegateAgent, resultToMessage } from '../dual-loop/agent.js';
+import { createDelegateAgent } from '../dual-loop/agent.js';
 
 const execFileAsync = promisify(execFile);
 
