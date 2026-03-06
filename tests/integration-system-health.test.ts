@@ -353,7 +353,6 @@ describe('project structure', () => {
   const requiredDirs = [
     'src/autonomous',
     'src/autonomous/providers',
-    'src/autonomous/watchers',
     'src/autonomous/dream',
     'src/autonomous/communication',
     'src/autonomous/reasoning',
