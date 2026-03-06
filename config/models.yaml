@@ -90,7 +90,7 @@ ollama:
   # KV cache quantization: set via OLLAMA_KV_CACHE_TYPE env var (not an Ollama API param).
   # q8_0 = ~50% KV memory reduction with negligible quality loss (< 0.1 perplexity).
   # q4_0 = ~75% reduction but may degrade quality on long contexts.
-  # Set by scripts/setup-mac.sh and scripts/tyrion-daemon.sh.
+  # Set by scripts/setup-mac.sh and scripts/tyrion.sh.
   # Reference: KVQuant (Hooper et al., 2024)
   kv_cache_type: q8_0
 

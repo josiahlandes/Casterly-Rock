@@ -157,10 +157,10 @@ npm run dev -- "Your query here"
 For iMessage integration on macOS:
 
 ```bash
-# Development mode
+# Development mode (foreground, live TypeScript)
 npm run imessage
 
-# Production mode
+# Production mode (foreground, compiled JS)
 npm run imessage:start
 ```
 
@@ -168,6 +168,38 @@ The daemon:
 - Polls iMessage database every 2 seconds
 - Processes incoming messages
 - Sends responses back via iMessage
+
+### Tyrion Lifecycle Manager
+
+For production use, the `tyrion.sh` script manages the daemon as a background process:
+
+```bash
+# Start the daemon (builds first, runs in background)
+./scripts/tyrion.sh start       # or: npm run tyrion:start
+
+# Stop gracefully
+./scripts/tyrion.sh stop        # or: npm run tyrion:stop
+
+# Restart (stop + start)
+./scripts/tyrion.sh restart     # or: npm run tyrion:restart
+
+# Pull latest code from main, rebuild, restart
+./scripts/tyrion.sh update      # or: npm run tyrion:update
+
+# Clear all data except contacts, restart fresh
+./scripts/tyrion.sh reset       # or: npm run tyrion:reset
+
+# Check if running, show PID/uptime/memory
+./scripts/tyrion.sh status      # or: npm run tyrion:status
+
+# Tail the daemon log
+./scripts/tyrion.sh logs        # or: npm run tyrion:logs
+
+# Show all commands
+./scripts/tyrion.sh help
+```
+
+The `update` command is designed for remote development: push code via Claude Code, then text Tyrion "update" to pull, build, and restart.
 
 ## Workspace Setup
 
@@ -222,6 +254,13 @@ Timezone: America/New_York
 | `npm run security:scan` | Security scanning |
 | `npm run imessage` | iMessage daemon (dev) |
 | `npm run imessage:start` | iMessage daemon (prod) |
+| `npm run tyrion:start` | Start Tyrion daemon (background) |
+| `npm run tyrion:stop` | Stop Tyrion daemon |
+| `npm run tyrion:restart` | Restart Tyrion daemon |
+| `npm run tyrion:update` | Pull, build, restart |
+| `npm run tyrion:reset` | Clear data (keep contacts), restart |
+| `npm run tyrion:status` | Show daemon status |
+| `npm run tyrion:logs` | Tail daemon log |
 | `npm run install:host` | Build and install CLI |
 
 ## Directory Structure
@@ -230,6 +269,11 @@ After installation:
 
 ```
 ~/.casterly/
+├── contacts.json           # Address book (preserved on reset)
+├── tyrion.pid              # Daemon PID file
+├── logs/                   # Daemon and update logs
+│   ├── tyrion.log
+│   └── update.log
 ├── workspace/              # Personalization files
 │   ├── IDENTITY.md
 │   ├── SOUL.md
@@ -313,6 +357,15 @@ rm -rf casterly
 ```
 
 ## Upgrading
+
+The easiest way to upgrade is the lifecycle manager:
+
+```bash
+# One command: pull, install deps if changed, build, restart
+./scripts/tyrion.sh update
+```
+
+Or manually:
 
 ```bash
 # Pull latest changes
