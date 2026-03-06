@@ -120,7 +120,7 @@ export interface TierUsage {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: ContextManagerConfig = {
-  hotTierMaxTokens: 2000,       // ~8000 chars for identity prompt
+  hotTierMaxTokens: 3200,       // ~12000 chars for identity prompt (includes metacognition sections)
   warmTierMaxTokens: 10000,     // ~40000 chars for working memory
   contextWindowTokens: 32768,   // Typical context window
   identityConfig: {},

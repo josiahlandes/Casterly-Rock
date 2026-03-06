@@ -184,6 +184,9 @@ export class StateManager {
   get concurrentDreamExecutor() { return this.stores.concurrentDreamExecutor; }
   get graphMemory() { return this.stores.graphMemory; }
 
+  // Metacognition
+  get cognitiveMap() { return this.stores.cognitiveMap; }
+
   // Vision Tier 2
   get promptStore() { return this.stores.promptStore; }
   get shadowStore() { return this.stores.shadowStore; }

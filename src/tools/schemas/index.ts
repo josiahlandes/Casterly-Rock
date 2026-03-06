@@ -52,6 +52,10 @@ export {
   PRODUCTIVITY_TOOLS,
 } from './productivity.js';
 
+// Argument repair
+export type { RepairResult } from './repair.js';
+export { repairToolArgs, repairToolCallInput } from './repair.js';
+
 // Registry
 export type { ToolRegistry, AnthropicTool, OllamaTool } from './registry.js';
 export { createToolRegistry } from './registry.js';

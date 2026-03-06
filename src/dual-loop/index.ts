@@ -125,6 +125,19 @@ export type {
   IdleCheckResult,
 } from './deep-loop-events.js';
 
+// ── Agent Interface ─────────────────────────────────────────────────────────
+
+export { createDelegateAgent, formatPriorContext, resultToMessage, chainAgents } from './agent.js';
+export type {
+  Agent,
+  AgentTask,
+  AgentResult,
+  AgentToolCallEntry,
+  AgentMessage,
+  ToolAccess,
+  DelegateAgentConfig,
+} from './agent.js';
+
 // ── Runtime Config ───────────────────────────────────────────────────────────
 
 export { parseDualLoopRuntimeConfig } from './config.js';

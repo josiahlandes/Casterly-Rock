@@ -21,6 +21,7 @@ import type {
   GenerateWithToolsResponse,
   NativeToolCall,
 } from '../tools/schemas/types.js';
+import { repairToolArgs } from '../tools/schemas/repair.js';
 import type { MlxKvCacheConfig } from './mlx-kv-cache.js';
 import { defaultKvCacheConfig, resolveKvBits, summarizeKvCacheConfig } from './mlx-kv-cache.js';
 
@@ -146,11 +147,9 @@ function parseToolCalls(toolCalls: OpenAIToolCall[] | undefined): NativeToolCall
       // Some OpenAI-compat servers return arguments as a parsed object
       input = args as Record<string, unknown>;
     } else if (typeof args === 'string') {
-      try {
-        input = JSON.parse(args) as Record<string, unknown>;
-      } catch {
-        input = { raw: args };
-      }
+      // 3-tier parse: strict JSON → auto-repair → heuristic extraction
+      const result = repairToolArgs(args);
+      input = result.parsed;
     }
 
     return {
