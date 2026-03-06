@@ -53,6 +53,9 @@ import type { MemoryChecker } from '../memory/checker.js';
 import type { SkillFilesManager } from '../memory/skill-files.js';
 import type { ConcurrentDreamExecutor } from '../memory/concurrent-dreams.js';
 import type { GraphMemory } from '../memory/graph-memory.js';
+import type { CognitiveMap } from '../../metacognition/cognitive-map.js';
+import { createExplorer } from '../../metacognition/explorer.js';
+import type { ExplorationResult } from '../../metacognition/explorer.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -177,6 +180,11 @@ export interface DreamOutcome {
   spinIterationsRun: number;
   spinPromotions: number;
 
+  /** Filesystem exploration: directories explored / discovered (Metacognition) */
+  filesystemDirectoriesExplored: number;
+  filesystemDirectoriesDiscovered: number;
+  filesystemRuntimeRefreshed: boolean;
+
   /** Why each skipped phase was skipped (phase name → reason) */
   phaseSkipReasons: Record<string, string>;
 
@@ -261,6 +269,7 @@ export class DreamCycleRunner {
     skillFilesManager?: SkillFilesManager,
     concurrentDreamExecutor?: ConcurrentDreamExecutor,
     graphMemory?: GraphMemory,
+    cognitiveMap?: CognitiveMap,
   ): Promise<DreamOutcome> {
     const tracer = getTracer();
     const startMs = Date.now();
@@ -308,6 +317,9 @@ export class DreamCycleRunner {
         toolCallPairsExtracted: 0,
         spinIterationsRun: 0,
         spinPromotions: 0,
+        filesystemDirectoriesExplored: 0,
+        filesystemDirectoriesDiscovered: 0,
+        filesystemRuntimeRefreshed: false,
         phaseSkipReasons: {},
         tierSummary: {
           core: { completed: 0, skipped: 0, errored: 0 },
@@ -379,6 +391,46 @@ export class DreamCycleRunner {
         tracer.log('dream', 'warn', `Exploration failed: ${err instanceof Error ? err.message : String(err)}`);
         outcome.phasesSkipped.push('explore');
         outcome.phaseSkipReasons['explore'] = 'error';
+      }
+
+      // Phase 4b: Filesystem exploration (Metacognition)
+      // Gradually maps the machine's filesystem so Tyrion knows his environment.
+      // Refreshes runtime info (hardware, OS, Ollama) and explores one directory per cycle.
+      if (cognitiveMap) {
+        try {
+          // Refresh runtime info (hardware, models, etc.)
+          await cognitiveMap.refreshRuntime();
+          outcome.filesystemRuntimeRefreshed = true;
+
+          // Explore one directory from the cognitive map's queue
+          const explorer = createExplorer();
+          const result = await explorer.explore(cognitiveMap);
+
+          if (result) {
+            outcome.filesystemDirectoriesExplored = 1;
+            outcome.filesystemDirectoriesDiscovered = result.discoveredDirectories.length;
+            tracer.log('dream', 'info', `Filesystem exploration: ${result.path}`, {
+              success: result.success,
+              entries: result.findings.totalEntries,
+              subdirs: result.findings.subdirectories.length,
+              isProject: result.findings.isProject,
+              role: result.suggestedRole ?? 'unknown',
+              discovered: result.discoveredDirectories.length,
+            });
+          } else {
+            tracer.log('dream', 'debug', 'No filesystem exploration targets available');
+          }
+
+          await cognitiveMap.save();
+          outcome.phasesCompleted.push('filesystemExploration');
+        } catch (err) {
+          tracer.log('dream', 'warn', `Filesystem exploration failed: ${err instanceof Error ? err.message : String(err)}`);
+          outcome.phasesSkipped.push('filesystemExploration');
+          outcome.phaseSkipReasons['filesystemExploration'] = 'error';
+        }
+      } else {
+        outcome.phasesSkipped.push('filesystemExploration');
+        outcome.phaseSkipReasons['filesystemExploration'] = 'not_configured';
       }
 
       // Phase 5: Update self-model
@@ -850,7 +902,7 @@ export class DreamCycleRunner {
       }
 
       // Compute per-tier summary
-      const corePhases = ['consolidateReflections', 'updateWorldModel', 'reorganizeGoals', 'explore', 'updateSelfModel'];
+      const corePhases = ['consolidateReflections', 'updateWorldModel', 'reorganizeGoals', 'explore', 'filesystemExploration', 'updateSelfModel'];
       const visionPhases = ['shadowAnalysis', 'toolInventory', 'adversarialChallenges', 'promptEvolution', 'trainingDataExtraction', 'loraTraining', 'spinSelfPlay', 'writeRetrospective'];
       const memoryPhases = ['linkDecay', 'audnConsolidation', 'entropyTierMigration', 'memorySnapshot', 'memoryEvolution', 'temporalInvalidation', 'skillFiles', 'graphMemory'];
 

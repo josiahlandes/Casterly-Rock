@@ -28,6 +28,9 @@ import { createJournal, type Journal } from '../autonomous/journal.js';
 import { createContextManager, type ContextManager } from '../autonomous/context-manager.js';
 import { EventBus } from '../autonomous/events.js';
 
+// ── Metacognition ────────────────────────────────────────────────────────────
+import { createCognitiveMap, type CognitiveMap } from '../metacognition/cognitive-map.js';
+
 // ── Advanced Memory stores ───────────────────────────────────────────────────
 import { createLinkNetwork, type LinkNetwork } from '../autonomous/memory/link-network.js';
 import { createMemoryEvolution, type MemoryEvolution } from '../autonomous/memory/memory-evolution.js';
@@ -73,6 +76,9 @@ export interface AllStores {
   journal: Journal;
   contextManager: ContextManager;
   eventBus: EventBus;
+
+  // ── Metacognition (always present) ────────────────────────────────────────
+  cognitiveMap: CognitiveMap;
 
   // ── Advanced Memory (always present) ─────────────────────────────────────
   linkNetwork: LinkNetwork;
@@ -141,6 +147,9 @@ export function createAllStores(): AllStores {
     journal: createJournal(),
     contextManager: createContextManager(),
     eventBus: new EventBus({ maxQueueSize: 100, logEvents: true }),
+
+    // Metacognition
+    cognitiveMap: createCognitiveMap(),
 
     // Advanced Memory
     linkNetwork,
@@ -216,6 +225,9 @@ export function loadableStores(stores: AllStores): LifecycleOp[] {
     { name: 'issueLog', load: () => stores.issueLog.load() },
     { name: 'journal', load: () => stores.journal.load() },
 
+    // Metacognition
+    { name: 'cognitiveMap', load: () => stores.cognitiveMap.load() },
+
     // Advanced Memory — loadable subset
     { name: 'linkNetwork', load: () => stores.linkNetwork.load() },
     { name: 'memoryEvolution', load: () => stores.memoryEvolution.load() },
@@ -276,6 +288,9 @@ export function savableStores(stores: AllStores): SaveOp[] {
     { name: 'worldModel', save: () => stores.worldModel.save() },
     { name: 'goalStack', save: () => stores.goalStack.save() },
     { name: 'issueLog', save: () => stores.issueLog.save() },
+
+    // Metacognition
+    { name: 'cognitiveMap', save: () => stores.cognitiveMap.save() },
 
     // Advanced Memory — savable subset
     { name: 'linkNetwork', save: () => stores.linkNetwork.save() },

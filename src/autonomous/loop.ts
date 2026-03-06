@@ -11,7 +11,6 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 
 import { createProvider, type AutonomousProvider } from './provider.js';
-import { GitOperations } from './git.js';
 import { Reflector } from './reflector.js';
 import type { ApprovalBridge } from '../approval/index.js';
 import type {
@@ -44,12 +43,6 @@ import { triggerFromEvent, triggerFromSchedule, triggerFromGoal } from './trigge
 // Phase 3: Event-Driven Awareness imports
 import { ContextManager, createContextManager } from './context-manager.js';
 import { EventBus, type SystemEvent } from './events.js';
-import { FileWatcher } from './watchers/file-watcher.js';
-import { GitWatcher } from './watchers/git-watcher.js';
-import { IssueWatcher } from './watchers/issue-watcher.js';
-import type { FileWatcherConfig } from './watchers/file-watcher.js';
-import type { GitWatcherConfig } from './watchers/git-watcher.js';
-import type { IssueWatcherConfig } from './watchers/issue-watcher.js';
 
 // Phase 5: Reasoning scaling
 import { ReasoningScaler } from './reasoning/scaling.js';
@@ -107,38 +100,6 @@ const CYCLE_ID_PREFIX = 'cycle';
 const DREAM_META_PATH = path.join(os.homedir(), '.casterly', 'dream-meta.json');
 
 // ============================================================================
-// PHASE 3: EVENTS CONFIGURATION
-// ============================================================================
-
-/**
- * Configuration for the event-driven awareness system.
- */
-interface EventsConfig {
-  /** File watcher config overrides */
-  fileWatcher: Partial<FileWatcherConfig> & { enabled: boolean };
-
-  /** Git watcher config overrides */
-  gitWatcher: Partial<GitWatcherConfig> & { enabled: boolean };
-
-  /** Issue watcher config overrides */
-  issueWatcher: Partial<IssueWatcherConfig> & { enabled: boolean };
-
-  /** Minimum seconds between agent cycles (cooldown) */
-  cooldownSeconds: number;
-
-  /** Maximum agent turns per day across all cycles */
-  dailyBudgetTurns: number;
-}
-
-const DEFAULT_EVENTS_CONFIG: EventsConfig = {
-  fileWatcher: { enabled: true, debounceMs: 500 },
-  gitWatcher: { enabled: true, debounceMs: 1000 },
-  issueWatcher: { enabled: true, checkIntervalMs: 6 * 60 * 60 * 1000 },
-  cooldownSeconds: 30,
-  dailyBudgetTurns: 500,
-};
-
-// ============================================================================
 // AUTONOMOUS LOOP
 // ============================================================================
 
@@ -157,7 +118,6 @@ export class AutonomousLoop {
   private readonly projectRoot: string;
   private readonly provider: AutonomousProvider;
   private readonly llmProvider: LlmProvider;
-  private readonly git: GitOperations;
   private readonly reflector: Reflector;
   private readonly approvalBridge?: ApprovalBridge | undefined;
   private readonly approvalRecipient?: string | undefined;
@@ -171,7 +131,6 @@ export class AutonomousLoop {
   /** Exposed for daemon-controlled mode (controller.ts) */
   get reflectorInstance(): Reflector { return this.reflector; }
   get configInstance(): AutonomousConfig { return this.config; }
-  get gitInstance(): GitOperations { return this.git; }
   get pendingBranchList(): PendingBranch[] { return [...this._pendingBranches]; }
   get dreamCycleRunnerInstance(): DreamCycleRunner { return this.dreamCycleRunner; }
   get reasoningScalerInstance(): ReasoningScaler { return this.reasoningScaler; }
@@ -207,12 +166,8 @@ export class AutonomousLoop {
 
   // Phase 3: Event-driven awareness
   private eventBus: EventBus;
-  private fileWatcher: FileWatcher | null = null;
-  private gitWatcher: GitWatcher | null = null;
-  private issueWatcher: IssueWatcher | null = null;
   private lastCycleEndMs: number = 0;
   private dailyTurnCount: number = 0;
-  private eventsConfig: EventsConfig;
 
   // Communication
   private messagePolicy: MessagePolicy | null = null;
@@ -267,7 +222,6 @@ export class AutonomousLoop {
     provider: AutonomousProvider,
     options?: LoopOptions,
     agentConfig?: Partial<AgentLoopConfig> & { enabled?: boolean },
-    eventsConfig?: Partial<EventsConfig>,
   ) {
     this.config = config;
     this.projectRoot = projectRoot;
@@ -287,7 +241,6 @@ export class AutonomousLoop {
       numCtx: 131_072,     // qwen3.5 supports 256K; 131K is practical max with 128GB unified memory
     });
 
-    this.git = new GitOperations(projectRoot, config.git);
     this.reflector = new Reflector({ projectRoot });
 
     // Phase 2: Initialize persistent state
@@ -297,7 +250,6 @@ export class AutonomousLoop {
     this.agentConfig = agentConfig ?? {};
 
     // Phase 3: Initialize event system
-    this.eventsConfig = { ...DEFAULT_EVENTS_CONFIG, ...eventsConfig };
     this.eventBus = new EventBus({
       maxQueueSize: 100,
       logEvents: true,
@@ -655,21 +607,15 @@ export class AutonomousLoop {
   // ── Phase 3: Event-Driven Awareness ───────────────────────────────────
 
   /**
-   * Start all watchers and the event-driven loop.
+   * Start the event-driven loop (watchers removed — events via EventBus only).
    * Call this instead of (or alongside) start() when event mode is enabled.
    */
   async startEventDriven(): Promise<void> {
     const tracer = getTracer();
-
-    // Watchers always run and emit events. The LLM decides what to
-    // do with them. There is no events.enabled toggle.
     tracer.log('events', 'info', 'Starting event-driven mode');
 
     // Load persistent state first
     await this.loadState();
-
-    // Start watchers
-    await this.startWatchers();
 
     // Wire up the event bus to trigger agent cycles
     this.eventBus.onAny((event) => {
@@ -685,61 +631,12 @@ export class AutonomousLoop {
   }
 
   /**
-   * Stop all watchers and the event-driven loop.
+   * Stop the event-driven loop.
    */
   stopEventDriven(): void {
     const tracer = getTracer();
-    this.stopWatchers();
     this.eventBus.reset();
     tracer.log('events', 'info', 'Event-driven mode stopped');
-  }
-
-  /**
-   * Start individual watchers based on config.
-   */
-  private async startWatchers(): Promise<void> {
-    const tracer = getTracer();
-
-    if (this.eventsConfig.fileWatcher.enabled) {
-      this.fileWatcher = new FileWatcher(this.eventBus, {
-        projectRoot: this.projectRoot,
-        ...this.eventsConfig.fileWatcher,
-      });
-      await this.fileWatcher.start();
-    }
-
-    if (this.eventsConfig.gitWatcher.enabled) {
-      this.gitWatcher = new GitWatcher(this.eventBus, {
-        projectRoot: this.projectRoot,
-        ...this.eventsConfig.gitWatcher,
-      });
-      await this.gitWatcher.start();
-    }
-
-    if (this.eventsConfig.issueWatcher.enabled) {
-      this.issueWatcher = new IssueWatcher(this.eventBus, this.issueLog, {
-        ...this.eventsConfig.issueWatcher,
-      });
-      this.issueWatcher.start();
-    }
-
-    tracer.log('events', 'info', 'Watchers started', {
-      fileWatcher: this.fileWatcher?.isRunning() ?? false,
-      gitWatcher: this.gitWatcher?.isRunning() ?? false,
-      issueWatcher: this.issueWatcher?.isRunning() ?? false,
-    });
-  }
-
-  /**
-   * Stop all watchers.
-   */
-  private stopWatchers(): void {
-    this.fileWatcher?.stop();
-    this.fileWatcher = null;
-    this.gitWatcher?.stop();
-    this.gitWatcher = null;
-    this.issueWatcher?.stop();
-    this.issueWatcher = null;
   }
 
   /**
@@ -764,17 +661,18 @@ export class AutonomousLoop {
       return;
     }
 
-    // Check cooldown
+    // Check cooldown (30s default)
     const nowMs = Date.now();
-    const cooldownMs = this.eventsConfig.cooldownSeconds * 1000;
+    const cooldownMs = 30_000;
     if (nowMs - this.lastCycleEndMs < cooldownMs) {
       tracer.log('events', 'debug', `Event ${event.type} deferred (cooldown active)`);
       return;
     }
 
-    // Check daily turn budget
-    if (this.dailyTurnCount >= this.eventsConfig.dailyBudgetTurns) {
-      tracer.log('events', 'warn', `Daily turn budget exhausted (${this.dailyTurnCount}/${this.eventsConfig.dailyBudgetTurns})`);
+    // Check daily turn budget (500 default)
+    const dailyBudgetTurns = 500;
+    if (this.dailyTurnCount >= dailyBudgetTurns) {
+      tracer.log('events', 'warn', `Daily turn budget exhausted (${this.dailyTurnCount}/${dailyBudgetTurns})`);
       return;
     }
 
@@ -1076,6 +974,7 @@ export class AutonomousLoop {
         this.skillFilesManager,
         this.concurrentDreamExecutor,
         this.graphMemory,
+        this.stateManager?.cognitiveMap ?? undefined,
       );
 
       this.lastDreamCycleDate = today;

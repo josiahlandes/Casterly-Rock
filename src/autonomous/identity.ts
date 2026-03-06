@@ -30,6 +30,7 @@ import type { GoalStack, GoalStackSummary } from './goal-stack.js';
 import type { IssueLog, IssueLogSummary } from './issue-log.js';
 import type { JournalEntry } from './journal.js';
 import type { UserModel } from './world-model.js';
+import type { CognitiveMap } from '../metacognition/cognitive-map.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -85,6 +86,8 @@ export interface IdentityPromptResult {
   /** What sections were included */
   sections: {
     character: boolean;
+    cognitiveMap: boolean;
+    knowledgeManifest: boolean;
     worldModel: boolean;
     goalStack: boolean;
     issueLog: boolean;
@@ -102,7 +105,7 @@ export interface IdentityPromptResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: IdentityConfig = {
-  maxChars: 8000, // ~2,000 tokens at 4 chars/token
+  maxChars: 12000, // ~3,000 tokens at 4 chars/token (includes metacognition sections)
   includeSelfModel: true,
   maxGoalsInPrompt: 5,
   maxIssuesInPrompt: 5,
@@ -154,12 +157,16 @@ export function buildIdentityPrompt(
   config?: Partial<IdentityConfig>,
   crystalsPrompt?: string | null,
   constitutionPrompt?: string | null,
+  cognitiveMap?: CognitiveMap | null,
+  knowledgeManifestPrompt?: string | null,
 ): IdentityPromptResult {
   const tracer = getTracer();
   return tracer.withSpanSync('identity', 'buildIdentityPrompt', (span) => {
     const cfg = { ...DEFAULT_CONFIG, ...config };
     const sections: IdentityPromptResult['sections'] = {
       character: true,
+      cognitiveMap: false,
+      knowledgeManifest: false,
       worldModel: false,
       goalStack: false,
       issueLog: false,
@@ -178,6 +185,35 @@ export function buildIdentityPrompt(
       hasSelfModel: selfModel !== null && selfModel !== undefined,
       maxChars: cfg.maxChars,
     });
+
+    // ── Cognitive Map Section (Metacognition) ─────────────────────────
+
+    if (cognitiveMap) {
+      const cogMapText = cognitiveMap.buildSummary();
+      if (cogMapText && totalChars + cogMapText.length + 50 < cfg.maxChars) {
+        parts.push('\n# My Environment\n');
+        parts.push(cogMapText);
+        totalChars += cogMapText.length + 20;
+        sections.cognitiveMap = true;
+        tracer.log('identity', 'debug', `Cognitive map section: ${cogMapText.length} chars`);
+      } else {
+        tracer.log('identity', 'debug', 'Cognitive map section skipped (budget exceeded)');
+      }
+    }
+
+    // ── Knowledge Manifest Section (Metacognition) ──────────────────
+
+    if (knowledgeManifestPrompt && knowledgeManifestPrompt.length > 0) {
+      if (totalChars + knowledgeManifestPrompt.length + 50 < cfg.maxChars) {
+        parts.push('\n# Knowledge Sources\n');
+        parts.push(knowledgeManifestPrompt);
+        totalChars += knowledgeManifestPrompt.length + 30;
+        sections.knowledgeManifest = true;
+        tracer.log('identity', 'debug', `Knowledge manifest section: ${knowledgeManifestPrompt.length} chars`);
+      } else {
+        tracer.log('identity', 'debug', 'Knowledge manifest section skipped (budget exceeded)');
+      }
+    }
 
     // ── World Model Section ────────────────────────────────────────────
 
@@ -298,6 +334,13 @@ export function buildIdentityPrompt(
       sections,
       generatedAt: new Date().toISOString(),
     };
+
+    // Warn if any sections were dropped due to budget
+    const allSectionKeys = Object.keys(sections) as Array<keyof typeof sections>;
+    const droppedSections = allSectionKeys.filter((k) => !sections[k] && k !== 'character');
+    if (droppedSections.length > 0 && totalChars >= cfg.maxChars * 0.9) {
+      tracer.log('identity', 'warn', `Identity prompt near budget limit (${totalChars}/${cfg.maxChars} chars). Dropped sections: ${droppedSections.join(', ')}. Consider increasing maxChars.`);
+    }
 
     tracer.log('identity', 'info', 'Identity prompt built', {
       charCount: result.charCount,

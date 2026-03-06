@@ -24,8 +24,6 @@ export type {
 } from './provider.js';
 
 // Core modules
-export { Analyzer } from './analyzer.js';
-export { GitOperations } from './git.js';
 export { Validator, buildInvariants } from './validator.js';
 export { Reflector } from './reflector.js';
 export type { AggregateStats, MemoryEntry } from './reflector.js';
@@ -206,16 +204,6 @@ export type {
   EventHandler,
   EventBusConfig,
 } from './events.js';
-
-// Watchers
-export { FileWatcher } from './watchers/index.js';
-export type { FileWatcherConfig } from './watchers/index.js';
-
-export { GitWatcher } from './watchers/index.js';
-export type { GitWatcherConfig } from './watchers/index.js';
-
-export { IssueWatcher } from './watchers/index.js';
-export type { IssueWatcherConfig } from './watchers/index.js';
 
 // ── Phase 4: Tiered Memory ──────────────────────────────────────────────────
 

@@ -5,10 +5,12 @@ import { startDaemon } from './imessage/index.js';
 function parseArgs(argv: string[]): {
   pollInterval: number;
   workspacePath: string | undefined;
+  consoleMode: boolean;
 } {
   const args = argv.slice(2);
   let pollInterval = 2000;
   let workspacePath: string | undefined;
+  let consoleMode = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -19,13 +21,18 @@ function parseArgs(argv: string[]): {
     } else if (arg === '--workspace' && args[i + 1]) {
       workspacePath = args[i + 1];
       i++;
+    } else if (arg === '--console') {
+      consoleMode = true;
     } else if (arg === '--help' || arg === '-h') {
       process.stdout.write(`
-iMessage Daemon for Casterly
+Tyrion Daemon for Casterly
 
 Usage: node imessage-daemon.js [options]
 
 Options:
+  --console                 Console mode — stdin/stdout instead of iMessage.
+                            Runs the full daemon stack (dual-loop, state,
+                            memory, scheduler) with terminal I/O.
   --poll-interval <ms>      Polling interval in milliseconds (default: 2000)
   --workspace <path>        Workspace path (default: ~/.casterly)
   --help, -h                Show this help message
@@ -34,31 +41,35 @@ Allowed senders are managed via the address book (~/.casterly/contacts.json).
 Use iMessage commands from the admin number: add contact, remove contact, list contacts.
 
 Examples:
-  node imessage-daemon.js
+  node imessage-daemon.js                  # iMessage mode (production)
+  node imessage-daemon.js --console        # Console mode (testing)
   node imessage-daemon.js --poll-interval 5000
 \n`);
       process.exit(0);
     }
   }
 
-  return { pollInterval, workspacePath };
+  return { pollInterval, workspacePath, consoleMode };
 }
 
 async function main(): Promise<void> {
-  const { pollInterval, workspacePath } = parseArgs(process.argv);
+  const { pollInterval, workspacePath, consoleMode } = parseArgs(process.argv);
 
-  safeLogger.info('Starting iMessage daemon', {
+  const mode = consoleMode ? 'console' : 'iMessage';
+  safeLogger.info(`Starting ${mode} daemon`, {
     pollInterval,
+    consoleMode,
   });
 
   await startDaemon({
     pollIntervalMs: pollInterval,
     workspacePath,
+    consoleMode,
   });
 }
 
 main().catch((error: unknown) => {
-  safeLogger.error('iMessage daemon failed', {
+  safeLogger.error('Daemon failed', {
     error: error instanceof Error ? error.message : String(error),
   });
   process.exitCode = 1;

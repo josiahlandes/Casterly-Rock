@@ -112,7 +112,6 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
 
   // Access the reflector through the loop's public getter
   const reflector: Reflector = loop.reflectorInstance;
-  const git = loop.gitInstance;
 
   // ─── start ──────────────────────────────────────────────────────────────
 
@@ -140,13 +139,6 @@ export function createAutonomousController(options: ControllerOptions): Autonomo
     // Fire the abort signal
     if (abortController) {
       abortController.abort();
-    }
-
-    // Revert any partial git changes
-    try {
-      await git.checkoutBase();
-    } catch {
-      // Best-effort cleanup
     }
 
     busy = false;
