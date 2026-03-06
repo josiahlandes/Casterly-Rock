@@ -4,8 +4,10 @@
  * Mac Studio Edition - Local Ollama Only
  */
 
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import * as yaml from 'yaml';
 import { safeLogger } from '../logging/safe-logger.js';
 import { createVoiceFilter, type VoiceFilter } from './voice-filter.js';
@@ -241,6 +243,101 @@ function handleAdminCommand(
     }
     const lines = book.contacts.map((c) => `- ${c.name}: ${c.phone}`);
     return `Address book (${book.contacts.length}):\n${lines.join('\n')}`;
+  }
+
+  return null;
+}
+
+// ─── Daemon Control Command Patterns ─────────────────────────────────────────
+
+const UPDATE_RE = /^(?:tyrion\s+)?update$/i;
+const RESTART_RE = /^(?:tyrion\s+)?restart$/i;
+const LOGS_RE = /^(?:tyrion\s+)?logs$/i;
+
+/**
+ * Resolve the project root directory (parent of scripts/).
+ */
+function getProjectRoot(): string {
+  // Works both in ESM (import.meta.url) and when __dirname is available
+  try {
+    const thisFile = fileURLToPath(import.meta.url);
+    // src/imessage/daemon.ts → project root is ../../
+    return join(dirname(thisFile), '..', '..');
+  } catch {
+    return process.cwd();
+  }
+}
+
+/**
+ * Handle daemon control commands (admin-only).
+ * Returns the reply string if handled, or null if not a daemon command.
+ *
+ * - "update" / "tyrion update" — pull latest code, rebuild, restart
+ * - "restart" / "tyrion restart" — stop and restart the daemon
+ * - "logs" / "tyrion logs" — show recent log tail
+ */
+function handleDaemonCommand(
+  text: string,
+  sender: string,
+  book: AddressBook,
+): string | null {
+  const trimmed = text.trim();
+  const projectRoot = getProjectRoot();
+  const tyrionSh = join(projectRoot, 'scripts', 'tyrion.sh');
+
+  // ── Update ──────────────────────────────────────────────────────────────
+  if (UPDATE_RE.test(trimmed)) {
+    if (!isAdmin(sender, book)) return null;
+    safeLogger.info('Admin: daemon update requested');
+
+    try {
+      // Run update in the background — the daemon will be restarted by tyrion.sh
+      // Use nohup + disown so the child survives the parent process exiting.
+      execSync(
+        `nohup bash "${tyrionSh}" update >> ~/.casterly/logs/update.log 2>&1 &`,
+        { cwd: projectRoot, timeout: 5_000, shell: '/bin/bash' },
+      );
+      return 'Update started. Pulling latest code, rebuilding, and restarting. Back in a minute.';
+    } catch (error) {
+      safeLogger.error('Daemon update failed to launch', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return `Update failed to start: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  // ── Restart ─────────────────────────────────────────────────────────────
+  if (RESTART_RE.test(trimmed)) {
+    if (!isAdmin(sender, book)) return null;
+    safeLogger.info('Admin: daemon restart requested');
+
+    try {
+      execSync(
+        `nohup bash "${tyrionSh}" restart >> ~/.casterly/logs/tyrion.log 2>&1 &`,
+        { cwd: projectRoot, timeout: 5_000, shell: '/bin/bash' },
+      );
+      return 'Restarting now. Back in a moment.';
+    } catch (error) {
+      safeLogger.error('Daemon restart failed to launch', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return `Restart failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  // ── Logs ────────────────────────────────────────────────────────────────
+  if (LOGS_RE.test(trimmed)) {
+    if (!isAdmin(sender, book)) return null;
+
+    try {
+      const tail = execSync(
+        'tail -20 ~/.casterly/logs/tyrion.log 2>/dev/null || echo "No logs found."',
+        { encoding: 'utf-8', timeout: 5_000 },
+      );
+      return tail.trim().slice(-1500); // Cap at 1500 chars for iMessage
+    } catch {
+      return 'Could not read logs.';
+    }
   }
 
   return null;
@@ -626,12 +723,19 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         senderHandle: consoleSender,
       };
 
-      // Run admin commands, status commands, input guard — same as iMessage path
+      // Run admin commands, daemon commands, status commands, input guard — same as iMessage path
       const adminReply = handleAdminCommand(message.text, consoleSender, addressBook);
       if (adminReply !== null) {
         addressBook = loadAddressBook();
         allowedSenders = getAllowedPhones(addressBook);
         deliver(consoleSender, adminReply);
+        rl.prompt();
+        return;
+      }
+
+      const daemonReply = handleDaemonCommand(message.text, consoleSender, addressBook);
+      if (daemonReply !== null) {
+        deliver(consoleSender, daemonReply);
         rl.prompt();
         return;
       }
@@ -722,6 +826,13 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           addressBook = loadAddressBook();
           allowedSenders = getAllowedPhones(addressBook);
           deliver(sender, adminReply);
+          continue;
+        }
+
+        // ─── Daemon Control Commands (admin-only) ───────────────────
+        const daemonReply = handleDaemonCommand(message.text, sender, addressBook);
+        if (daemonReply !== null) {
+          deliver(sender, daemonReply);
           continue;
         }
 
