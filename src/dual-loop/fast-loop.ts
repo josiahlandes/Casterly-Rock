@@ -267,7 +267,8 @@ export class FastLoop {
 
     switch (triage.classification) {
       case 'conversational':
-      case 'simple': {
+      case 'simple':
+      case 'system_inquiry': {
         // Answer directly — create a task and mark it done immediately
         const response = triage.directResponse ?? 'I don\'t have a specific answer for that.';
         const id = this.taskBoard.create({
