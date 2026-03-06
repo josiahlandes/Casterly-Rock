@@ -17,7 +17,7 @@
  * The result of triaging a user message.
  */
 export interface TriageResult {
-  classification: 'simple' | 'complex' | 'conversational';
+  classification: 'simple' | 'complex' | 'conversational' | 'system_inquiry';
   confidence: number;           // 0.0 to 1.0
   triageNotes: string;          // Summary for DeepLoop (if complex)
   directResponse?: string | undefined;  // Response if answering directly
@@ -37,7 +37,7 @@ export const TRIAGE_FORMAT_SCHEMA: Record<string, unknown> = {
   properties: {
     classification: {
       type: 'string',
-      enum: ['simple', 'complex', 'conversational'],
+      enum: ['simple', 'complex', 'conversational', 'system_inquiry'],
     },
     confidence: {
       type: 'number',
@@ -59,7 +59,7 @@ export const TRIAGE_FORMAT_SCHEMA: Record<string, unknown> = {
 /**
  * System prompt for the triage classification call.
  */
-export const TRIAGE_SYSTEM_PROMPT = `You are a triage agent. Your job is to classify the user's message into one of three categories:
+export const TRIAGE_SYSTEM_PROMPT = `You are a triage agent. Your job is to classify the user's message into one of four categories:
 
 1. **simple** — A question you can answer from general knowledge alone, without checking any files, running commands, or accessing the system. Examples: "What does keep_alive do?", "Explain TCP vs UDP", "What's a Kubernetes pod?"
 2. **complex** — Anything that requires reading files, writing code, running commands, checking system state, or multi-step reasoning. This includes:
@@ -68,6 +68,7 @@ export const TRIAGE_SYSTEM_PROMPT = `You are a triage agent. Your job is to clas
    - File operations: "Read package.json", "How many files are in src?", "Show me the config"
    - Anything about the CURRENT state of code, processes, files, or the machine
 3. **conversational** — Greetings, thanks, small talk, or acknowledgments. Examples: "Hey", "Thanks!", "Good morning"
+4. **system_inquiry** — Status requests or questions about the system/agent itself. Examples: "Status?", "What can you do?", "Are you working?"
 
 Key rule: If answering correctly requires looking at something on this machine (files, processes, git, logs), classify as **complex**. Do NOT guess at system state — you will hallucinate. When in doubt, classify as **complex**.
 
@@ -76,7 +77,7 @@ include "matchedProject": "<slug>" in your response. Otherwise omit it.
 
 Respond with a JSON object:
 {
-  "classification": "simple" | "complex" | "conversational",
+  "classification": "simple" | "complex" | "conversational" | "system_inquiry",
   "confidence": 0.0-1.0,
   "triageNotes": "Brief summary for the planner (only needed for complex)",
   "directResponse": "Your answer (only for simple/conversational)",
