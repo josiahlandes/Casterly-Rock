@@ -48,6 +48,8 @@ import type { LlmProvider } from '../providers/base.js';
 export interface DaemonConfig {
   pollIntervalMs: number;
   workspacePath?: string | undefined;
+  /** When true, use stdin/stdout instead of iMessage for I/O */
+  consoleMode?: boolean | undefined;
 }
 
 function readPositiveIntEnv(name: string, fallback: number): number {
@@ -76,13 +78,14 @@ async function processMessage(
   message: Message,
   autonomousController: AutonomousController,
   voiceFilter: VoiceFilter,
+  send: (recipient: string, text: string) => { success: boolean; error?: string },
 ): Promise<void> {
   const sender = message.senderHandle || message.chatId;
 
   // Status dashboard — instant reply, no agent loop needed
   const statusReply = handleStatusCommand(message.text, autonomousController);
   if (statusReply !== null) {
-    sendMessage(sender, statusReply);
+    send(sender, statusReply);
     return;
   }
 
@@ -90,7 +93,7 @@ async function processMessage(
   if (/^autonomous\s+status$/i.test(message.text.trim())) {
     const autonomousReply = handleAutonomousCommand(message.text, autonomousController);
     if (autonomousReply !== null) {
-      sendMessage(sender, autonomousReply);
+      send(sender, autonomousReply);
       return;
     }
   }
@@ -107,7 +110,7 @@ async function processMessage(
     const response = outcome.summary;
     if (response) {
       const voiced = await voiceFilter.apply(response);
-      const result = sendMessage(sender, voiced);
+      const result = send(sender, voiced);
       if (result.success) {
         safeLogger.info('Agent loop response sent', {
           turns: outcome.totalTurns,
@@ -128,7 +131,7 @@ async function processMessage(
       message: casterlyError.message,
     });
     const errorMessage = formatErrorForUser(casterlyError, 'imessage');
-    sendMessage(sender, errorMessage);
+    send(sender, errorMessage);
   }
 }
 
@@ -276,12 +279,15 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   const {
     pollIntervalMs,
     workspacePath,
+    consoleMode = false,
   } = daemonConfig;
 
-  // Check if Messages is available
-  const messagesCheck = checkMessagesAvailable();
-  if (!messagesCheck.available) {
-    throw new Error(`iMessage not available: ${messagesCheck.error}`);
+  // In console mode, skip iMessage availability check
+  if (!consoleMode) {
+    const messagesCheck = checkMessagesAvailable();
+    if (!messagesCheck.available) {
+      throw new Error(`iMessage not available: ${messagesCheck.error}`);
+    }
   }
 
   // Load address book (contacts + admin)
@@ -297,20 +303,33 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
   // Find workspace path (single workspace for all contacts)
   const defaultWorkspacePath = workspacePath || findWorkspacePath() || join(process.cwd(), 'workspace');
 
-  safeLogger.info('iMessage daemon starting', {
+  const mode = consoleMode ? 'console' : 'iMessage';
+  safeLogger.info(`${mode} daemon starting`, {
     pollIntervalMs,
+    consoleMode,
     hasAllowlist: allowedSenders.length > 0,
     defaultWorkspacePath,
   });
+
+  // ── Message delivery function ──────────────────────────────────────────
+  // In console mode, print to stdout. In iMessage mode, use AppleScript.
+  type SendFn = (recipient: string, text: string) => { success: boolean; error?: string };
+  const deliver: SendFn = consoleMode
+    ? (_recipient, text) => {
+        process.stdout.write(`\n\x1b[36m${text}\x1b[0m\n`);
+        return { success: true };
+      }
+    : sendMessage;
 
   // Create scheduler job store
   const jobStore = createJobStore();
   safeLogger.info('Scheduler job store initialized', { activeJobs: jobStore.getActive().length });
 
   // Create approval bridge for async command approval
+  // In console mode the approval bridge is inert (no iMessage polling).
   const approvalStore = createApprovalStore();
   const approvalBridge = createApprovalBridge(
-    approvalStore, sendMessage, getMessagesSince, getLatestMessageRowId,
+    approvalStore, deliver, getMessagesSince, getLatestMessageRowId,
   );
   safeLogger.info('Approval bridge initialized');
 
@@ -454,7 +473,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         goalStack,
         voiceFilter,
         coordinatorConfig: dualLoopRuntime.coordinatorConfig,
-        sendMessageFn: sendMessage,
+        sendMessageFn: deliver,
         toolkit,
       });
 
@@ -528,7 +547,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       try {
         const summary = await autonomousController.getMorningSummary();
         const voiced = await voiceFilter.apply(summary);
-        const result = sendMessage(recipient, voiced);
+        const result = deliver(recipient, voiced);
         if (!result.success) {
           safeLogger.error('Failed to send morning summary', { error: result.error });
         }
@@ -557,10 +576,106 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       senderHandle: recipient,
     };
 
-    await processMessage(syntheticMessage, autonomousController, voiceFilter);
+    await processMessage(syntheticMessage, autonomousController, voiceFilter, deliver);
   };
 
-  // Get the current latest message ID (don't process old messages)
+  // ── Console mode: readline loop ────────────────────────────────────────
+  if (consoleMode) {
+    const readline = await import('node:readline');
+
+    // Run scheduled job checks on an interval (same as iMessage poll)
+    const jobIntervalId = setInterval(async () => {
+      try {
+        await checkDueJobs(jobStore, deliver, actionableHandler);
+        if (autonomousController) await autonomousController.tick();
+      } catch (error) {
+        safeLogger.error('Scheduled job check error', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }, pollIntervalMs);
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    const consoleSender = allowedSenders[0] || 'console-user';
+
+    process.stdout.write(`\n\x1b[1mTyrion Console Mode\x1b[0m\n`);
+    process.stdout.write(`\x1b[90mFull daemon stack (dual-loop, state, memory, scheduler).\n`);
+    process.stdout.write(`Sender identity: ${consoleSender}\n`);
+    process.stdout.write(`Type a message to talk to Tyrion. Ctrl+C to exit.\x1b[0m\n\n`);
+
+    rl.setPrompt('\x1b[1mtyrion>\x1b[0m ');
+    rl.prompt();
+
+    rl.on('line', async (rawInput: string) => {
+      const input = rawInput.trim();
+      if (!input) { rl.prompt(); return; }
+
+      // Build a synthetic Message matching the iMessage daemon's format
+      const message: Message = {
+        rowid: Date.now(),
+        guid: `console-${Date.now()}`,
+        text: input,
+        isFromMe: false,
+        date: new Date(),
+        chatId: consoleSender,
+        senderHandle: consoleSender,
+      };
+
+      // Run admin commands, status commands, input guard — same as iMessage path
+      const adminReply = handleAdminCommand(message.text, consoleSender, addressBook);
+      if (adminReply !== null) {
+        addressBook = loadAddressBook();
+        allowedSenders = getAllowedPhones(addressBook);
+        deliver(consoleSender, adminReply);
+        rl.prompt();
+        return;
+      }
+
+      const statusReply = handleStatusCommand(message.text, autonomousController);
+      if (statusReply !== null) {
+        deliver(consoleSender, statusReply);
+        rl.prompt();
+        return;
+      }
+
+      const guard = guardInboundMessage(message.text, consoleSender);
+      if (!guard.allowed) {
+        deliver(consoleSender, "I can't process that message.");
+        rl.prompt();
+        return;
+      }
+      message.text = guard.sanitized ?? message.text;
+
+      if (!autonomousController) {
+        deliver(consoleSender, 'System is starting up. Please try again in a moment.');
+        rl.prompt();
+        return;
+      }
+
+      await processMessage(message, autonomousController, voiceFilter, deliver);
+      rl.prompt();
+    });
+
+    rl.on('close', () => {
+      clearInterval(jobIntervalId);
+      if (autonomousController) autonomousController.stop();
+      process.stdout.write('\n\x1b[90mConsole session ended.\x1b[0m\n');
+      process.exit(0);
+    });
+
+    process.on('SIGINT', () => { rl.close(); });
+    process.on('SIGTERM', () => { rl.close(); });
+
+    // Keep process alive
+    await new Promise(() => {});
+    return;
+  }
+
+  // ── iMessage mode: poll loop ───────────────────────────────────────────
   let lastRowId = getLatestMessageRowId();
   let isPolling = false;
 
@@ -605,14 +720,14 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
           // Reload address book after mutations
           addressBook = loadAddressBook();
           allowedSenders = getAllowedPhones(addressBook);
-          sendMessage(sender, adminReply);
+          deliver(sender, adminReply);
           continue;
         }
 
         // ─── Status Commands (any allowed sender) ────────────────────
         const pollStatusReply = handleStatusCommand(message.text, autonomousController);
         if (pollStatusReply !== null) {
-          sendMessage(sender, pollStatusReply);
+          deliver(sender, pollStatusReply);
           continue;
         }
 
@@ -624,7 +739,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
             sender: sender.substring(0, 4) + '***',
             reason: guard.reason,
           });
-          sendMessage(sender, "I can't process that message.");
+          deliver(sender, "I can't process that message.");
           continue;
         }
 
@@ -649,15 +764,15 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         // Route through agent loop (sole execution path)
         if (!autonomousController) {
           safeLogger.error('No autonomous controller — cannot process message');
-          sendMessage(sender, 'System is starting up. Please try again in a moment.');
+          deliver(sender, 'System is starting up. Please try again in a moment.');
           continue;
         }
 
-        await processMessage(message, autonomousController, voiceFilter);
+        await processMessage(message, autonomousController, voiceFilter, deliver);
       }
 
       // Check for due scheduled jobs after processing messages
-      await checkDueJobs(jobStore, sendMessage, actionableHandler);
+      await checkDueJobs(jobStore, deliver, actionableHandler);
 
       // Run the next autonomous cycle if ready
       if (autonomousController) {

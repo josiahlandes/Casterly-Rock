@@ -36,6 +36,7 @@
     "benchmark": "tsx src/benchmark-cli.ts run",
     "benchmark:compare": "tsx src/benchmark-cli.ts compare",
     "test:coverage": "vitest run --coverage",
+    "tyrion:console": "tsx src/imessage-daemon.ts --console",
     "repl": "tsx src/terminal-repl.ts",
     "inspect": "tsx src/debug/inspector.ts"
   },

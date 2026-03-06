@@ -12,6 +12,7 @@
 #   start          Build and start the iMessage daemon (background)
 #   stop           Gracefully stop the running daemon
 #   restart        Stop + start
+#   console        Build and start in console mode (stdin/stdout, foreground)
 #   update         Pull from main, install deps if needed, build, restart
 #   reset          Stop, clear all data except contacts, start fresh
 #   status         Show whether the daemon is running, PID, uptime
@@ -201,6 +202,17 @@ cmd_update() {
   echo -e "${GREEN}Update complete!${NC}"
 }
 
+cmd_console() {
+  echo -e "${BLUE}Building...${NC}"
+  cd "$PROJECT_ROOT" && npm run build
+
+  echo -e "${GREEN}Starting Tyrion in console mode (full daemon stack)${NC}"
+  echo -e "${BLUE}Press Ctrl+C to exit${NC}"
+  echo ""
+
+  cd "$PROJECT_ROOT" && node dist/src/imessage-daemon.js --console
+}
+
 cmd_reset() {
   echo -e "${YELLOW}${BOLD}This will delete all Tyrion data except contacts.${NC}"
   echo -e "${YELLOW}Memory, goals, issues, tasks, journal, reflections — all gone.${NC}"
@@ -309,6 +321,11 @@ Commands:
 
   restart     Stop, then start.
 
+  console     Build and start in console mode (foreground). Uses
+              stdin/stdout instead of iMessage, but runs the full
+              daemon stack — dual-loop, state, memory, scheduler.
+              Ideal for testing on any machine.
+
   update      Pull latest code from main, install deps if changed,
               build, and restart. Designed for remote code pushes —
               text Tyrion "update" and the daemon self-updates.
@@ -339,6 +356,7 @@ case "${1:-}" in
   start)    cmd_start ;;
   stop)     cmd_stop ;;
   restart)  cmd_restart ;;
+  console)  cmd_console ;;
   update)   cmd_update ;;
   reset)    cmd_reset ;;
   status)   cmd_status ;;
