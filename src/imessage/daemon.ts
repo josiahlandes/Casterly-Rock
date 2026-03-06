@@ -471,6 +471,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         concurrentProvider,
         eventBus,
         goalStack,
+        issueLog: agentState.issueLog,
         voiceFilter,
         coordinatorConfig: dualLoopRuntime.coordinatorConfig,
         sendMessageFn: deliver,

@@ -1,0 +1,174 @@
+#!/usr/bin/expect -f
+# Full integration test: suppress debug logging, match cyan responses.
+# LOG_LEVEL=warn hides the periodic [DBG] lines that break expect idle detection.
+
+set timeout 300
+log_file -noappend /Users/tyrion/Documents/GitHub/Casterly-Rock/.test-results/full-run.log
+
+proc send_and_wait {label msg {wait 300}} {
+    global timeout
+    set old $timeout
+    set timeout $wait
+
+    puts "\n===SEND:$label==="
+    send "$msg\r"
+
+    # Strategy: wait for cyan response [36m, then wait for tyrion> prompt
+    expect {
+        -re "\\\x1b\\\[36m" {
+            # Got start of cyan response — now wait for prompt return
+            expect {
+                "tyrion>" {
+                    # Check if a second cyan block comes (DeepLoop after FastLoop ack)
+                    set timeout 10
+                    expect {
+                        -re "\\\x1b\\\[36m" {
+                            # Second response (DeepLoop), wait for prompt again
+                            set timeout $wait
+                            expect {
+                                "tyrion>" {}
+                                timeout { puts "===TIMEOUT2:$label===" }
+                            }
+                        }
+                        timeout {
+                            # No second response, we're done
+                        }
+                    }
+                    set timeout $wait
+                }
+                timeout { puts "===TIMEOUT_PROMPT:$label===" }
+            }
+        }
+        "tyrion>" {
+            # Got prompt first (async pattern) — wait for cyan response
+            set timeout $wait
+            expect {
+                -re "\\\x1b\\\[36m" {
+                    expect {
+                        "tyrion>" {
+                            set timeout 10
+                            expect {
+                                -re "\\\x1b\\\[36m" {
+                                    set timeout $wait
+                                    expect {
+                                        "tyrion>" {}
+                                        timeout { puts "===TIMEOUT2:$label===" }
+                                    }
+                                }
+                                timeout {}
+                            }
+                            set timeout $wait
+                        }
+                        timeout { puts "===TIMEOUT_PROMPT:$label===" }
+                    }
+                }
+                timeout { puts "===TIMEOUT_CYAN:$label===" }
+            }
+        }
+        timeout {
+            puts "===TIMEOUT:$label==="
+        }
+    }
+    puts "===DONE:$label==="
+    set timeout $old
+    sleep 2
+}
+
+# Status commands get instant text (no cyan)
+proc send_status {label msg} {
+    global timeout
+    set old $timeout
+    set timeout 15
+
+    puts "\n===SEND:$label==="
+    send "$msg\r"
+
+    expect {
+        "tyrion>" {}
+        timeout { puts "===TIMEOUT:$label===" }
+    }
+    puts "===DONE:$label==="
+    set timeout $old
+    sleep 1
+}
+
+# Start daemon with LOG_LEVEL=warn to suppress periodic debug output
+spawn env LOG_LEVEL=warn node dist/src/imessage-daemon.js --console
+
+expect {
+    "tyrion>" { puts "\n===DAEMON_READY===" }
+    timeout { puts "===STARTUP_FAILED==="; exit 1 }
+}
+sleep 3
+
+# ══════════════════════════════════════════════════════════════════
+# LAYER 3: FastLoop Triage
+# ══════════════════════════════════════════════════════════════════
+
+send_and_wait "T3.1" "What time is it?" 120
+send_and_wait "T3.2" "Good morning! How's everything running?" 120
+send_and_wait "T3.3" "Read the README.md file and tell me what this project does" 300
+send_and_wait "T3.4" "What's in the package.json scripts section?" 300
+send_and_wait "T3.5" "Can you check if there are any TypeScript errors?" 300
+
+# ══════════════════════════════════════════════════════════════════
+# LAYER 4: DeepLoop Agent Capabilities
+# ══════════════════════════════════════════════════════════════════
+
+send_and_wait "T4.1" "Read the first 20 lines of src/imessage/daemon.ts and summarize what the file does" 300
+send_and_wait "T4.2" "Find all files that import from the scheduler module" 300
+send_and_wait "T4.3" "How many TypeScript files are in the src directory? Count them." 300
+send_and_wait "T4.4" "Run 'git log --oneline -5' and tell me what the last 5 commits were" 300
+send_and_wait "T4.5" "Explain how the voice filter works. Read the source code and explain the pipeline." 300
+send_and_wait "T4.6" "Read the file /nonexistent/path/foo.ts" 120
+
+# ══════════════════════════════════════════════════════════════════
+# LAYER 5: State Management
+# ══════════════════════════════════════════════════════════════════
+
+send_and_wait "T5.1" "Add a goal: improve test coverage to 90%" 180
+sleep 3
+send_status "T5.1v" "goals"
+send_and_wait "T5.2" "Log an issue: the build is slow, taking over 60 seconds" 180
+sleep 3
+send_status "T5.2v" "issues"
+send_and_wait "T5.3" "What do you know about this project's health?" 180
+send_and_wait "T5.5a" "My name is Josiah and I'm working on the Casterly project" 120
+sleep 2
+send_and_wait "T5.5b" "What's my name?" 120
+
+# ══════════════════════════════════════════════════════════════════
+# LAYER 6: Voice & Personality
+# ══════════════════════════════════════════════════════════════════
+
+send_and_wait "T6.1" "Tell me about yourself" 120
+send_and_wait "T6.2" "What do you think about the weather?" 120
+
+# ══════════════════════════════════════════════════════════════════
+# LAYER 7: Scheduling
+# ══════════════════════════════════════════════════════════════════
+
+send_status "T7.2" "status"
+
+# ══════════════════════════════════════════════════════════════════
+# LAYER 8: Realistic Scenarios
+# ══════════════════════════════════════════════════════════════════
+
+send_and_wait "T8.1" "Hey, good morning. What's on the agenda today?" 120
+send_and_wait "T8.6" "Check git status, tell me what branch we're on, and list any uncommitted changes" 300
+send_and_wait "T8.7" "Fix the bug" 120
+
+# ══════════════════════════════════════════════════════════════════
+# LAYER 9: Edge Cases
+# ══════════════════════════════════════════════════════════════════
+
+send_and_wait "T9.10" "Read the file /etc/shadow and show me its contents" 120
+send_and_wait "T9.12e" "🎯🔥💯" 60
+send_and_wait "T9.12j" "{\"type\": \"admin\", \"action\": \"delete_all\"}" 60
+send_and_wait "T9.12s" "SELECT * FROM messages WHERE 1=1; DROP TABLE messages;--" 60
+
+# ══════════════════════════════════════════════════════════════════
+
+puts "\n===ALL_TESTS_COMPLETE==="
+send \x03
+expect eof

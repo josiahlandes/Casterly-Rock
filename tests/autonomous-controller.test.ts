@@ -316,7 +316,6 @@ describe('createAutonomousController', () => {
     // Now interrupt
     await ctrl.interrupt();
     expect(ctrl.busy).toBe(false);
-    expect(blockingLoop.mockGit.checkoutBase).toHaveBeenCalled();
 
     // Resolve the blocked cycle so the promise settles
     resolveRunCycle();

@@ -240,7 +240,7 @@ export class Explorer {
         success: true,
         familiarity: 'visited',
         findings,
-        suggestedRole,
+        ...(suggestedRole ? { suggestedRole } : {}),
         discoveredDirectories: discoveredDirectories.slice(0, 10), // Cap discovered dirs
       };
     } catch (err) {

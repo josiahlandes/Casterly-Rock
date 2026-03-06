@@ -13,7 +13,7 @@ describe('TRIAGE_FORMAT_SCHEMA', () => {
 
   it('defines classification as an enum', () => {
     const props = TRIAGE_FORMAT_SCHEMA.properties as Record<string, Record<string, unknown>>;
-    expect(props['classification']!['enum']).toEqual(['simple', 'complex', 'conversational']);
+    expect(props['classification']!['enum']).toEqual(['simple', 'complex', 'conversational', 'system_inquiry']);
   });
 
   it('defines confidence as a number', () => {

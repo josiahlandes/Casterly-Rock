@@ -202,7 +202,7 @@ export function auditResponse(
     });
   }
 
-  return { passed, claims, warning };
+  return { passed, claims, ...(warning ? { warning } : {}) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

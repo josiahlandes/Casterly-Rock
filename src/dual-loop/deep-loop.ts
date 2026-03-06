@@ -555,8 +555,12 @@ export class DeepLoop {
         verificationPasses,
       });
 
-      // Self-review: DeepLoop reviews its own output with the 122B model
-      const reviewResult = await this.selfReview(this.taskBoard.get(task.id)!);
+      // Skip self-review for information-only tasks (no file modifications).
+      // The code review prompt expects diffs, which don't exist for read-only tasks.
+      const hasFileChanges = (outcome.workspaceManifest?.length ?? 0) > 0;
+      const reviewResult = hasFileChanges
+        ? await this.selfReview(this.taskBoard.get(task.id)!)
+        : { approved: true, reviewResult: 'approved' as ReviewResult, reviewNotes: 'Skipped — information-only task (no file changes)' };
 
       if (reviewResult.approved) {
         this.taskBoard.update(task.id, {

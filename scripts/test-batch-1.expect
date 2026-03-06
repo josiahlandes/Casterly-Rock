@@ -1,0 +1,111 @@
+#!/usr/bin/expect -f
+# Batch 1: Layer 1 remaining (T1.4, T1.5) + Layer 2 (T2.1-T2.6)
+
+set timeout 120
+log_file -noappend /Users/tyrion/Documents/GitHub/Casterly-Rock/.test-results/batch1.log
+
+spawn node dist/src/imessage-daemon.js --console
+
+# Wait for startup
+expect {
+    "tyrion>" { puts "\n===READY===" }
+    timeout { puts "===STARTUP_FAILED==="; exit 1 }
+}
+sleep 2
+
+# T1.4 - Oversized message
+puts "\n===T1.4_START==="
+set timeout 30
+# Generate 11000 chars
+set bigmsg [string repeat "A" 11000]
+send "$bigmsg\r"
+expect {
+    "can't process" { puts "\n===T1.4: REJECTED (PASS)===" }
+    "tyrion>" { puts "\n===T1.4: NOT REJECTED - check behavior===" }
+    timeout { puts "\n===T1.4: TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# T1.5 - Admin Command: List Contacts
+puts "\n===T1.5_START==="
+set timeout 15
+send "list contacts\r"
+expect {
+    -re "Josiah|Katie|contact" { puts "\n===T1.5_RESPONSE===" }
+    "tyrion>" { puts "\n===T1.5: NO CONTACT LIST===" }
+    timeout { puts "\n===T1.5: TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# === LAYER 2 ===
+
+# T2.1 - Status
+puts "\n===T2.1_START==="
+set timeout 10
+send "status\r"
+expect {
+    -re "uptime|status|model|active" { puts "\n===T2.1_RESPONSE===" }
+    timeout { puts "\n===T2.1: TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# T2.2 - Goals
+puts "\n===T2.2_START==="
+set timeout 10
+send "goals\r"
+expect {
+    -re "goal|No active" { puts "\n===T2.2_RESPONSE===" }
+    timeout { puts "\n===T2.2: TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# T2.3 - Issues
+puts "\n===T2.3_START==="
+set timeout 10
+send "issues\r"
+expect {
+    -re "issue|No open" { puts "\n===T2.3_RESPONSE===" }
+    timeout { puts "\n===T2.3: TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# T2.4 - Health
+puts "\n===T2.4_START==="
+set timeout 10
+send "health\r"
+expect {
+    -re "health|memory|cpu|system" { puts "\n===T2.4_RESPONSE===" }
+    timeout { puts "\n===T2.4: TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# T2.5 - Activity
+puts "\n===T2.5_START==="
+set timeout 10
+send "activity\r"
+expect {
+    -re "activity|recent|No recent" { puts "\n===T2.5_RESPONSE===" }
+    timeout { puts "\n===T2.5: TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# T2.6 - Autonomous Status
+puts "\n===T2.6_START==="
+set timeout 10
+send "autonomous status\r"
+expect {
+    -re "autonomous|cycle|enabled|disabled" { puts "\n===T2.6_RESPONSE===" }
+    timeout { puts "\n===T2.6: TIMEOUT===" }
+}
+expect "tyrion>"
+
+puts "\n===BATCH1_COMPLETE==="
+send \x03
+expect eof

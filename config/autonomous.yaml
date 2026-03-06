@@ -145,7 +145,7 @@ dual_loop:
   # Code review is handled by DeepLoop self-review (see deep-loop.ts).
   fast:
     heartbeat_ms: 2000
-    triage_timeout_ms: 10000
+    triage_timeout_ms: 30000
     max_conversation_tokens: 10000
     message_coalesce_ms: 3000
 

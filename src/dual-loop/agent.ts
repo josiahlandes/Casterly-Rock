@@ -371,7 +371,7 @@ export function resultToMessage(result: AgentResult): AgentMessage {
   return {
     fromRole: result.role,
     content: result.text,
-    toolCalls: result.toolCallLog.length > 0 ? result.toolCallLog : undefined,
+    ...(result.toolCallLog.length > 0 ? { toolCalls: result.toolCallLog } : {}),
   };
 }
 
@@ -396,7 +396,7 @@ export async function chainAgents(
   for (const agent of agents) {
     const task: AgentTask = {
       ...currentTask,
-      priorContext: priorContext.length > 0 ? [...priorContext] : undefined,
+      ...(priorContext.length > 0 ? { priorContext: [...priorContext] } : {}),
     };
 
     const result = await agent.execute(task);

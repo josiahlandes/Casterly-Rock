@@ -93,7 +93,7 @@ export type DeliverFn = (sender: string, text: string) => Promise<void>;
 
 const DEFAULT_CONFIG: FastLoopConfig = {
   heartbeatMs: 2000,
-  triageTimeoutMs: 10_000,
+  triageTimeoutMs: 30_000,
   maxConversationTokens: 10_000,
   messageCoalesceMs: 3000,
   tiers: {

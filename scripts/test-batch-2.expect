@@ -1,0 +1,139 @@
+#!/usr/bin/expect -f
+# Batch 2: T2.2-T2.3 retest + Layer 3 (T3.1-T3.5)
+
+set timeout 180
+log_file -noappend /Users/tyrion/Documents/GitHub/Casterly-Rock/.test-results/batch2.log
+
+spawn node dist/src/imessage-daemon.js --console
+
+expect {
+    "tyrion>" { puts "\n===READY===" }
+    timeout { puts "===STARTUP_FAILED==="; exit 1 }
+}
+sleep 3
+
+# T2.2 retest - Goals
+puts "\n===T2.2_RETEST_START==="
+set timeout 10
+send "goals\r"
+expect {
+    -re "Goals|goal|No .* goals" { puts "\n===T2.2_RESPONSE===" }
+    "Dual-loop mode" { puts "\n===T2.2_STILL_BROKEN===" }
+    "tyrion>" { puts "\n===T2.2_EMPTY===" }
+    timeout { puts "\n===T2.2_TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# T2.3 retest - Issues
+puts "\n===T2.3_RETEST_START==="
+set timeout 10
+send "issues\r"
+expect {
+    -re "Issues|issue|No .* issues" { puts "\n===T2.3_RESPONSE===" }
+    "Dual-loop mode" { puts "\n===T2.3_STILL_BROKEN===" }
+    "tyrion>" { puts "\n===T2.3_EMPTY===" }
+    timeout { puts "\n===T2.3_TIMEOUT===" }
+}
+expect "tyrion>"
+sleep 1
+
+# === LAYER 3 ===
+
+# T3.1 - Simple Question
+puts "\n===T3.1_START==="
+set timeout 120
+send "What time is it?\r"
+expect {
+    -re "\\\[36m" {
+        # Got cyan response
+        expect "tyrion>"
+        puts "\n===T3.1_RESPONSE==="
+    }
+    timeout { puts "\n===T3.1_TIMEOUT===" }
+}
+sleep 2
+
+# T3.2 - Conversational
+puts "\n===T3.2_START==="
+set timeout 120
+send "Good morning! How's everything running?\r"
+expect {
+    -re "\\\[36m" {
+        expect "tyrion>"
+        puts "\n===T3.2_RESPONSE==="
+    }
+    timeout { puts "\n===T3.2_TIMEOUT===" }
+}
+sleep 2
+
+# T3.3 - Complex Task (needs DeepLoop)
+puts "\n===T3.3_START==="
+set timeout 300
+send "Read the README.md file and tell me what this project does\r"
+# First expect the FastLoop ack
+expect {
+    -re "\\\[36m" {
+        puts "\n===T3.3_ACK==="
+        # Now wait for DeepLoop response
+        expect {
+            -re "\\\[36m" {
+                expect "tyrion>"
+                puts "\n===T3.3_DEEP_RESPONSE==="
+            }
+            "tyrion>" {
+                puts "\n===T3.3_SINGLE_RESPONSE==="
+            }
+            timeout { puts "\n===T3.3_DEEP_TIMEOUT===" }
+        }
+    }
+    timeout { puts "\n===T3.3_TIMEOUT===" }
+}
+sleep 2
+
+# T3.4 - Task With Tool Use
+puts "\n===T3.4_START==="
+set timeout 300
+send "What's in the package.json scripts section?\r"
+expect {
+    -re "\\\[36m" {
+        puts "\n===T3.4_ACK==="
+        expect {
+            -re "\\\[36m" {
+                expect "tyrion>"
+                puts "\n===T3.4_DEEP_RESPONSE==="
+            }
+            "tyrion>" {
+                puts "\n===T3.4_SINGLE_RESPONSE==="
+            }
+            timeout { puts "\n===T3.4_DEEP_TIMEOUT===" }
+        }
+    }
+    timeout { puts "\n===T3.4_TIMEOUT===" }
+}
+sleep 2
+
+# T3.5 - Triage Accuracy
+puts "\n===T3.5_START==="
+set timeout 300
+send "Can you check if there are any TypeScript errors?\r"
+expect {
+    -re "\\\[36m" {
+        puts "\n===T3.5_ACK==="
+        expect {
+            -re "\\\[36m" {
+                expect "tyrion>"
+                puts "\n===T3.5_DEEP_RESPONSE==="
+            }
+            "tyrion>" {
+                puts "\n===T3.5_SINGLE_RESPONSE==="
+            }
+            timeout { puts "\n===T3.5_DEEP_TIMEOUT===" }
+        }
+    }
+    timeout { puts "\n===T3.5_TIMEOUT===" }
+}
+
+puts "\n===BATCH2_COMPLETE==="
+send \x03
+expect eof

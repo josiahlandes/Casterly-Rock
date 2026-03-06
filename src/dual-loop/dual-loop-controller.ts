@@ -24,6 +24,7 @@ import type { LlmProvider } from '../providers/base.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
 import type { GoalStack } from '../autonomous/goal-stack.js';
+import type { IssueLog } from '../autonomous/issue-log.js';
 import type { AgentToolkit } from '../autonomous/tools/types.js';
 import type {
   AutonomousController,
@@ -54,6 +55,8 @@ export interface DualLoopControllerOptions {
   eventBus: EventBus;
   /** Goal stack for idle-time goal work */
   goalStack: GoalStack;
+  /** Issue log for tracking reported problems */
+  issueLog?: IssueLog | undefined;
   /** Voice filter for response delivery */
   voiceFilter: VoiceFilter;
   /** Coordinator configuration from autonomous.yaml */
@@ -282,8 +285,14 @@ export function createDualLoopController(
         return coordinator.getHealthSummary();
       case 'activity':
         return coordinator.getTaskBoard().getSummaryText();
+      case 'goals':
+        return options.goalStack.getSummaryText();
+      case 'issues':
+        return options.issueLog
+          ? options.issueLog.getSummaryText()
+          : 'Issue tracking not configured.';
       default:
-        return `Dual-loop mode: ${enabled ? 'active' : 'inactive'}. Commands: status, health, activity`;
+        return `Dual-loop mode: ${enabled ? 'active' : 'inactive'}. Commands: status, goals, issues, health, activity`;
     }
   }
 

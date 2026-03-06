@@ -1,0 +1,37 @@
+#!/usr/bin/expect -f
+# Console mode test runner using expect
+# Usage: expect scripts/console-test.expect <message> <timeout_seconds>
+
+set timeout [lindex $argv 1]
+if {$timeout == ""} {set timeout 120}
+set message [lindex $argv 0]
+
+log_user 1
+
+spawn node dist/src/imessage-daemon.js --console
+
+# Wait for the tyrion> prompt
+expect {
+    "tyrion>" {}
+    timeout {
+        puts "STARTUP_TIMEOUT"
+        exit 1
+    }
+}
+
+# Send the message
+send "$message\r"
+
+# Wait for response (cyan-colored output followed by new tyrion> prompt)
+expect {
+    "tyrion>" {
+        # Response complete
+    }
+    timeout {
+        puts "RESPONSE_TIMEOUT"
+    }
+}
+
+# Send EOF to exit
+send "\x03"
+expect eof

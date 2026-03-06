@@ -1,0 +1,289 @@
+#!/usr/bin/expect -f
+# Layers 4-9 tests (with self-review fix)
+# Strategy: use simple send/expect with "tyrion>" as completion signal
+# and extract cyan responses from the log file after
+
+set timeout 300
+log_file -noappend /Users/tyrion/Documents/GitHub/Casterly-Rock/.test-results/layers-4-9.log
+
+spawn node dist/src/imessage-daemon.js --console
+
+# Wait for startup (may take time for MLX check)
+expect {
+    "tyrion>" { puts "\n===READY===" }
+    timeout { puts "===STARTUP_FAILED==="; exit 1 }
+}
+sleep 3
+
+# === LAYER 4: DeepLoop Agent ===
+
+puts "\n===T4.1_START==="
+set timeout 300
+send "Read the first 20 lines of src/imessage/daemon.ts and summarize what the file does\r"
+# Wait for FastLoop ack (first response)
+expect {
+    -re "\\\x1b\\\[36m" {
+        puts "===T4.1_ACK==="
+        # Now wait for DeepLoop response (second cyan block) + prompt
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect "tyrion>"
+                puts "===T4.1_DONE==="
+            }
+            "tyrion>" {
+                puts "===T4.1_SINGLE==="
+            }
+            timeout { puts "===T4.1_DEEP_TIMEOUT===" }
+        }
+    }
+    "tyrion>" {
+        # Might be immediate prompt, wait for async response
+        expect {
+            -re "\\\x1b\\\[36m" {
+                puts "===T4.1_ACK==="
+                expect {
+                    -re "\\\x1b\\\[36m" {
+                        expect "tyrion>"
+                        puts "===T4.1_DONE==="
+                    }
+                    "tyrion>" { puts "===T4.1_SINGLE===" }
+                    timeout { puts "===T4.1_DEEP_TIMEOUT===" }
+                }
+            }
+            timeout { puts "===T4.1_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T4.1_TIMEOUT===" }
+}
+sleep 2
+
+puts "\n===T4.4_START==="
+set timeout 300
+send "Run 'git log --oneline -5' and tell me what the last 5 commits were\r"
+expect {
+    -re "\\\x1b\\\[36m" {
+        puts "===T4.4_ACK==="
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect "tyrion>"
+                puts "===T4.4_DONE==="
+            }
+            "tyrion>" { puts "===T4.4_SINGLE===" }
+            timeout { puts "===T4.4_DEEP_TIMEOUT===" }
+        }
+    }
+    "tyrion>" {
+        expect {
+            -re "\\\x1b\\\[36m" {
+                puts "===T4.4_ACK==="
+                expect {
+                    -re "\\\x1b\\\[36m" {
+                        expect "tyrion>"
+                        puts "===T4.4_DONE==="
+                    }
+                    "tyrion>" { puts "===T4.4_SINGLE===" }
+                    timeout { puts "===T4.4_DEEP_TIMEOUT===" }
+                }
+            }
+            timeout { puts "===T4.4_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T4.4_TIMEOUT===" }
+}
+sleep 2
+
+puts "\n===T4.6_START==="
+set timeout 240
+send "Read the file /nonexistent/path/foo.ts\r"
+expect {
+    -re "\\\x1b\\\[36m" {
+        puts "===T4.6_ACK==="
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect "tyrion>"
+                puts "===T4.6_DONE==="
+            }
+            "tyrion>" { puts "===T4.6_SINGLE===" }
+            timeout { puts "===T4.6_DEEP_TIMEOUT===" }
+        }
+    }
+    "tyrion>" {
+        expect {
+            -re "\\\x1b\\\[36m" {
+                puts "===T4.6_ACK==="
+                expect {
+                    -re "\\\x1b\\\[36m" {
+                        expect "tyrion>"
+                        puts "===T4.6_DONE==="
+                    }
+                    "tyrion>" { puts "===T4.6_SINGLE===" }
+                    timeout { puts "===T4.6_DEEP_TIMEOUT===" }
+                }
+            }
+            timeout { puts "===T4.6_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T4.6_TIMEOUT===" }
+}
+sleep 2
+
+# === LAYER 5: State ===
+
+puts "\n===T5.5a_START==="
+set timeout 180
+send "My name is Josiah and I'm working on the Casterly project\r"
+expect {
+    -re "\\\x1b\\\[36m" {
+        expect {
+            -re "\\\x1b\\\[36m" { expect "tyrion>" }
+            "tyrion>" {}
+            timeout {}
+        }
+        puts "===T5.5a_DONE==="
+    }
+    "tyrion>" {
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect {
+                    -re "\\\x1b\\\[36m" { expect "tyrion>" }
+                    "tyrion>" {}
+                    timeout {}
+                }
+                puts "===T5.5a_DONE==="
+            }
+            timeout { puts "===T5.5a_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T5.5a_TIMEOUT===" }
+}
+sleep 2
+
+puts "\n===T5.5b_START==="
+set timeout 180
+send "What's my name?\r"
+expect {
+    -re "\\\x1b\\\[36m" {
+        expect {
+            -re "\\\x1b\\\[36m" { expect "tyrion>" }
+            "tyrion>" {}
+            timeout {}
+        }
+        puts "===T5.5b_DONE==="
+    }
+    "tyrion>" {
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect {
+                    -re "\\\x1b\\\[36m" { expect "tyrion>" }
+                    "tyrion>" {}
+                    timeout {}
+                }
+                puts "===T5.5b_DONE==="
+            }
+            timeout { puts "===T5.5b_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T5.5b_TIMEOUT===" }
+}
+sleep 2
+
+# === LAYER 6: Voice ===
+
+puts "\n===T6.1_START==="
+set timeout 120
+send "Tell me about yourself\r"
+expect {
+    -re "\\\x1b\\\[36m" {
+        expect "tyrion>"
+        puts "===T6.1_DONE==="
+    }
+    "tyrion>" {
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect "tyrion>"
+                puts "===T6.1_DONE==="
+            }
+            timeout { puts "===T6.1_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T6.1_TIMEOUT===" }
+}
+sleep 2
+
+# === LAYER 8: Realistic ===
+
+puts "\n===T8.7_START==="
+set timeout 120
+send "Fix the bug\r"
+expect {
+    -re "\\\x1b\\\[36m" {
+        expect {
+            -re "\\\x1b\\\[36m" { expect "tyrion>" }
+            "tyrion>" {}
+            timeout {}
+        }
+        puts "===T8.7_DONE==="
+    }
+    "tyrion>" {
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect {
+                    -re "\\\x1b\\\[36m" { expect "tyrion>" }
+                    "tyrion>" {}
+                    timeout {}
+                }
+                puts "===T8.7_DONE==="
+            }
+            timeout { puts "===T8.7_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T8.7_TIMEOUT===" }
+}
+sleep 2
+
+# === LAYER 9: Edge Cases ===
+
+puts "\n===T9.12e_START==="
+set timeout 120
+send "🎯🔥💯\r"
+expect {
+    -re "\\\x1b\\\[36m" {
+        expect "tyrion>"
+        puts "===T9.12e_DONE==="
+    }
+    "tyrion>" {
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect "tyrion>"
+                puts "===T9.12e_DONE==="
+            }
+            timeout { puts "===T9.12e_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T9.12e_TIMEOUT===" }
+}
+sleep 2
+
+puts "\n===T9.12s_START==="
+set timeout 60
+send "SELECT * FROM messages WHERE 1=1; DROP TABLE messages;--\r"
+expect {
+    -re "\\\x1b\\\[36m" {
+        expect "tyrion>"
+        puts "===T9.12s_DONE==="
+    }
+    "tyrion>" {
+        expect {
+            -re "\\\x1b\\\[36m" {
+                expect "tyrion>"
+                puts "===T9.12s_DONE==="
+            }
+            timeout { puts "===T9.12s_TIMEOUT===" }
+        }
+    }
+    timeout { puts "===T9.12s_TIMEOUT===" }
+}
+
+puts "\n===ALL_DONE==="
+send \x03
+expect eof

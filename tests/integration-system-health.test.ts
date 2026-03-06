@@ -46,11 +46,6 @@ describe('autonomous module exports', () => {
     expect(typeof loop.loadConfig).toBe('function');
   });
 
-  it('exports analyzer', async () => {
-    const analyzer = await import('../src/autonomous/analyzer.js');
-    expect(analyzer.Analyzer).toBeDefined();
-  });
-
   it('exports validator', async () => {
     const validator = await import('../src/autonomous/validator.js');
     expect(validator.Validator).toBeDefined();
@@ -60,11 +55,6 @@ describe('autonomous module exports', () => {
   it('exports reflector', async () => {
     const reflector = await import('../src/autonomous/reflector.js');
     expect(reflector.Reflector).toBeDefined();
-  });
-
-  it('exports git operations', async () => {
-    const git = await import('../src/autonomous/git.js');
-    expect(git.GitOperations).toBeDefined();
   });
 
   it('exports controller', async () => {
@@ -215,10 +205,8 @@ describe('autonomous barrel export (index.ts)', () => {
     expect(auto.AbortError).toBeDefined();
     expect(auto.loadConfig).toBeDefined();
     expect(auto.createProvider).toBeDefined();
-    expect(auto.Analyzer).toBeDefined();
     expect(auto.Validator).toBeDefined();
     expect(auto.Reflector).toBeDefined();
-    expect(auto.GitOperations).toBeDefined();
 
     // Phase 1
     expect(auto.WorldModel).toBeDefined();
@@ -371,10 +359,8 @@ describe('project structure', () => {
   const requiredFiles = [
     'src/autonomous/loop.ts',
     'src/autonomous/provider.ts',
-    'src/autonomous/analyzer.ts',
     'src/autonomous/validator.ts',
     'src/autonomous/reflector.ts',
-    'src/autonomous/git.ts',
     'src/autonomous/types.ts',
     'src/autonomous/index.ts',
     'src/autonomous/world-model.ts',

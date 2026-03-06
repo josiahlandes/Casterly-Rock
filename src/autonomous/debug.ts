@@ -51,7 +51,8 @@ export type DebugSubsystem =
   | 'fast-loop'
   | 'deep-loop'
   | 'coordinator'
-  | 'loop-detector';
+  | 'loop-detector'
+  | 'metacognition';
 
 export type DebugLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 
