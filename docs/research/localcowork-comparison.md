@@ -101,9 +101,15 @@ Key stats: 80% single-step tool accuracy at 390ms latency on M4 Max. 853 tests.
 4. **RAG tool pre-filtering** — Embed tool descriptions via Ollama's `/api/embeddings`, select top-K at query time. Complements our static `TASK_CATEGORY_PRESETS`
 5. **OCR tools** — Add `ocr_image` and `ocr_pdf` tools using Tesseract. Enables processing photos and scanned documents sent via iMessage
 
+### Priority 2.5 (Medium value, low-medium effort)
+6. **Undo stack for mutable tools** — Capture before/after state on file writes, moves, deletes. Enables "undo last action" as an agent tool. Their ToolRouter snapshots original state before mutations.
+7. **Response quality guards** — Detect incomplete ("I'll process the remaining...") or deflecting (asks a question instead of acting) model responses and auto-re-prompt. Valuable for Tyrion's autonomous mode where no human is watching.
+8. **Tool-call JSON repair** — Auto-fix malformed tool-call JSON before falling back to a retry or different model. We likely lose cycles to parse failures already.
+
 ### Priority 3 (Interesting but lower priority)
-6. **Document diffing** — Add `diff_documents` tool leveraging existing `read_document` extraction
-7. **Fine-tuned tool router** — Train a tiny model specifically for tool selection (long-term, needs dataset)
+9. **Template matching for common workflows** — Keyword-scored pattern matching that skips the planner for known request types. Saves 2-3 seconds per matched query.
+10. **Document diffing** — Add `diff_documents` tool leveraging existing `read_document` extraction
+11. **Fine-tuned tool router** — Train a tiny model specifically for tool selection (long-term, needs dataset)
 
 ## Key Takeaway
 
