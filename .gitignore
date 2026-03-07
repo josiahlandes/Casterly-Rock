@@ -25,3 +25,9 @@ npm-debug.log*
 
 # Test coverage
 coverage/
+
+# Test results
+.test-results/
+
+# DeepLoop-generated project scaffolds
+projects/

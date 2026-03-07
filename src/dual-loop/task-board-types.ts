@@ -44,7 +44,7 @@ export type TaskOwner = 'fast' | 'deep' | null;
 /**
  * Classification assigned by the FastLoop during triage.
  */
-export type TaskClassification = 'simple' | 'complex' | 'conversational';
+export type TaskClassification = 'simple' | 'complex' | 'conversational' | 'system_inquiry';
 
 /**
  * Review outcome written by DeepLoop self-review.
