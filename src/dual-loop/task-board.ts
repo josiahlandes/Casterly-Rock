@@ -273,6 +273,10 @@ export class TaskBoard {
     if ('resolution' in fields) task.resolution = fields.resolution;
     if ('userFacing' in fields) task.userFacing = fields.userFacing;
     if ('priority' in fields) task.priority = fields.priority!;
+    if ('planSummaryDelivered' in fields) task.planSummaryDelivered = fields.planSummaryDelivered;
+    if ('lastProgressDeliveredAt' in fields) task.lastProgressDeliveredAt = fields.lastProgressDeliveredAt;
+    if ('lastProgressStepsCompleted' in fields) task.lastProgressStepsCompleted = fields.lastProgressStepsCompleted;
+    if ('currentVerificationPass' in fields) task.currentVerificationPass = fields.currentVerificationPass;
 
     task.updatedAt = new Date().toISOString();
     this.dirty = true;

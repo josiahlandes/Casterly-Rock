@@ -303,12 +303,8 @@ export class FastLoop {
           ...(triage.matchedProject ? { projectDir: `projects/${triage.matchedProject}` } : {}),
         });
 
-        // Use the triage model's natural ack if available, otherwise generate a contextual one
-        const ack = triage.directResponse || (
-          triage.triageNotes
-            ? `Got it — ${triage.triageNotes.slice(0, 100).toLowerCase()}. Planning the approach now.`
-            : `Got it — working on that now.`
-        );
+        // Simple ack for escalated tasks — never expose internal triage notes to the user
+        const ack = `Got it — working on that now.`;
         this.addToConversation(sender, 'assistant', ack);
         await this.deliver(sender, ack);
 
@@ -344,11 +340,19 @@ export class FastLoop {
       // Non-fatal — triage works fine without project discovery
     }
 
+    // Include recent conversation history for context (helps classify follow-up questions)
+    const ctx = this.conversations.get(sender);
+    const recentConversation = ctx?.messages.slice(-6).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
     const userPrompt = buildTriagePrompt({
       message,
       sender,
       taskBoardSummary: boardSummary,
       ...(projectsSummary ? { projectsSummary } : {}),
+      ...(recentConversation && recentConversation.length > 0 ? { recentConversation } : {}),
     });
 
     try {
@@ -562,12 +566,15 @@ export class FastLoop {
       if (!task.sender) continue;
 
       // 1. Plan summary delivery (once per task)
+      // Mark BEFORE delivering to prevent double-send when voice filter takes > heartbeat interval
       if (
         task.status === 'implementing' &&
         task.planSteps &&
         task.planSteps.length > 1 &&
         !task.planSummaryDelivered
       ) {
+        this.taskBoard.update(task.id, { planSummaryDelivered: true });
+
         const stepList = task.planSteps
           .map((s, i) => `${i + 1}. ${s.description}`)
           .join('\n');
@@ -575,7 +582,6 @@ export class FastLoop {
         const planMsg = `Planning complete — ${task.planSteps.length} steps:\n${stepList}\nStarting now.`;
 
         await this.deliver(task.sender, planMsg);
-        this.taskBoard.update(task.id, { planSummaryDelivered: true });
 
         tracer.log('fast-loop', 'info', `Delivered plan summary for ${task.id}`);
         continue; // One update per heartbeat per task

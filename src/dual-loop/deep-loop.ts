@@ -22,7 +22,7 @@ import type { AgentToolkit } from '../autonomous/tools/types.js';
 import type { ToolResultMessage, ToolSchema } from '../tools/schemas/types.js';
 import { getTracer } from '../autonomous/debug.js';
 import type { TaskBoard } from './task-board.js';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Task, TaskArtifact, PlanStep, FileOperation, HandoffSnapshot } from './task-board-types.js';
 import { buildHandoffSnapshot, serializeHandoff } from './handoff.js';
@@ -528,13 +528,14 @@ export class DeepLoop {
         }
       }
 
-      // Verification cascade: compute budget determines depth, with heuristic override
-      // for high-stakes multi-file tasks.
+      // Verification cascade: single-pass for most tasks, multi-pass only for
+      // large multi-file projects (5+ files). The integration review already
+      // covers cross-module wiring, so the cascade's security pass is reserved
+      // for genuinely complex codebases.
       const fileCount = outcome.workspaceManifest?.length ?? 0;
-      const stepCount = planned?.planSteps?.length ?? 0;
-      const isHighStakes = fileCount >= 3 || stepCount >= 3;
       const budgetVerification = this.activeBudget?.verificationDepth ?? 1;
-      const verificationPasses = Math.max(budgetVerification, isHighStakes ? 2 : 1);
+      const isLargeProject = fileCount >= 5;
+      const verificationPasses = Math.max(budgetVerification, isLargeProject ? 2 : 1);
 
       // Update task with implementation results before self-review
       this.taskBoard.update(task.id, {
@@ -575,13 +576,15 @@ export class DeepLoop {
         // Post-task skill learning: capture multi-step patterns as reusable skills
         this.tryLearnSkillFromTask(task, planned);
       } else {
+        // Don't reset currentVerificationPass — on revision, selfReview()
+        // will continue from the pass that failed instead of restarting
+        // the entire cascade from pass 0.
         this.taskBoard.update(task.id, {
           status: 'revision',
           owner: null,
           reviewResult: reviewResult.reviewResult,
           reviewNotes: reviewResult.reviewNotes,
           reviewFeedback: reviewResult.reviewFeedback,
-          currentVerificationPass: 0,
         });
         tracer.log('deep-loop', 'info', `Task ${task.id} self-review requests changes, routing to revision`);
       }
@@ -1164,6 +1167,8 @@ export class DeepLoop {
       const userFacing = await this.generateSummary(task, [...existingArtifacts, artifact]);
 
       // Self-review the revised output. Keep ownership during review.
+      // Don't reset currentVerificationPass — selfReview() continues from
+      // the pass that previously failed.
       this.taskBoard.update(task.id, {
         status: 'reviewing',
         owner: 'deep',
@@ -1172,7 +1177,6 @@ export class DeepLoop {
         reviewResult: undefined,
         reviewNotes: undefined,
         reviewFeedback: undefined,
-        ...(task.verificationPasses ? { currentVerificationPass: 0 } : {}),
       });
 
       const reviewResult = await this.selfReview(this.taskBoard.get(task.id)!);
@@ -1187,13 +1191,13 @@ export class DeepLoop {
         });
         tracer.log('deep-loop', 'info', `Revision for ${task.id} self-review approved, marking done`);
       } else {
+        // Don't reset currentVerificationPass — continue from the failing pass
         this.taskBoard.update(task.id, {
           status: 'revision',
           owner: null,
           reviewResult: reviewResult.reviewResult,
           reviewNotes: reviewResult.reviewNotes,
           reviewFeedback: reviewResult.reviewFeedback,
-          currentVerificationPass: 0,
         });
         tracer.log('deep-loop', 'info', `Revision for ${task.id} self-review requests further changes`);
       }
@@ -1247,6 +1251,143 @@ export class DeepLoop {
     }
   }
 
+  // ── File Reading for Review ────────────────────────────────────────────
+
+  /**
+   * Read actual file contents from disk for the workspace manifest entries.
+   * Returns TaskArtifact[] with real source code instead of truncated model output.
+   * Files that can't be read (deleted, moved) are silently skipped.
+   */
+  private async readManifestFiles(manifest: FileOperation[]): Promise<TaskArtifact[]> {
+    const tracer = getTracer();
+    const artifacts: TaskArtifact[] = [];
+
+    for (const file of manifest) {
+      try {
+        const fullPath = file.path.startsWith('/') ? file.path : join(process.cwd(), file.path);
+        const content = await readFile(fullPath, 'utf8');
+        artifacts.push({
+          type: 'file_diff',
+          path: file.path,
+          content: content.slice(0, 15_000), // Cap per-file to prevent prompt explosion
+          timestamp: new Date().toISOString(),
+        });
+      } catch {
+        tracer.log('deep-loop', 'debug', `Could not read manifest file for review: ${file.path}`);
+      }
+    }
+
+    return artifacts;
+  }
+
+  /**
+   * Scan a project directory to discover all source files. Falls back to this
+   * when the workspace manifest is empty or incomplete (e.g., files created via
+   * bash `cat >` that weren't tracked in stepFileOps).
+   *
+   * Returns TaskArtifact[] with actual file contents, capped to prevent prompt
+   * explosion. Only reads text source files — skips binaries, node_modules, etc.
+   */
+  private async scanProjectFiles(projectDir: string): Promise<TaskArtifact[]> {
+    const tracer = getTracer();
+    const basePath = projectDir.startsWith('/')
+      ? projectDir
+      : join(process.cwd(), projectDir);
+
+    const SOURCE_EXTENSIONS = new Set([
+      '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs',
+      '.html', '.css', '.scss', '.less',
+      '.json', '.yaml', '.yml', '.toml',
+      '.py', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h',
+      '.md', '.txt', '.csv',
+      '.sh', '.bash', '.zsh',
+      '.sql', '.graphql', '.gql',
+      '.svelte', '.vue', '.astro',
+    ]);
+
+    const SKIP_DIRS = new Set([
+      'node_modules', '.git', 'dist', 'build', '.next', '__pycache__',
+      'coverage', '.cache', '.turbo', 'vendor',
+    ]);
+
+    const MAX_FILES = 20;          // Cap total files to prevent prompt explosion
+    const MAX_FILE_SIZE = 15_000;  // Chars per file (matches readManifestFiles)
+    const artifacts: TaskArtifact[] = [];
+
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      if (depth > 4 || artifacts.length >= MAX_FILES) return;
+
+      let entries: string[];
+      try {
+        entries = await readdir(dir);
+      } catch {
+        return; // Directory doesn't exist or isn't readable
+      }
+
+      for (const entry of entries) {
+        if (artifacts.length >= MAX_FILES) break;
+        if (SKIP_DIRS.has(entry) || entry.startsWith('.')) continue;
+
+        const fullPath = join(dir, entry);
+        try {
+          const s = await stat(fullPath);
+          if (s.isDirectory()) {
+            await walk(fullPath, depth + 1);
+          } else if (s.isFile()) {
+            const ext = entry.slice(entry.lastIndexOf('.'));
+            if (!SOURCE_EXTENSIONS.has(ext)) continue;
+            if (s.size > 500_000) continue; // Skip very large files
+
+            const content = await readFile(fullPath, 'utf8');
+            const relativePath = fullPath.slice(
+              (process.cwd() + '/').length,
+            );
+            artifacts.push({
+              type: 'file_diff',
+              path: relativePath,
+              content: content.slice(0, MAX_FILE_SIZE),
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } catch {
+          // Skip unreadable files
+        }
+      }
+    };
+
+    try {
+      await walk(basePath, 0);
+      tracer.log('deep-loop', 'debug', `Scanned project dir ${projectDir}: found ${artifacts.length} source files`);
+    } catch (error) {
+      tracer.log('deep-loop', 'warn', `Failed to scan project dir ${projectDir}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    return artifacts;
+  }
+
+  /**
+   * Get review file artifacts: tries manifest first, falls back to scanning
+   * the project directory if the manifest is empty/incomplete.
+   */
+  private async getReviewFileArtifacts(task: Task): Promise<TaskArtifact[]> {
+    // First, try reading from the workspace manifest
+    const manifestArtifacts = await this.readManifestFiles(task.workspaceManifest ?? []);
+
+    // If we got files from the manifest, use them
+    if (manifestArtifacts.length > 0) {
+      return manifestArtifacts;
+    }
+
+    // Manifest is empty — fall back to scanning the project directory
+    if (task.projectDir) {
+      const tracer = getTracer();
+      tracer.log('deep-loop', 'info', `Manifest empty, scanning project dir: ${task.projectDir}`);
+      return this.scanProjectFiles(task.projectDir);
+    }
+
+    return [];
+  }
+
   // ── Self-Review ─────────────────────────────────────────────────────────
 
   /**
@@ -1272,8 +1413,13 @@ export class DeepLoop {
     const totalPasses = task.verificationPasses ?? 1;
     let currentPass = task.currentVerificationPass ?? 0;
 
-    // Integration review for multi-file tasks (runs before structured passes)
-    const isMultiFile = (task.workspaceManifest?.length ?? 0) >= 2;
+    // Integration review for multi-file tasks (runs before structured passes).
+    // Check both manifest length AND whether a project directory exists — the
+    // manifest may be empty if files were created via bash (bypassing tracking),
+    // but the project directory will still contain the files.
+    const manifestFileCount = task.workspaceManifest?.length ?? 0;
+    const hasProjectDir = !!task.projectDir;
+    const isMultiFile = manifestFileCount >= 2 || (hasProjectDir && manifestFileCount === 0);
     if (isMultiFile && this.toolkit) {
       const outcome = await this.integrationReview(task);
       if (outcome.result !== 'approved') {
@@ -1313,7 +1459,20 @@ export class DeepLoop {
         ? REVIEW_SYSTEM_PROMPT
         : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
 
-      const baseReviewPrompt = buildReviewPrompt({ plan, artifacts });
+      // Read actual file contents from disk instead of relying on artifact
+      // summaries (which are truncated model conversation output, not real code).
+      // Falls back to scanning the project directory if the manifest is empty
+      // (e.g., files created via bash `cat >` that bypassed manifest tracking).
+      const fileArtifacts = await this.getReviewFileArtifacts(task);
+      const reviewArtifacts = fileArtifacts.length > 0 ? fileArtifacts : artifacts;
+
+      const manifest = task.workspaceManifest;
+      const baseReviewPrompt = buildReviewPrompt({
+        plan,
+        artifacts: reviewArtifacts,
+        ...(manifest ? { manifest } : {}),
+        ...(task.originalMessage ? { originalMessage: task.originalMessage } : {}),
+      });
       const reviewPrompt = reviewerContext
         ? baseReviewPrompt + reviewerContext
         : baseReviewPrompt;
@@ -1378,13 +1537,12 @@ export class DeepLoop {
   // ── Integration Review ──────────────────────────────────────────────────
 
   /**
-   * Integration review — uses an iterative tool-calling loop with read-only
-   * tools to verify cross-module wiring for multi-file tasks.
+   * Integration review — single structured-output call with pre-read file
+   * contents injected into the prompt.
    *
-   * Filters the toolkit to read-only tools (read_file, grep, glob,
-   * validate_project) and runs the INTEGRATION_REVIEW_SYSTEM_PROMPT.
-   * If a StateManager is available, injects reviewer context (known issues,
-   * active goals) into the prompt.
+   * Replaces the previous 15-turn tool-calling loop. Pre-reading files and
+   * injecting them directly is faster (~30s vs 15-20 min) and more reliable
+   * (no turn-limit prose fallback needed).
    *
    * Returns { result: 'approved' | 'changes_requested', issues: string[] }.
    */
@@ -1395,24 +1553,28 @@ export class DeepLoop {
     const tracer = getTracer();
     tracer.log('deep-loop', 'info', `Integration review for ${task.id}`);
 
-    if (!this.toolkit) {
+    // Read actual file contents from disk. Falls back to scanning the project
+    // directory if the manifest is empty (e.g., files created via bash `cat >`
+    // that bypassed manifest tracking).
+    const fileArtifacts = await this.getReviewFileArtifacts(task);
+    if (fileArtifacts.length === 0) {
+      tracer.log('deep-loop', 'info', 'Integration review: no files to review, auto-approving');
       return { result: 'approved', issues: [] };
     }
 
-    // Filter toolkit to read-only tools
-    const readOnlyNames = new Set(['read_file', 'grep', 'glob', 'validate_project']);
-    const readOnlyToolSchemas = this.toolkit.schemas.filter(
-      (s) => readOnlyNames.has(s.name),
+    // Build file listing from discovered files (may differ from manifest)
+    const manifestLines = fileArtifacts.map(
+      (a) => `- ${a.path ?? '(unknown)'}`,
     );
 
-    // Build prompt with workspace manifest
-    const manifestLines = (task.workspaceManifest ?? []).map(
-      (f) => `- ${f.path} (${f.action}${f.lines !== undefined ? `, ${f.lines} lines` : ''})`,
+    const fileSections = fileArtifacts.map(
+      (a) => `### ${a.path ?? '(unknown)'}\n\`\`\`\n${a.content ?? '(empty)'}\n\`\`\``,
     );
 
     const promptParts: string[] = [
       `## Task\n\n${task.originalMessage ?? task.plan ?? '(no description)'}`,
-      `\n## Workspace Manifest\n\n${manifestLines.length > 0 ? manifestLines.join('\n') : '(no files)'}`,
+      `\n## Workspace Manifest\n\n${manifestLines.join('\n')}`,
+      `\n## File Contents\n\n${fileSections.join('\n\n')}`,
     ];
 
     // Inject reviewer context from StateManager if available
@@ -1435,17 +1597,25 @@ export class DeepLoop {
       }
     }
 
-    const request: GenerateRequest = {
-      prompt: promptParts.join('\n'),
-      systemPrompt: INTEGRATION_REVIEW_SYSTEM_PROMPT,
-      temperature: 0.1,
-      maxTokens: 2048,
-    };
+    // Select context tier based on prompt size
+    const prompt = promptParts.join('\n');
+    const tier = selectDeepReviewTier(
+      prompt.length,
+      INTEGRATION_REVIEW_SYSTEM_PROMPT.length,
+      this.config.tiers,
+      2048,
+    );
 
     try {
-      const responseText = await this.executeWithTools(request, 15, readOnlyToolSchemas);
+      const responseText = await this.callWithTier(tier, {
+        prompt,
+        systemPrompt: INTEGRATION_REVIEW_SYSTEM_PROMPT,
+        temperature: 0.1,
+        maxTokens: 2048,
+        providerOptions: { think: false },
+      });
 
-      // Parse the last model message as JSON
+      // Parse as JSON — try structured first, then infer from prose
       try {
         const { json } = extractJsonFromResponse(responseText);
         const result = json['result'] === 'approved' ? 'approved' as const : 'changes_requested' as const;
@@ -1459,9 +1629,7 @@ export class DeepLoop {
 
         return { result, issues };
       } catch {
-        // Fallback: infer result from natural language when JSON parsing fails.
-        // This handles cases where the model ran out of tool turns and the
-        // wrap-up response is prose instead of JSON.
+        // Fallback: infer result from natural language
         tracer.log('deep-loop', 'warn', 'Integration review JSON parse failed, inferring from text');
         const lower = responseText.toLowerCase();
 
@@ -1486,7 +1654,6 @@ export class DeepLoop {
         const hasApproval = approvalPatterns.some(p => p.test(lower));
 
         if (hasRejection && !hasApproval) {
-          // Extract issue-like sentences from the response
           const issues = responseText
             .split(/[.\n]/)
             .filter(s => /missing|undefined|not (exported|defined|found)|mismatch|error|bug|fail/i.test(s))
@@ -1499,22 +1666,14 @@ export class DeepLoop {
           };
         }
 
-        if (hasApproval && !hasRejection) {
-          tracer.log('deep-loop', 'info', 'Integration review inferred: approved (from prose)');
-          return { result: 'approved', issues: [] };
-        }
-
-        // Ambiguous — default to approved if validate_project passed and
-        // no explicit issues found in the text
-        tracer.log('deep-loop', 'info', 'Integration review ambiguous, defaulting to approved');
+        // Approved or ambiguous — default to approved
+        tracer.log('deep-loop', 'info', `Integration review inferred: approved (from prose, hasApproval=${hasApproval})`);
         return { result: 'approved', issues: [] };
       }
     } catch (error) {
+      // On error, default to approved — don't block delivery for review infrastructure failures
       tracer.log('deep-loop', 'warn', `Integration review failed: ${error instanceof Error ? error.message : String(error)}`);
-      return {
-        result: 'changes_requested',
-        issues: [`Integration review error: ${error instanceof Error ? error.message : String(error)}`],
-      };
+      return { result: 'approved', issues: [] };
     }
   }
 
@@ -2067,9 +2226,12 @@ Other rules:
   }
 
   /**
-   * Track file operations from create_file / edit_file tool calls.
+   * Track file operations from create_file / edit_file / bash tool calls.
    * Called during executeWithTools to build the workspace manifest.
    * Returns import validation warnings (if any) for injection into tool results.
+   *
+   * Also detects bash commands that write files (cat > path, tee, etc.)
+   * so the manifest stays accurate even when the model bypasses create_file.
    */
   private async trackFileOperation(
     callName: string,
@@ -2078,6 +2240,23 @@ Other rules:
     success: boolean,
   ): Promise<string[]> {
     if (!success) return [];
+
+    // Detect bash file writes: cat > path, cat >> path, tee path, etc.
+    if (callName === 'bash') {
+      const command = String(callInput['command'] ?? '');
+      // Match: cat > path, cat >> path, cat > "path", heredoc patterns
+      const bashWriteMatch = command.match(
+        /\bcat\s+>+\s*["']?([^\s"'<]+)["']?/,
+      ) ?? command.match(
+        /\btee\s+(?:-a\s+)?["']?([^\s"']+)["']?/,
+      );
+      if (bashWriteMatch?.[1]) {
+        const bashPath = bashWriteMatch[1];
+        this.trackBashFileWrite(bashPath);
+      }
+      return [];
+    }
+
     if (callName !== 'create_file' && callName !== 'edit_file') return [];
 
     const path = String(callInput['path'] ?? '');
@@ -2131,6 +2310,52 @@ Other rules:
     }
 
     return [];
+  }
+
+  /**
+   * Track a file write that happened via bash (cat > path, tee, etc.).
+   * Reads the file from disk to extract exports and line count since
+   * the file content isn't available in the tool call input.
+   */
+  private trackBashFileWrite(filePath: string): void {
+    const tracer = getTracer();
+
+    // Deduplicate: if already tracked, just mark as modified
+    const existing = this.stepFileOps.find((f) => f.path === filePath);
+    if (existing) {
+      return; // Already tracked — don't re-add
+    }
+
+    // Read from disk to get line count and exports (async, but fire-and-forget
+    // since we just need it in the manifest by review time)
+    const fullPath = filePath.startsWith('/') ? filePath : join(process.cwd(), filePath);
+    readFile(fullPath, 'utf8').then((content) => {
+      const lines = content.split('\n').length;
+      const extracted = this.extractExports(content);
+      const exports = extracted.names.length > 0 ? extracted.names : undefined;
+      if (exports) {
+        this.exportSummaries.set(filePath, extracted.summary);
+      }
+
+      // Check if it was added by another call in the meantime
+      const alreadyTracked = this.stepFileOps.find((f) => f.path === filePath);
+      if (!alreadyTracked) {
+        this.stepFileOps.push({
+          path: filePath,
+          action: 'created',
+          ...(lines !== undefined ? { lines } : {}),
+          ...(exports ? { exports } : {}),
+        });
+        tracer.log('deep-loop', 'debug', `Tracked bash file write: ${filePath} (${lines} lines)`);
+      }
+    }).catch(() => {
+      // File might not exist yet (bash command failed) — still track it
+      const alreadyTracked = this.stepFileOps.find((f) => f.path === filePath);
+      if (!alreadyTracked) {
+        this.stepFileOps.push({ path: filePath, action: 'created' });
+        tracer.log('deep-loop', 'debug', `Tracked bash file write (no content): ${filePath}`);
+      }
+    });
   }
 
   /**

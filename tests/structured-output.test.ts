@@ -106,8 +106,8 @@ describe('parseReviewResponse with structured output', () => {
     expect(result.feedback).toBe('Add a null check on line 42');
   });
 
-  it('falls back to changes_requested on parse failure', () => {
+  it('falls back to approved on parse failure (prevents phantom rejection loops)', () => {
     const result = parseReviewResponse('not valid json');
-    expect(result.result).toBe('changes_requested');
+    expect(result.result).toBe('approved');
   });
 });

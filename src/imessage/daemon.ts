@@ -193,7 +193,7 @@ function handleStatusCommand(
 
 const ADD_CONTACT_RE = /^add\s+contact\s+(\S+)\s+(\+?\d[\d\s\-().]+)$/i;
 const REMOVE_CONTACT_RE = /^remove\s+contact\s+(\S+)$/i;
-const LIST_CONTACTS_RE = /^list\s+contacts$/i;
+const LIST_CONTACTS_RE = /^list\s+contacts$|(?:who|what).*(?:your|the)\s+contacts|(?:show|list|display)\s+(?:my\s+|your\s+|the\s+)?contacts/i;
 
 /**
  * Try to handle the message as an admin command for contacts management.

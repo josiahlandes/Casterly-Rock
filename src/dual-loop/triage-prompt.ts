@@ -61,7 +61,11 @@ export const TRIAGE_FORMAT_SCHEMA: Record<string, unknown> = {
  */
 export const TRIAGE_SYSTEM_PROMPT = `You are a triage agent. Your job is to classify the user's message into one of four categories:
 
-1. **simple** — A question you can answer from general knowledge alone, without checking any files, running commands, or accessing the system. Examples: "What does keep_alive do?", "Explain TCP vs UDP", "What's a Kubernetes pod?"
+1. **simple** — A question you can answer from general knowledge, conversation context, or common sense, without checking any files, running commands, or accessing the system. This includes:
+   - General knowledge: "What does keep_alive do?", "Explain TCP vs UDP"
+   - Personal/social questions: "What's my name?", "Who am I?", "What is their relationship?"
+   - Follow-up questions about things already discussed in the conversation
+   - Opinion or advice questions that don't need system data
 2. **complex** — Anything that requires reading files, writing code, running commands, checking system state, or multi-step reasoning. This includes:
    - Code tasks: "Refactor the auth module", "Fix the login bug", "Add JWT support"
    - System state questions: "What's the git status?", "Is the server running?", "How many tests pass?"
@@ -70,7 +74,10 @@ export const TRIAGE_SYSTEM_PROMPT = `You are a triage agent. Your job is to clas
 3. **conversational** — Greetings, thanks, small talk, or acknowledgments. Examples: "Hey", "Thanks!", "Good morning"
 4. **system_inquiry** — Status requests or questions about the system/agent itself. Examples: "Status?", "What can you do?", "Are you working?"
 
-Key rule: If answering correctly requires looking at something on this machine (files, processes, git, logs), classify as **complex**. Do NOT guess at system state — you will hallucinate. When in doubt, classify as **complex**.
+Key rules:
+- If answering correctly requires looking at something on this machine (files, processes, git, logs), classify as **complex**. Do NOT guess at system state — you will hallucinate.
+- If the question is personal, social, or can be answered from conversation context, classify as **simple** and answer directly. Do NOT escalate personal questions as complex engineering tasks.
+- When in doubt between simple and complex, prefer **simple** if no file/system access is needed.
 
 If existing projects are listed below and the user refers to one (by name, description, or context),
 include "matchedProject": "<slug>" in your response. Otherwise omit it.
@@ -96,8 +103,20 @@ export function buildTriagePrompt(params: {
   sender: string;
   taskBoardSummary: string;
   projectsSummary?: string;
+  recentConversation?: Array<{ role: string; content: string }>;
 }): string {
-  const parts = [`[From: ${params.sender}]\n${params.message}\n\n---\nActive tasks:\n${params.taskBoardSummary}`];
+  const parts: string[] = [];
+
+  // Include recent conversation for context (helps with follow-up questions)
+  if (params.recentConversation && params.recentConversation.length > 0) {
+    const convLines = params.recentConversation
+      .slice(-6) // Last 6 messages max
+      .map((m) => `${m.role}: ${m.content.slice(0, 150)}`)
+      .join('\n');
+    parts.push(`Recent conversation:\n${convLines}\n\n---\n`);
+  }
+
+  parts.push(`[From: ${params.sender}]\n${params.message}\n\n---\nActive tasks:\n${params.taskBoardSummary}`);
   if (params.projectsSummary) {
     parts.push(`\n---\nExisting projects:\n${params.projectsSummary}`);
   }

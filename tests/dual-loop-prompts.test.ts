@@ -184,9 +184,9 @@ describe('Review Prompt', () => {
       expect(result.feedback).toBe('Add input validation in handleLogin()');
     });
 
-    it('defaults to changes_requested on invalid JSON', () => {
+    it('defaults to approved on invalid JSON (prevents phantom rejection loops)', () => {
       const result = parseReviewResponse('garbage');
-      expect(result.result).toBe('changes_requested');
+      expect(result.result).toBe('approved');
       expect(result.notes).toContain('parse failure');
     });
   });

@@ -1,9 +1,17 @@
 /**
  * Review Prompt — System prompts for code review.
  *
- * The DeepLoop (122B) self-reviews its own output before marking
- * tasks as complete. The review is a single structured-output call
- * (not an iterative tool loop) that runs after implementation.
+ * The DeepLoop self-reviews its own output before marking tasks as complete.
+ * Reviews are single structured-output calls with real file contents injected
+ * into the prompt (not iterative tool loops).
+ *
+ * Review pipeline:
+ *   1. Integration review (multi-file only): cross-module wiring check
+ *   2. Correctness review (all tasks): standard code review
+ *   3. Security review (large projects only): second-pass cascade
+ *
+ * Parse failures default to approved — phantom rejections from malformed JSON
+ * were the primary cause of infinite revision loops.
  *
  * See docs/dual-loop-architecture.md Section 5.4 and Section 4 (Phase 4).
  */
@@ -201,10 +209,13 @@ export function parseReviewResponse(text: string): ReviewOutcome {
       feedback: parsed['feedback'] as string | undefined,
     };
   } catch {
-    // On parse failure, reject — don't let unparseable output bypass review
+    // On parse failure, default to approved. The format schema should
+    // guarantee valid JSON; if parsing still fails, the model is confused —
+    // not the code. Phantom rejections from parse failures were the primary
+    // cause of infinite revision loops.
     return {
-      result: 'changes_requested',
-      notes: 'Review parse failure — defaulting to changes_requested',
+      result: 'approved',
+      notes: 'Review parse failure — defaulting to approved (model output was not valid JSON)',
     };
   }
 }

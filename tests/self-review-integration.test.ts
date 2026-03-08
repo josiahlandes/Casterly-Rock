@@ -234,9 +234,9 @@ describe('selfReview integration pass behavior', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('parseReviewResponse', () => {
-  it('fallback is changes_requested on invalid JSON', () => {
+  it('fallback is approved on invalid JSON (prevents phantom rejection loops)', () => {
     const result = parseReviewResponse('not valid json at all');
-    expect(result.result).toBe('changes_requested');
+    expect(result.result).toBe('approved');
     expect(result.notes).toContain('parse failure');
   });
 
