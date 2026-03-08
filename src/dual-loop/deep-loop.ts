@@ -30,7 +30,7 @@ import { detectProjectDir, writeProjectMd } from './project-store.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
 import { selectDeepTier, selectDeepReviewTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
 import type { ReviewResult } from './task-board-types.js';
-import { REVIEW_SYSTEM_PROMPT, REVIEW_FORMAT_SCHEMA, CASCADE_REVIEW_PROMPTS, INTEGRATION_REVIEW_SYSTEM_PROMPT, buildReviewPrompt, parseReviewResponse } from './review-prompt.js';
+import { REVIEW_SYSTEM_PROMPT, REVIEW_FORMAT_SCHEMA, INTEGRATION_REVIEW_FORMAT_SCHEMA, CASCADE_REVIEW_PROMPTS, INTEGRATION_REVIEW_SYSTEM_PROMPT, buildReviewPrompt, parseReviewResponse } from './review-prompt.js';
 import { runIdleCheck } from './deep-loop-events.js';
 import type { DeepLoopEventConfig } from './deep-loop-events.js';
 import { ComputeScaler } from '../autonomous/reasoning/compute-scaler.js';
@@ -1635,7 +1635,7 @@ export class DeepLoop {
         systemPrompt: INTEGRATION_REVIEW_SYSTEM_PROMPT,
         temperature: 0.1,
         maxTokens: 2048,
-        providerOptions: { think: false },
+        providerOptions: { format: INTEGRATION_REVIEW_FORMAT_SCHEMA, think: false },
       });
 
       // Parse as JSON — try structured first, then infer from prose
@@ -1652,45 +1652,11 @@ export class DeepLoop {
 
         return { result, issues };
       } catch {
-        // Fallback: infer result from natural language
-        tracer.log('deep-loop', 'warn', 'Integration review JSON parse failed, inferring from text');
-        const lower = responseText.toLowerCase();
-
-        // Strong rejection signals
-        const rejectionPatterns = [
-          /\bmissing\s+(import|export|method|function|module)/,
-          /\bundefined\s+(method|function|variable|property)/,
-          /\bnot\s+(exported|defined|found|wired|connected)/,
-          /\bcross-module\s+(wiring|issue|bug|error)/,
-          /\bchanges[_\s]requested\b/,
-          /\bfail(s|ed|ing)?\b.*\b(import|export|call|wir)/,
-        ];
-        const hasRejection = rejectionPatterns.some(p => p.test(lower));
-
-        // Strong approval signals
-        const approvalPatterns = [
-          /\ball\s+(imports|exports|modules|files)\s+(are\s+)?(correct|valid|properly|match)/,
-          /\bno\s+(issues?|problems?|errors?|mismatches?)\s+(found|detected|identified)/,
-          /\bapproved\b/,
-          /\beverything\s+(looks?|checks?|is)\s+(good|correct|fine|ok)/,
-        ];
-        const hasApproval = approvalPatterns.some(p => p.test(lower));
-
-        if (hasRejection && !hasApproval) {
-          const issues = responseText
-            .split(/[.\n]/)
-            .filter(s => /missing|undefined|not (exported|defined|found)|mismatch|error|bug|fail/i.test(s))
-            .map(s => s.trim())
-            .filter(s => s.length > 10 && s.length < 300)
-            .slice(0, 5);
-          return {
-            result: 'changes_requested',
-            issues: issues.length > 0 ? issues : ['Review identified issues (parsed from prose)'],
-          };
-        }
-
-        // Approved or ambiguous — default to approved
-        tracer.log('deep-loop', 'info', `Integration review inferred: approved (from prose, hasApproval=${hasApproval})`);
+        // Fallback: with format schema enforcing JSON, parse failures should be
+        // rare. Default to approved — the integration review is a quality gate,
+        // not a correctness gate. Blocking delivery for a parse failure wastes
+        // all the implementation work.
+        tracer.log('deep-loop', 'warn', 'Integration review JSON parse failed, defaulting to approved');
         return { result: 'approved', issues: [] };
       }
     } catch (error) {

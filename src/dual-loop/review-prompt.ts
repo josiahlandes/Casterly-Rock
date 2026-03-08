@@ -56,6 +56,25 @@ export const REVIEW_FORMAT_SCHEMA: Record<string, unknown> = {
   required: ['result', 'notes'],
 };
 
+/**
+ * JSON Schema for the integration review response.
+ * Enforces structured JSON output matching the integration review's expected format.
+ */
+export const INTEGRATION_REVIEW_FORMAT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    result: {
+      type: 'string',
+      enum: ['approved', 'changes_requested'],
+    },
+    issues: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['result', 'issues'],
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Prompts
 // ─────────────────────────────────────────────────────────────────────────────
