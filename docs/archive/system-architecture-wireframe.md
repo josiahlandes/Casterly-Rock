@@ -292,7 +292,7 @@ A visual reference for the full system. Each module is numbered for cross-refere
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                       HARDWARE [84]                                              │
 │                                                                                 │
-│  Mac Studio M4 Max · 128GB Unified Memory · NVMe SSD                           │
+│  macOS (Apple Silicon) · 128GB Unified Memory · NVMe SSD                           │
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
 │  │  Ollama Server (localhost:11434)                                        │    │
@@ -410,7 +410,7 @@ A visual reference for the full system. Each module is numbered for cross-refere
 | 82 | Vitest | 3,300+ unit tests across 154 test files. Covers routing, detection, redaction, provider guards, and all agent tools. |
 | 83 | Security Scan | `npm audit` + console.log enforcement (no direct console.log outside 9 allowed files). |
 | **Hardware** | | |
-| 84 | Hardware Platform | Mac Studio M4 Max with 128GB unified memory and NVMe SSD. All inference local. |
+| 84 | Hardware Platform | macOS (Apple Silicon) with 128GB unified memory and NVMe SSD. All inference local. |
 | 85 | qwen3.5:122b | Primary reasoning and code generation model. 81GB at Q4_K_M quantization. 40,960 token context window. Benchmarks: 72.0 SWE-bench. |
 | 86 | qwen3.5:35b-a3b | FastLoop model for triage, review, and acknowledgment. 24GB MoE (35B total params, 3B active per token). Blazing fast inference. |
 | 87 | Embedding Model | On-device embeddings for semantic memory search. Separate from inference memory budget. |
@@ -471,7 +471,7 @@ Local-first        │  Jan.ai           PrivateGPT       GPT4All         │
 | **Agent Architecture** | ReAct loop (200 turns, 500K token budget) | Single-pass interpreter | Single-turn chat | Edit-apply loop | RAG pipeline | N/A (no agent) | ReAct with memory | RAG pipeline |
 | **Security Layers** | 5 (input guard, sensitivity detection, output sanitizer, redactor, safe logger) | Approval prompts | Basic sandboxing | Git safety | Document isolation | N/A | Basic sandboxing | Workspace isolation |
 | **Identity System** | Character voice, self-model, personality separation (voice filter) | None | None | None | None | None | Persona in core memory | None |
-| **Hardware Optimization** | Purpose-built for Mac Studio M4 Max 128GB | Generic | Multi-platform | Generic | Multi-platform | GPU-optimized | Generic | Generic |
+| **Hardware Optimization** | Purpose-built for macOS (Apple Silicon) 128GB | Generic | Multi-platform | Generic | Multi-platform | GPU-optimized | Generic | Generic |
 
 #### Extended Comparison: Agent Frameworks
 
@@ -498,7 +498,7 @@ While Jan.ai, PrivateGPT, LM Studio, and GPT4All run inference locally, they don
 No other agent project offers bidirectional iMessage communication with SQLite polling, AppleScript sending, voice personality filtering, and an approval bridge for destructive operations. This makes Casterly Rock a true personal assistant accessible from any Apple device.
 
 **5. Hardware-optimized economics**
-Purpose-built for Mac Studio M4 Max with 128GB unified memory. The zero-cost-per-token model enables strategies impossible with cloud APIs: redundant verification, shadow execution, prompt evolution populations, parallel reasoning, and aggressive self-correction. Where cloud agents must minimize calls, Casterly Rock maximizes them.
+Purpose-built for macOS (Apple Silicon) with 128GB unified memory. The zero-cost-per-token model enables strategies impossible with cloud APIs: redundant verification, shadow execution, prompt evolution populations, parallel reasoning, and aggressive self-correction. Where cloud agents must minimize calls, Casterly Rock maximizes them.
 
 **6. Identity separation (voice filter)**
 The voice filter architecture — neutral reasoning internally, personality applied only at the output boundary — is not found in other agent frameworks. This preserves reasoning quality while maintaining a consistent character voice, something multi-agent frameworks like CrewAI attempt with role prompts but without architectural separation.

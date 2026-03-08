@@ -1,7 +1,7 @@
 /**
  * iMessage Daemon
  *
- * Mac Studio Edition - Local Ollama Only
+ * macOS Edition - Local Ollama Only
  */
 
 import { join, dirname } from 'node:path';

@@ -725,7 +725,7 @@ tyrion> We're using TypeScript 5.4
 tyrion> The test coverage target is 85%
 tyrion> Our CI runs on GitHub Actions
 tyrion> The main database is SQLite
-tyrion> We deploy to a Mac Studio
+tyrion> We deploy to a macOS
 tyrion> The team size is 3 people
 tyrion> Our sprint length is 2 weeks
 tyrion> The API uses REST not GraphQL

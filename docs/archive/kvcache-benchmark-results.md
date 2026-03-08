@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-03
 **Model**: `nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx` (~65 GB MXFP4)
-**Hardware**: Mac Studio M4 Ultra, 128 GB unified memory
+**Hardware**: macOS (Apple Silicon), 128 GB unified memory
 **Dataset**: wikitext-2-raw-v1 (HuggingFace), 2 samples x 128 eval tokens per config
 **Script**: `scripts/benchmark-kvcache.py`
 **Raw JSON**: `benchmarks/kvcache-122b-full.json`

@@ -216,7 +216,7 @@ export interface AutonomousConfig {
   // Backlog
   backlogPath?: string | undefined;
 
-  // Resource limits (Mac Studio - generous defaults)
+  // Resource limits (macOS - generous defaults)
   maxBranchAgeHours: number;
   maxConcurrentBranches: number;
   sandboxTimeoutSeconds: number;

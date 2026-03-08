@@ -54,7 +54,7 @@ State is a narrative, not a struct. The journal — an append-only JSONL log —
 
 ## Hardware as Strategic Advantage
 
-The Mac Studio M4 Max with 128GB unified memory is not a deployment target. It is the strategic foundation that makes capability amplification viable.
+The macOS (Apple Silicon) with 128GB unified memory is not a deployment target. It is the strategic foundation that makes capability amplification viable.
 
 ### What 128GB Enables
 

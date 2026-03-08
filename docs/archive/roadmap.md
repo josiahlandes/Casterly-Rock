@@ -124,7 +124,7 @@ Meaningful architectural changes that unlock new capability dimensions.
 **References:**
 - MLX framework: https://github.com/ml-explore/mlx
 - vllm-mlx: OpenAI-compatible MLX inference server with continuous batching
-- Benchmarks: MLX vs llama.cpp on M4 Max — 50-87% speedup for large dense models
+- Benchmarks: MLX vs llama.cpp on Apple Silicon — 50-87% speedup for large dense models
 
 ---
 

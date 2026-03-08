@@ -13,7 +13,7 @@
  *   E8xx - Memory errors
  *   E9xx - Skill errors
  *
- * Mac Studio Edition - Local only, no cloud routing.
+ * macOS Edition - Local only, no cloud routing.
  */
 
 // ═══════════════════════════════════════════════════════════════════════════════

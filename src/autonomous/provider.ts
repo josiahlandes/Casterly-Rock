@@ -1,7 +1,7 @@
 /**
  * Provider Abstraction for Autonomous Self-Improvement
  *
- * Mac Studio Edition - Local Ollama Only
+ * macOS Edition - Local Ollama Only
  *
  * This module defines the interface for AI providers and provides
  * a factory function to create the local Ollama provider.

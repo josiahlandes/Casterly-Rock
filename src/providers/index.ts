@@ -1,7 +1,7 @@
 /**
  * Provider Registry
  *
- * Mac Studio Edition - Local inference only.
+ * macOS Edition - Local inference only.
  * Supports Ollama (llama.cpp) and MLX (vllm-mlx) backends.
  *
  * When a codingModel is configured (config/default.yaml), the registry

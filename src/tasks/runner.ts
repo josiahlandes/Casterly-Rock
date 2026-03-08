@@ -9,7 +9,7 @@
  * 5. On failure, mark step failed, skip dependents
  * 6. Continue until all steps complete or all remaining are blocked
  *
- * Concurrency is bounded by a semaphore — default 2 for M4 Max
+ * Concurrency is bounded by a semaphore — default 2 for Apple Silicon
  * to avoid overloading the unified memory with concurrent model calls.
  */
 
@@ -85,7 +85,7 @@ class Semaphore {
 export interface TaskRunnerOptions {
   /** Tool orchestrator for executing tool calls */
   orchestrator: ToolOrchestrator;
-  /** Maximum concurrent step executions (default 2 for M4 Max) */
+  /** Maximum concurrent step executions (default 2 for Apple Silicon) */
   maxConcurrency?: number | undefined;
   /** Maximum retry attempts per step (default 2) */
   maxRetries?: number | undefined;

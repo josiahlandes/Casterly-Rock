@@ -1,7 +1,7 @@
 /**
  * CLI Interface
  *
- * Mac Studio Edition - Local Ollama Only
+ * macOS Edition - Local Ollama Only
  */
 
 import { loadConfig } from '../config/index.js';

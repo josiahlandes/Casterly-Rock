@@ -1,6 +1,6 @@
 # Casterly Architecture
 
-Casterly is a local-only AI assistant running on Mac Studio M4 Max with 128GB unified memory. All inference happens on-device via Ollama and vllm-mlx. No data ever leaves the machine.
+Casterly is a local-only AI assistant running on macOS (Apple Silicon) with 128GB unified memory. All inference happens on-device via Ollama and vllm-mlx. No data ever leaves the machine.
 
 ## System Overview
 

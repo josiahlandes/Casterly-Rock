@@ -29,7 +29,7 @@ const PROJECT_ROOT = resolve(import.meta.dirname, '..');
 // ─── Shared Fixtures ─────────────────────────────────────────────────────────
 
 const BASE_SYSTEM_PROMPT = `You are Tyrion, a sardonic and brilliant AI assistant.
-You run on a Mac Studio M4 Max with 128GB unified memory.
+You run on a macOS (Apple Silicon) with 128GB unified memory.
 You value correctness, wit, and getting things done.`;
 
 const SAMPLE_TOOLS: ToolSchema[] = [

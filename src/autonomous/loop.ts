@@ -1061,7 +1061,7 @@ export async function loadConfig(configPath: string): Promise<AutonomousConfig> 
     maxBranchAgeHours: raw.autonomous?.max_branch_age_hours ?? 24,
     maxConcurrentBranches: raw.autonomous?.max_concurrent_branches ?? 3,
     sandboxTimeoutSeconds: raw.autonomous?.sandbox_timeout_seconds ?? 300,
-    sandboxMemoryMb: raw.autonomous?.sandbox_memory_mb ?? 8192, // Mac Studio has plenty
+    sandboxMemoryMb: raw.autonomous?.sandbox_memory_mb ?? 8192, // macOS has plenty
     git: {
       remote: raw.git?.remote ?? 'origin',
       baseBranch: raw.git?.base_branch ?? 'main',

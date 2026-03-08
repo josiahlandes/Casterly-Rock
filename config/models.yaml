@@ -1,5 +1,5 @@
 # Casterly Model Configuration
-# Mac Studio M4 Max Edition - Local Ollama Only
+# macOS Edition - Local Ollama Only
 #
 # All models run locally via Ollama. No cloud APIs.
 # Two-model architecture: 122b (81 GB) + 35b-a3b (24 GB) = ~105 GB of 128 GB.

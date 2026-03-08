@@ -181,7 +181,7 @@ The system includes built-in tests covering:
 | `model-002` | General task uses hermes3 | Correct model for general |
 | `model-003` | Architect mode uses hermes3 | Mode-based model selection |
 
-> **Note**: Mac Studio Edition runs all tests locally via Ollama.
+> **Note**: macOS Edition runs all tests locally via Ollama.
 
 #### Tool Tests
 | ID | Name | Verifies |

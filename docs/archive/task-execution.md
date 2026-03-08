@@ -139,7 +139,7 @@ Executes a `TaskPlan` by walking the dependency graph:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `maxConcurrency` | `2` | Parallel step limit (2 for M4 Max to avoid overloading unified memory) |
+| `maxConcurrency` | `2` | Parallel step limit (2 for Apple Silicon to avoid overloading unified memory) |
 | `maxRetries` | `2` | Retry attempts per step |
 | `onStepComplete` | — | Optional callback for progress reporting |
 

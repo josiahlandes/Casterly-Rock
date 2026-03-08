@@ -1,6 +1,6 @@
 # Casterly Installation Guide
 
-This guide covers installation, configuration, and running Casterly on Mac Studio M4 Max.
+This guide covers installation, configuration, and running Casterly on macOS (Apple Silicon).
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ This guide covers installation, configuration, and running Casterly on Mac Studi
 
 | Spec | Requirement |
 |------|-------------|
-| Platform | Mac Studio M4 Max |
+| Platform | macOS (Apple Silicon) |
 | Memory | 128GB unified |
 | Storage | NVMe SSD |
 
@@ -485,7 +485,7 @@ ollama list
 
 ## Security Notes
 
-- All inference runs locally on Mac Studio
+- All inference runs locally on macOS
 - No data ever leaves the machine
 - Logs are automatically redacted
 - iMessage database access requires Full Disk Access permission

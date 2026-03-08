@@ -12,7 +12,7 @@ This document provides detailed API reference for Casterly's core modules.
 - [Agent Architecture](#agent-architecture)
 - [Configuration](#configuration)
 
-> **Note**: This is the Mac Studio M4 Max Edition. All inference runs locally via Ollama.
+> **Note**: This is the macOS Edition. All inference runs locally via Ollama.
 
 ---
 
@@ -38,7 +38,7 @@ interface LlmProvider {
 | Property | Type | Description |
 |----------|------|-------------|
 | `id` | `string` | Provider identifier ("ollama") |
-| `kind` | `ProviderKind` | Always "local" for Mac Studio |
+| `kind` | `ProviderKind` | Always "local" for macOS |
 | `model` | `string` | Model identifier |
 
 #### `GenerateRequest`
@@ -170,7 +170,7 @@ function buildProviders(config: AppConfig): {
 }
 ```
 
-Creates the Ollama provider instance from configuration. Mac Studio Edition only uses local providers.
+Creates the Ollama provider instance from configuration. macOS Edition only uses local providers.
 
 ---
 
@@ -1027,7 +1027,7 @@ interface LocalProviderConfig {
 }
 ```
 
-Mac Studio Edition - all configuration is for local Ollama provider only.
+macOS Edition - all configuration is for local Ollama provider only.
 
 ---
 

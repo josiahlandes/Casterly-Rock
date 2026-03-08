@@ -37,7 +37,7 @@ E8xx - Memory errors
 E9xx - Skill errors
 ```
 
-> **Mac Studio Edition**: All inference is local. Cloud-related errors (E110-E115) and router errors (E2xx) are not used.
+> **macOS Edition**: All inference is local. Cloud-related errors (E110-E115) and router errors (E2xx) are not used.
 
 ---
 

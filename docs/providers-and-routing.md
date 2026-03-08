@@ -100,7 +100,7 @@ In the dual-loop system, the FastLoop's triage prompt handles classification dir
 
 > **Source**: `src/providers/concurrent.ts`
 
-Enables parallel inference across models on the Mac Studio M4 Max:
+Enables parallel inference across models on the macOS (Apple Silicon):
 
 | Method | Description |
 |--------|-------------|

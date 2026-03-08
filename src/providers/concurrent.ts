@@ -2,7 +2,7 @@
  * Concurrent Provider — Parallel inference across multiple Ollama models
  *
  * Wraps individual LlmProvider instances to support concurrent, parallel,
- * and best-of-N generation strategies. Designed for the Mac Studio M4 Max
+ * and best-of-N generation strategies. Designed for the macOS (Apple Silicon)
  * with 128GB unified memory, which can comfortably hold multiple 70B models
  * simultaneously.
  *

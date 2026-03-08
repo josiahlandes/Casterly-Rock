@@ -890,7 +890,7 @@ With both models loaded and both loops generating concurrently, Ollama's interna
 
 - **OLLAMA_NUM_PARALLEL**: Set to 2 (one request per loop maximum). Avoids thrashing.
 - **Model switching latency**: Both models are pre-loaded (`keep_alive: -1`). No cold-start penalty.
-- **Metal GPU scheduling**: Apple's M4 Max GPU scheduler handles concurrent inference across models. The 35B-A3B's MoE architecture activates only 3B params/token, so when the 122B is generating, there's ample compute headroom for the FastLoop.
+- **Metal GPU scheduling**: Apple's Apple Silicon GPU scheduler handles concurrent inference across models. The 35B-A3B's MoE architecture activates only 3B params/token, so when the 122B is generating, there's ample compute headroom for the FastLoop.
 - **Worst case**: Both loops request generation simultaneously. Ollama queues one and processes them sequentially. This adds ~1-2 seconds to the queued request — acceptable for the FastLoop's 2-second heartbeat.
 
 ---

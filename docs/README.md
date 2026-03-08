@@ -8,7 +8,7 @@
 |-----|-------------------|
 | [Vision](vision.md) | Mission: local-first autonomy, capability amplification, privacy-by-architecture |
 | [Rulebook](rulebook.md) | Non-negotiable invariants (mandatory reading before changes) |
-| [Install Guide](install.md) | Prerequisites, Ollama + MLX setup, Mac Studio M4 Max config |
+| [Install Guide](install.md) | Prerequisites, Ollama + MLX setup, macOS (Apple Silicon) config |
 
 ## Architecture
 

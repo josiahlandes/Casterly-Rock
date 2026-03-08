@@ -1,7 +1,7 @@
 /**
  * Configuration Loader
  *
- * Mac Studio Edition - Local Ollama Only
+ * macOS Edition - Local Ollama Only
  */
 
 import { readFileSync } from 'node:fs';

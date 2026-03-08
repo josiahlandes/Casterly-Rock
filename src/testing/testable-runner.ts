@@ -1,7 +1,7 @@
 /**
  * Testable Runner
  *
- * Mac Studio Edition - Local Ollama Only
+ * macOS Edition - Local Ollama Only
  *
  * A wrapper around the core Casterly processing pipeline that
  * captures trace events for testing and debugging purposes.
