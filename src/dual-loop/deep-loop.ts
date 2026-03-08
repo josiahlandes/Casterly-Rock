@@ -77,6 +77,10 @@ export interface DeepLoopConfig {
   /** Context tier configs */
   tiers: DeepTierConfig;
   coderTiers: CoderTierConfig;
+  /** Number of coder passes per step (1 = single pass, 3 = implement/verify/enhance) */
+  coderPasses: number;
+  /** Turn budget ratio per pass (must sum to ~1.0) */
+  coderPassBudgetRatios: number[];
 }
 
 /**
@@ -113,6 +117,8 @@ const DEFAULT_CONFIG: DeepLoopConfig = {
     extended: 65536,
     responseBufferTokens: 2000,
   },
+  coderPasses: 1,
+  coderPassBudgetRatios: [1.0],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1683,24 +1689,40 @@ export class DeepLoop {
 
   // ── Coder Dispatch ──────────────────────────────────────────────────────
 
-  /**
-   * Dispatch a plan step to the Coder model for implementation.
-   * When a toolkit is available, runs an iterative tool-calling loop so
-   * the model can read files, run commands, and write code via tools.
-   */
-  async dispatchToCoder(prompt: string, fileContents: string, maxTurns?: number): Promise<string> {
-    const totalChars = prompt.length + fileContents.length;
-    const baseTier = selectCoderTier(totalChars, this.config.coderTiers);
-    // Force extended tier when multi-turn tool loops are expected — the initial
-    // prompt size underestimates actual context usage after 10+ tool turns of
-    // accumulated conversation history, read_file results, and create_file contents.
-    const tier = (maxTurns ?? this.config.maxTurnsPerStep) > 5 ? 'extended' as const : baseTier;
-    const providerOptions = buildProviderOptions(this.config.coderTiers, tier);
+  // Pass-specific system prompts for the three-pass coder pipeline.
+  // Pass 1 (implement) reuses the inline prompt inside dispatchToCoder.
+  // Passes 2-3 use these focused prompts.
+  private static readonly CODER_VERIFY_PROMPT = `You are reviewing code you just wrote in a previous pass. Your ONLY job is to find and fix bugs.
 
-    const request: GenerateRequest = {
-      prompt: fileContents ? `${prompt}\n\n---\n\n${fileContents}` : prompt,
-      systemPrompt: this.toolkit
-        ? `You are a code implementation assistant with access to tools (create_file, edit_file, read_file, grep, glob, bash).
+VERIFICATION PROCESS:
+1. Read EVERY file listed in the Workspace Manifest using read_file.
+2. For each function, trace the logic step by step. Ask: "Does this actually do what the function name/comment says?"
+3. For game loops: trace one full frame. Check update() calls — does every object move correctly? Are speeds, directions, and conditions right?
+4. For state machines: trace each state transition. Can the system reach every state? Are there dead states?
+5. Check boundary conditions: off-by-one errors, array bounds, division by zero, null access.
+6. Verify that every import/export matches across files.
+
+RULES:
+- Fix bugs using edit_file. Do NOT restructure or rewrite working code.
+- Do NOT add new features. Only fix correctness issues.
+- If you find no bugs after thorough review, say so explicitly.
+- Be systematic: read every file, don't skip any.`;
+
+  private static readonly CODER_ENHANCE_PROMPT = `You are adding polish and depth to working, verified code. The implementation is correct — do NOT break existing functionality.
+
+ENHANCEMENT TARGETS (pick what applies):
+- Visual polish: better effects, smoother animations, more detail
+- Difficulty progression: increase challenge over time, add variety
+- UX improvements: better feedback, clearer state transitions, juice
+- Code quality: extract magic numbers to named constants, improve naming
+
+RULES:
+- Use edit_file for all modifications. Do NOT rewrite files from scratch.
+- Test your changes mentally — trace the modified code path to confirm it still works.
+- If a file is already high quality, leave it alone.
+- Focus enhancements where they add the most value.`;
+
+  private static readonly CODER_IMPLEMENT_PROMPT = `You are a code implementation assistant with access to tools (create_file, edit_file, read_file, grep, glob, bash).
 
 CRITICAL RULES:
 - You MUST use create_file or edit_file tools to write code. Writing code in your text response does NOT create files on disk. The ONLY way to create or modify files is through tool calls.
@@ -1724,34 +1746,108 @@ Other rules:
 - If grep doesn't find what you need after 2 tries, switch to read_file on specific files.
 - Do NOT repeat the same tool call with the same arguments — try a different approach.
 - When a Workspace Manifest is provided, use the EXACT file paths listed.
-- Maintain consistent naming conventions (camelCase, PascalCase, kebab-case) with files already created.`
-        : 'You are a code implementation assistant. Write the code changes requested. Be precise and minimal.',
-      temperature: 0.3,
-      maxTokens: 16384,
-      providerOptions: {
-        ...providerOptions,
-        think: false, // Coder model is non-thinking (explicit, harmless if already off)
-      },
-    };
+- Maintain consistent naming conventions (camelCase, PascalCase, kebab-case) with files already created.`;
+
+  private static readonly CODER_SIMPLE_PROMPT =
+    'You are a code implementation assistant. Write the code changes requested. Be precise and minimal.';
+
+  /**
+   * Dispatch a plan step to the Coder model for implementation.
+   * When a toolkit is available, runs an iterative tool-calling loop so
+   * the model can read files, run commands, and write code via tools.
+   *
+   * When `coderPasses > 1`, runs multiple passes with different focuses:
+   *   Pass 1 (implement): Build all features — current behavior.
+   *   Pass 2 (verify):    Re-read every file, trace logic, fix bugs.
+   *   Pass 3 (enhance):   Add polish, depth, visual improvements.
+   */
+  async dispatchToCoder(prompt: string, fileContents: string, maxTurns?: number): Promise<string> {
+    const tracer = getTracer();
+    const totalTurns = maxTurns ?? this.config.maxTurnsPerStep;
+    const passCount = this.config.coderPasses;
+    const ratios = this.config.coderPassBudgetRatios;
+    const passNames = ['implement', 'verify', 'enhance'] as const;
+    type PassName = typeof passNames[number];
 
     // Route to dedicated coder provider when available (80B-A3B on MLX :8001)
     const effectiveCoderProvider = this.coderProvider ?? this.provider;
 
-    if (this.toolkit) {
-      return this.executeWithTools(
-        request,
-        maxTurns ?? this.config.maxTurnsPerStep,
-        undefined, // toolOverride
-        effectiveCoderProvider,
-      );
+    const getSystemPrompt = (passName: PassName): string => {
+      if (!this.toolkit) return DeepLoop.CODER_SIMPLE_PROMPT;
+      switch (passName) {
+        case 'implement': return DeepLoop.CODER_IMPLEMENT_PROMPT;
+        case 'verify': return DeepLoop.CODER_VERIFY_PROMPT;
+        case 'enhance': return DeepLoop.CODER_ENHANCE_PROMPT;
+      }
+    };
+
+    const allPassOutputs: string[] = [];
+
+    for (let pass = 0; pass < passCount; pass++) {
+      const ratio = ratios[pass] ?? ratios[0] ?? 1.0;
+      const passTurns = Math.max(3, Math.floor(totalTurns * ratio));
+      const passName: PassName = passNames[Math.min(pass, passNames.length - 1)] ?? 'implement';
+
+      // For verify/enhance passes, prepend workspace manifest and prior output
+      let passPrompt = prompt;
+      if (pass > 0) {
+        const manifestContext = this.formatWorkspaceManifest(this.currentManifest ?? []);
+        passPrompt = [
+          `## Pass ${pass + 1}/${passCount}: ${passName.toUpperCase()}`,
+          manifestContext,
+          `## Previous Pass Output\n${allPassOutputs[pass - 1]?.slice(0, 1500) ?? '(none)'}`,
+          `## Original Task\n${prompt}`,
+        ].filter(Boolean).join('\n\n');
+      }
+
+      // Tier selection
+      const totalChars = passPrompt.length + fileContents.length;
+      const baseTier = selectCoderTier(totalChars, this.config.coderTiers);
+      const tier = passTurns > 5 ? 'extended' as const : baseTier;
+      const providerOptions = buildProviderOptions(this.config.coderTiers, tier);
+
+      const request: GenerateRequest = {
+        prompt: fileContents ? `${passPrompt}\n\n---\n\n${fileContents}` : passPrompt,
+        systemPrompt: getSystemPrompt(passName),
+        temperature: passName === 'enhance' ? 0.5 : 0.3,
+        maxTokens: 16384,
+        providerOptions: {
+          ...providerOptions,
+          think: false,
+        },
+      };
+
+      if (passCount > 1) {
+        tracer.log('deep-loop', 'info', `Coder pass ${pass + 1}/${passCount} (${passName}): ${passTurns} turns`);
+      }
+
+      let output: string;
+      if (this.toolkit) {
+        output = await this.executeWithTools(request, passTurns, undefined, effectiveCoderProvider);
+      } else {
+        const response = await this.concurrentProvider.generate(this.config.coderModel, request);
+        output = response.text;
+      }
+
+      allPassOutputs.push(output);
+
+      // Update the current manifest so subsequent passes see files from prior passes.
+      // stepFileOps accumulates across passes automatically (it's on `this.`).
+      if (this.currentManifest && pass < passCount - 1) {
+        for (const op of this.stepFileOps) {
+          const existing = this.currentManifest.find((f) => f.path === op.path);
+          if (existing) {
+            if (op.lines !== undefined) existing.lines = op.lines;
+            if (op.exports) existing.exports = op.exports;
+          } else {
+            this.currentManifest.push(op);
+          }
+        }
+      }
     }
 
-    const response = await this.concurrentProvider.generate(
-      this.config.coderModel,
-      request,
-    );
-
-    return response.text;
+    // Return last pass output (most complete)
+    return allPassOutputs[allPassOutputs.length - 1] ?? '';
   }
 
   // ── Preemption ──────────────────────────────────────────────────────────

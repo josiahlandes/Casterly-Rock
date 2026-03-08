@@ -96,6 +96,14 @@ function parseDeepConfig(raw: Record<string, unknown>): Partial<DeepLoopConfig> 
   const idleSleepMs = readPositiveInt(raw, 'idle_sleep_ms');
   if (idleSleepMs !== undefined) deep.idleSleepMs = idleSleepMs;
 
+  const coderPasses = readPositiveInt(raw, 'coder_passes');
+  if (coderPasses !== undefined) deep.coderPasses = coderPasses;
+
+  const rawRatios = raw['coder_pass_budget_ratios'];
+  if (Array.isArray(rawRatios) && rawRatios.length > 0 && rawRatios.every((r) => typeof r === 'number' && r > 0)) {
+    deep.coderPassBudgetRatios = rawRatios as number[];
+  }
+
   return deep;
 }
 

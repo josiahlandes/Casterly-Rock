@@ -154,9 +154,15 @@ dual_loop:
     model: qwen3.5-27b-reasoner
     coder_model: qwen3-coder-80b
     max_turns_per_task: 100
+    max_turns_per_step: 25
     max_revision_rounds: 3
     preempt_check_interval_turns: 5
     idle_sleep_ms: 10000
+    coder_passes: 3              # Multi-pass coding: implement → verify → enhance
+    coder_pass_budget_ratios:    # Turn budget ratio per pass (must sum to ~1.0)
+      - 0.50                     # Pass 1 (Implement): build all features
+      - 0.30                     # Pass 2 (Verify): re-read, trace logic, fix bugs
+      - 0.20                     # Pass 3 (Enhance): add polish and depth
 
   # Verification cascade: multi-pass review for high-stakes tasks.
   # Tasks with 3+ files or 3+ plan steps get multiple review passes
