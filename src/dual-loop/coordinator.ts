@@ -121,6 +121,7 @@ export class LoopCoordinator {
     eventBus: EventBus,
     config?: Partial<CoordinatorConfig>,
     toolkit?: AgentToolkit,
+    coderProvider?: LlmProvider,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.eventBus = eventBus;
@@ -149,6 +150,8 @@ export class LoopCoordinator {
         coderTiers: this.config.contextTiers.coder,
       },
       toolkit,
+      undefined, // stateManager
+      coderProvider,
     );
   }
 
@@ -379,6 +382,7 @@ export function createLoopCoordinator(
   eventBus: EventBus,
   config?: Partial<CoordinatorConfig>,
   toolkit?: AgentToolkit,
+  coderProvider?: LlmProvider,
 ): LoopCoordinator {
-  return new LoopCoordinator(fastProvider, deepProvider, concurrentProvider, eventBus, config, toolkit);
+  return new LoopCoordinator(fastProvider, deepProvider, concurrentProvider, eventBus, config, toolkit, coderProvider);
 }

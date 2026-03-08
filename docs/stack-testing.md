@@ -22,7 +22,8 @@ npm run tyrion:console
 ### Prerequisites
 
 - Ollama running with `qwen3.5:35b-a3b` loaded (FastLoop)
-- MLX server running with `Qwen3.5-122B-A10B` (DeepLoop)
+- MLX reasoner server running on port 8000 with Qwen3.5-27B (DeepLoop planning/review)
+- MLX coder server running on port 8001 with Qwen3-Coder-80B-A3B (DeepLoop code generation)
 - `~/.casterly/contacts.json` exists (console uses the first allowed sender as identity)
 - `config/autonomous.yaml` present for voice filter and dual-loop config
 
@@ -900,6 +901,6 @@ Which modules each test layer exercises:
 
 **FastLoop answers everything directly**: Triage model may not be classifying correctly. Check if `qwen3.5:35b-a3b` is loaded. Enable debug logging with `CASTERLY_DEBUG=agent-loop,events`.
 
-**DeepLoop never picks up tasks**: Check MLX server health. The DeepLoop model needs the 122B MoE variant loaded.
+**DeepLoop never picks up tasks**: Check MLX server health (`curl localhost:8000/health && curl localhost:8001/health`). Both the 27B reasoner and 80B coder must be running.
 
 **Voice filter not applying**: Check `config/autonomous.yaml` has `voice_filter.enabled: true` and Ollama is accessible.

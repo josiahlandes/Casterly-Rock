@@ -2,18 +2,23 @@
 # MLX Inference Server (vllm-mlx)
 #
 # Launches vllm-mlx as an OpenAI-compatible inference server for Apple Silicon.
-# Achieves 50-87% faster inference than Ollama for large dense models.
+# Supports multiple named instances for concurrent model serving.
 #
 # Prerequisites:
 #   pip install vllm-mlx
 #   Download/convert model: mlx_lm.convert --hf-path Qwen/Qwen3.5-122B-MLX -q 4bit
 #
 # Usage:
-#   ./scripts/mlx-server.sh start         - Start the server
+#   ./scripts/mlx-server.sh start         - Start the default instance
 #   ./scripts/mlx-server.sh start --spec  - Start with speculative decoding
-#   ./scripts/mlx-server.sh stop          - Stop the server
-#   ./scripts/mlx-server.sh status        - Check server status
-#   ./scripts/mlx-server.sh logs          - Tail the log file
+#   ./scripts/mlx-server.sh stop          - Stop the default instance
+#   ./scripts/mlx-server.sh status        - Check instance status
+#   ./scripts/mlx-server.sh logs          - Tail the instance log
+#
+# Multi-instance (set MLX_INSTANCE to namespace PID/logs):
+#   MLX_INSTANCE=reasoner MLX_PORT=8000 ./scripts/mlx-server.sh start
+#   MLX_INSTANCE=coder MLX_PORT=8001 MLX_MODEL=... ./scripts/mlx-server.sh start
+#   MLX_INSTANCE=coder ./scripts/mlx-server.sh stop
 #
 # See docs/roadmap.md Tier 2, Items 5 and 6.
 
@@ -22,14 +27,25 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="${HOME}/.casterly/mlx/logs"
-PID_FILE="${HOME}/.casterly/mlx/server.pid"
+
+# ── Instance naming ──────────────────────────────────────────────────────────
+# MLX_INSTANCE namespaces the PID file and log file, allowing multiple
+# vllm-mlx processes to coexist (e.g. reasoner on :8000, coder on :8001).
+MLX_INSTANCE="${MLX_INSTANCE:-default}"
+PID_FILE="${HOME}/.casterly/mlx/${MLX_INSTANCE}.pid"
 
 # ── Configuration ────────────────────────────────────────────────────────────
 # Override these via environment variables if needed.
 
-MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3.5-122B-MLX-4bit}"
+MLX_MODEL="${MLX_MODEL:-nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx}"
 MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-8000}"
+MLX_MAX_TOKENS="${MLX_MAX_TOKENS:-16384}"
+
+# Optional parser flags — set to enable, leave empty to omit.
+# Reasoner instance needs these; coder instance does not.
+MLX_REASONING_PARSER="${MLX_REASONING_PARSER:-}"
+MLX_TOOL_PARSER="${MLX_TOOL_PARSER:-}"
 
 # Speculative decoding (Tier 2, Item 6)
 MLX_DRAFT_MODEL="${MLX_DRAFT_MODEL:-mlx-community/Qwen3.5-0.5B-MLX-4bit}"
@@ -71,9 +87,13 @@ usage() {
     echo "  logs          - Tail the server log file"
     echo ""
     echo "Environment variables:"
+    echo "  MLX_INSTANCE           Instance name for PID/log namespacing (default: $MLX_INSTANCE)"
     echo "  MLX_MODEL              Model to serve (default: $MLX_MODEL)"
     echo "  MLX_HOST               Bind address (default: $MLX_HOST)"
     echo "  MLX_PORT               Port (default: $MLX_PORT)"
+    echo "  MLX_MAX_TOKENS         Max output tokens (default: $MLX_MAX_TOKENS)"
+    echo "  MLX_REASONING_PARSER   Reasoning parser (e.g. 'qwen3'; default: unset = disabled)"
+    echo "  MLX_TOOL_PARSER        Tool call parser (e.g. 'qwen'; default: unset = disabled)"
     echo "  MLX_DRAFT_MODEL        Draft model for speculative decoding (default: $MLX_DRAFT_MODEL)"
     echo "  MLX_SPEC_TOKENS        Speculative tokens per step (default: $MLX_SPEC_TOKENS)"
     echo ""
@@ -87,7 +107,7 @@ usage() {
 }
 
 log_file() {
-    echo "$LOG_DIR/server-$(date +%Y%m%d).log"
+    echo "$LOG_DIR/server-${MLX_INSTANCE}-$(date +%Y%m%d).log"
 }
 
 check_deps() {
@@ -206,19 +226,30 @@ start_server() {
         fi
     fi
 
-    echo -e "${BLUE}Starting MLX inference server...${NC}"
+    echo -e "${BLUE}Starting MLX inference server [${MLX_INSTANCE}]...${NC}"
+    echo -e "  Instance: ${GREEN}$MLX_INSTANCE${NC}"
     echo -e "  Model: ${GREEN}$MLX_MODEL${NC}"
     echo -e "  Endpoint: ${GREEN}http://$MLX_HOST:$MLX_PORT${NC}"
+    echo -e "  Max tokens: ${GREEN}$MLX_MAX_TOKENS${NC}"
 
     local CMD=(
         vllm-mlx serve "$MLX_MODEL"
         --host "$MLX_HOST"
         --port "$MLX_PORT"
-        --enable-auto-tool-choice
-        --tool-call-parser qwen
-        --reasoning-parser qwen3
-        --max-tokens 16384
+        --max-tokens "$MLX_MAX_TOKENS"
     )
+
+    # Tool call parser — enable when set (e.g. "qwen")
+    if [ -n "$MLX_TOOL_PARSER" ]; then
+        echo -e "  Tool parser: ${GREEN}$MLX_TOOL_PARSER${NC}"
+        CMD+=(--enable-auto-tool-choice --tool-call-parser "$MLX_TOOL_PARSER")
+    fi
+
+    # Reasoning parser — enable when set (e.g. "qwen3")
+    if [ -n "$MLX_REASONING_PARSER" ]; then
+        echo -e "  Reasoning parser: ${GREEN}$MLX_REASONING_PARSER${NC}"
+        CMD+=(--reasoning-parser "$MLX_REASONING_PARSER")
+    fi
 
     if [ "$use_spec" = true ]; then
         echo -e "  Draft model: ${GREEN}$MLX_DRAFT_MODEL${NC}"
@@ -298,7 +329,7 @@ stop_server() {
     PID=$(cat "$PID_FILE")
 
     if kill -0 "$PID" 2>/dev/null; then
-        echo -e "${BLUE}Stopping MLX server (PID: $PID)...${NC}"
+        echo -e "${BLUE}Stopping MLX server [${MLX_INSTANCE}] (PID: $PID)...${NC}"
         kill "$PID"
 
         for i in {1..10}; do
@@ -323,7 +354,7 @@ stop_server() {
 
 status_server() {
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        echo -e "${GREEN}MLX server running (PID: $(cat "$PID_FILE"))${NC}"
+        echo -e "${GREEN}MLX server [${MLX_INSTANCE}] running (PID: $(cat "$PID_FILE"))${NC}"
         echo ""
 
         # Check health
@@ -350,7 +381,7 @@ status_server() {
             echo -e "  KV cache: FP16 (no quantization)"
         fi
     else
-        echo -e "${YELLOW}MLX server not running${NC}"
+        echo -e "${YELLOW}MLX server [${MLX_INSTANCE}] not running${NC}"
         if [ -f "$PID_FILE" ]; then
             rm -f "$PID_FILE"
         fi

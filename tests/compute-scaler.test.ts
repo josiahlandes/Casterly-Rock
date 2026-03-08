@@ -78,7 +78,7 @@ describe('ComputeScaler — Budget Allocation', () => {
     expect(budget.maxRetries).toBe(3);
     expect(budget.parallelCandidates).toBe(4);
     expect(budget.temperature).toBe(0.3);
-    expect(budget.maxTokens).toBe(8192);
+    expect(budget.maxTokens).toBe(16384);
     expect(budget.contextTier).toBe('extended');
     expect(budget.useJudge).toBe(true);
     expect(budget.difficulty).toBe('hard');

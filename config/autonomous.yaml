@@ -149,11 +149,11 @@ dual_loop:
     max_conversation_tokens: 10000
     message_coalesce_ms: 3000
 
-  # DeepLoop settings (122B model — planning, execution)
+  # DeepLoop settings (triple-model: 27B reasoner + 80B coder)
   deep:
-    model: qwen3.5:122b
-    coder_model: qwen3.5:122b
-    max_turns_per_task: 50
+    model: qwen3.5-27b-reasoner
+    coder_model: qwen3-coder-80b
+    max_turns_per_task: 100
     max_revision_rounds: 3
     preempt_check_interval_turns: 5
     idle_sleep_ms: 10000
@@ -184,14 +184,14 @@ dual_loop:
     deep:
       compact: 8192
       standard: 24576
-      extended: 262144
+      extended: 131072           # 27B reasoner: 131K native context
       context_pressure_soft_threshold: 0.70     # Inject budget warning to model
       context_pressure_warning_threshold: 0.80   # Log warning for dream cycle analysis
       context_pressure_action_threshold: 0.85    # Auto-compress prompt
     coder:
       compact: 8192
       standard: 65536
-      extended: 262144
+      extended: 262144           # 80B-A3B coder: 256K native context
       response_buffer_tokens: 2000
 
   # Coordinator settings
@@ -358,7 +358,7 @@ hardware:
         max_retries: 3
         parallel_candidates: 4
         temperature: 0.3
-        max_tokens: 8192
+        max_tokens: 16384         # 80B coder needs large output for multi-file generation
         context_tier: extended
         use_judge: true
 

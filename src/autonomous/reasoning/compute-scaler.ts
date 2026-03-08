@@ -202,7 +202,7 @@ const DEFAULT_HARD_BUDGET: ComputeBudget = {
   maxRetries: 3,
   parallelCandidates: 4,
   temperature: 0.3,
-  maxTokens: 8192,
+  maxTokens: 16384,  // 80B-A3B coder needs large output for multi-file generation
   contextTier: 'extended',
   useJudge: true,
   difficulty: 'hard',

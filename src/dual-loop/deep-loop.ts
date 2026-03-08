@@ -268,6 +268,8 @@ Read the review feedback carefully and make the necessary changes. Focus only on
 export class DeepLoop {
   private readonly config: DeepLoopConfig;
   private readonly provider: LlmProvider;
+  /** Dedicated coder provider (80B-A3B). Falls back to this.provider when undefined. */
+  private readonly coderProvider: LlmProvider | undefined;
   private readonly concurrentProvider: ConcurrentProvider;
   private readonly taskBoard: TaskBoard;
   private readonly eventBus: EventBus;
@@ -304,9 +306,11 @@ export class DeepLoop {
     config?: Partial<DeepLoopConfig>,
     toolkit?: AgentToolkit,
     stateManager?: StateManager,
+    coderProvider?: LlmProvider,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.provider = provider;
+    this.coderProvider = coderProvider;
     this.concurrentProvider = concurrentProvider;
     this.taskBoard = taskBoard;
     this.eventBus = eventBus;
@@ -1723,12 +1727,23 @@ Other rules:
 - Maintain consistent naming conventions (camelCase, PascalCase, kebab-case) with files already created.`
         : 'You are a code implementation assistant. Write the code changes requested. Be precise and minimal.',
       temperature: 0.3,
-      maxTokens: 8192,
-      providerOptions,
+      maxTokens: 16384,
+      providerOptions: {
+        ...providerOptions,
+        think: false, // Coder model is non-thinking (explicit, harmless if already off)
+      },
     };
 
+    // Route to dedicated coder provider when available (80B-A3B on MLX :8001)
+    const effectiveCoderProvider = this.coderProvider ?? this.provider;
+
     if (this.toolkit) {
-      return this.executeWithTools(request, maxTurns ?? this.config.maxTurnsPerStep);
+      return this.executeWithTools(
+        request,
+        maxTurns ?? this.config.maxTurnsPerStep,
+        undefined, // toolOverride
+        effectiveCoderProvider,
+      );
     }
 
     const response = await this.concurrentProvider.generate(
@@ -1764,14 +1779,19 @@ Other rules:
    *   model instead of the full toolkit schemas. The executor still uses the
    *   full toolkit to dispatch calls, so only the model's visible tool set is
    *   restricted (e.g., read-only tools for integration review).
+   * @param providerOverride - When provided, this LlmProvider is used instead
+   *   of this.provider for all inference calls. Used by dispatchToCoder to
+   *   route coding work to a dedicated coder model.
    */
   private async executeWithTools(
     request: GenerateRequest,
     maxTurns: number = 20,
     toolOverride?: ToolSchema[],
+    providerOverride?: LlmProvider,
   ): Promise<string> {
+    const activeProvider = providerOverride ?? this.provider;
     if (!this.toolkit) {
-      const response = await this.provider.generateWithTools(request, []);
+      const response = await activeProvider.generateWithTools(request, []);
       return response.text;
     }
 
@@ -1826,7 +1846,7 @@ Other rules:
           : {}),
       };
 
-      const response = await this.provider.generateWithTools(
+      const response = await activeProvider.generateWithTools(
         effectiveRequest,
         tools,
         allToolResults.length > 0 ? allToolResults : undefined,
@@ -2657,6 +2677,8 @@ export function createDeepLoop(
   eventBus: EventBus,
   config?: Partial<DeepLoopConfig>,
   toolkit?: AgentToolkit,
+  stateManager?: StateManager,
+  coderProvider?: LlmProvider,
 ): DeepLoop {
-  return new DeepLoop(provider, concurrentProvider, taskBoard, eventBus, config, toolkit);
+  return new DeepLoop(provider, concurrentProvider, taskBoard, eventBus, config, toolkit, stateManager, coderProvider);
 }

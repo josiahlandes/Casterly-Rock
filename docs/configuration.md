@@ -9,8 +9,8 @@ Casterly uses YAML configuration validated at load time by Zod schemas. All conf
 | File | Purpose |
 |------|---------|
 | `config/default.yaml` | Main config: provider, sensitivity, session, tools, logging, hardware |
-| `config/autonomous.yaml` | Autonomous agent: timing, scope, agent loop, events, memory, dream, communication |
-| `config/models.yaml` | Model registry: per-role models, hardware constraints, Ollama settings |
+| `config/autonomous.yaml` | Autonomous agent: timing, scope, agent loop, events, memory, dream, communication, dual-loop |
+| `config/models.yaml` | Model registry: per-role models, MLX config, hardware constraints, Ollama settings |
 | `config/model-profiles.yaml` | Per-model tuning: temperature, token limits, tool-specific hints |
 | `config/backlog.yaml` | Feature backlog for autonomous improvement |
 
@@ -21,12 +21,12 @@ Casterly uses YAML configuration validated at load time by Zod schemas. All conf
 ```yaml
 local:
   provider: ollama
-  model: qwen3.5:122b
+  model: qwen3.5:35b-a3b
   baseUrl: http://localhost:11434
   timeoutMs: 120000
 ```
 
-Only `ollama` is a valid provider (local-only enforcement).
+Only `ollama` is a valid provider for the main config (local-only enforcement). MLX providers are configured separately in `models.yaml`.
 
 ### Sensitivity
 
@@ -65,7 +65,7 @@ tools:
 models:
   primary:
     provider: ollama
-    model: qwen3.5:122b
+    model: qwen3.5:35b-a3b
     temperature: 0.6
 
   fast:
@@ -73,11 +73,28 @@ models:
     model: qwen3.5:35b-a3b
     temperature: 0.3
 
+mlx:
+  base_url: http://localhost:8000
+  model: nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx
+  timeout_ms: 300000
+  kv_cache:
+    preset: k8v4   # Asymmetric K8V4 -- lossless at 128K
+
+mlx_coder:
+  base_url: http://localhost:8001
+  model: nightmedia/Qwen3-Coder-Next-mxfp4-mlx
+  timeout_ms: 600000
+  kv_cache:
+    preset: none   # FP16 -- only 12 KV layers, not worth quantizing
+
 hardware:
   platform: mac-studio-m4-max
   memory_gb: 128
-  max_concurrent_models: 2
+  max_concurrent_models: 3
+  target_memory_usage_pct: 66
 ```
+
+The `mlx` section configures the 27B reasoner; `mlx_coder` configures the 80B coder. Both run on vllm-mlx on separate ports.
 
 ## Autonomous Config (`config/autonomous.yaml`)
 
@@ -104,11 +121,29 @@ dual_loop:
     heartbeat_ms: 2000
     triage_timeout_ms: 10000
   deep_loop:
-    model: qwen3.5:122b
-    max_turns_per_task: 50
-    max_turns_per_step: 15
+    model: qwen3.5-27b-reasoner
+    coder_model: qwen3-coder-80b
+    max_turns_per_task: 100
+    max_turns_per_step: 25
+    max_revision_rounds: 3
     idle_sleep_ms: 10000
+  context_tiers:
+    deep:
+      standard: 24576
+      extended: 131072    # 27B native context limit
+    coder:
+      base: 8192
+      extended: 65536
+      max: 262144          # 80B native 256K context
+    fast:
+      compact: 4096
+      standard: 12288
+      extended: 24576
+  hard_budget:
+    max_tokens: 16384      # Coder output budget per step
 ```
+
+The `deep_loop.model` names (`qwen3.5-27b-reasoner`, `qwen3-coder-80b`) are logical names that map to ConcurrentProvider registrations in the daemon.
 
 ## Persistent State Paths
 
@@ -127,6 +162,10 @@ All state lives under `~/.casterly/`:
 ├── taskboard.json
 ├── autonomous/
 │   └── handoff.json
+├── mlx/
+│   ├── reasoner.pid
+│   ├── coder.pid
+│   └── logs/
 └── workspace/
     ├── IDENTITY.md
     ├── SOUL.md
@@ -153,7 +192,7 @@ Config is validated at startup via Zod schemas. Invalid or unsafe settings cause
 |------|---------|
 | `config/default.yaml` | Main application config |
 | `config/autonomous.yaml` | Autonomous agent config |
-| `config/models.yaml` | Model registry |
+| `config/models.yaml` | Model registry (Ollama + MLX) |
 | `config/model-profiles.yaml` | Per-model tuning |
 | `src/config/schema.ts` | Zod validation schemas |
 | `src/config/index.ts` | Config loader |

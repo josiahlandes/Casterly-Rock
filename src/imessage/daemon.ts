@@ -493,50 +493,81 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         think: false, // Disable thinking for triage/review — we need plain JSON output
       });
 
-      // DeepLoop provider: always MLX — 50-87% faster on Apple Silicon (Tier 2, Item 5).
-      const mlxBaseUrl = process.env['MLX_BASE_URL'] || 'http://localhost:8000';
+      // ── MLX Providers: Reasoner (27B) + Coder (80B-A3B) ──────────────
+      // Triple-model architecture: planning/review on 27B dense reasoner,
+      // code generation on 80B-A3B Hybrid MoE+DeltaNet coder.
+      // Both run on vllm-mlx as separate instances on different ports.
+      const mlxReasonerUrl = process.env['MLX_BASE_URL'] || 'http://localhost:8000';
+      const mlxCoderUrl = process.env['MLX_CODER_BASE_URL'] || 'http://localhost:8001';
       const readyRetries = readPositiveIntEnv('CASTERLY_MLX_READY_RETRIES', 20);
       const retryDelayMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_DELAY_MS', 3000);
       const retryTimeoutMs = readPositiveIntEnv('CASTERLY_MLX_RETRY_TIMEOUT_MS', 5000);
       const autoStart = readBooleanEnv('CASTERLY_MLX_AUTOSTART', true);
       const startWithSpec = readBooleanEnv('CASTERLY_MLX_START_WITH_SPEC', false);
 
-      // KV cache config from environment (Tier 4, Item 12)
+      // KV cache config from environment (Tier 4, Item 12) — applies to reasoner only
       const kvCacheConfig = parseKvCacheFromEnv();
       const kvCacheEnvVars = buildKvCacheEnvVars(kvCacheConfig);
 
-      safeLogger.info('Ensuring MLX server readiness', {
-        baseUrl: mlxBaseUrl,
-        retries: readyRetries,
-        retryDelayMs,
-        retryTimeoutMs,
-        autoStart,
-        startWithSpec,
-        kvCachePreset: kvCacheConfig.preset,
-        kvCacheServerSupport: kvCacheConfig.serverSupport,
-      });
-
-      const hasKvEnv = Object.keys(kvCacheEnvVars).length > 0;
-      await ensureMlxServerReady(mlxBaseUrl, {
+      const mlxReadyOpts = {
         projectRoot: process.cwd(),
         maxAttempts: readyRetries,
         delayMs: retryDelayMs,
         timeoutMs: retryTimeoutMs,
         autoStart,
+      };
+
+      // Start reasoner instance (port 8000)
+      safeLogger.info('Ensuring MLX reasoner server readiness', {
+        baseUrl: mlxReasonerUrl,
+        instance: 'reasoner',
+        autoStart,
+        startWithSpec,
+        kvCachePreset: kvCacheConfig.preset,
+      });
+
+      const hasKvEnv = Object.keys(kvCacheEnvVars).length > 0;
+      await ensureMlxServerReady(mlxReasonerUrl, {
+        ...mlxReadyOpts,
+        instance: 'reasoner',
         startWithSpec,
         ...(hasKvEnv ? { startEnv: kvCacheEnvVars } : {}),
       });
 
+      // Start coder instance (port 8001)
+      safeLogger.info('Ensuring MLX coder server readiness', {
+        baseUrl: mlxCoderUrl,
+        instance: 'coder',
+        autoStart,
+      });
+
+      await ensureMlxServerReady(mlxCoderUrl, {
+        ...mlxReadyOpts,
+        instance: 'coder',
+      });
+
+      const reasonerModel = process.env['MLX_MODEL']
+        || 'nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx';
+      const coderModel = process.env['MLX_CODER_MODEL']
+        || 'nightmedia/Qwen3-Coder-Next-mxfp4-mlx';
+
       const deepProvider = new MlxProvider({
-        baseUrl: mlxBaseUrl,
-        model: process.env['MLX_MODEL'] || 'nightmedia/Qwen3.5-122B-A10B-Text-mxfp4-mlx',
-        timeoutMs: 1_800_000,
+        baseUrl: mlxReasonerUrl,
+        model: reasonerModel,
+        timeoutMs: 300_000,    // 5 min — reasoner plans/reviews, shorter outputs
         kvCache: parseKvCacheFromEnv(),
+      });
+
+      const coderProvider = new MlxProvider({
+        baseUrl: mlxCoderUrl,
+        model: coderModel,
+        timeoutMs: 600_000,    // 10 min — coder generates multi-file code, longer outputs
       });
 
       const concurrentProvider = new ConcurrentProvider(
         new Map<string, LlmProvider>([
-          ['qwen3.5:122b', deepProvider],
+          ['qwen3.5-27b-reasoner', deepProvider],
+          ['qwen3-coder-80b', coderProvider],
           ['qwen3.5:35b-a3b', fastProvider],
         ]),
       );
@@ -565,6 +596,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       autonomousController = createDualLoopController({
         fastProvider,
         deepProvider,
+        coderProvider,
         concurrentProvider,
         eventBus,
         goalStack,
@@ -579,8 +611,8 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
 
       safeLogger.info('Dual-loop controller initialized', {
         fastModel: 'qwen3.5:35b-a3b',
-        deepModel: 'mlx:' + deepProvider.model,
-        deepProvider: 'mlx',
+        reasonerModel: 'mlx:' + deepProvider.model,
+        coderModel: 'mlx:' + coderProvider.model,
       });
     } else {
       // ── Standard single-loop mode ───────────────────────────────────

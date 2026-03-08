@@ -47,8 +47,10 @@ import type { DeliverFn } from './fast-loop.js';
 export interface DualLoopControllerOptions {
   /** LlmProvider for the FastLoop (35B-A3B model) */
   fastProvider: LlmProvider;
-  /** LlmProvider for the DeepLoop (122B model) */
+  /** LlmProvider for the DeepLoop reasoning model (27B) */
   deepProvider: LlmProvider;
+  /** LlmProvider for the DeepLoop coder model (80B-A3B). Falls back to deepProvider if omitted. */
+  coderProvider?: LlmProvider | undefined;
   /** ConcurrentProvider for model dispatch */
   concurrentProvider: ConcurrentProvider;
   /** Shared event bus (same instance used by watchers) */
@@ -107,6 +109,7 @@ export function createDualLoopController(
     options.eventBus,
     options.coordinatorConfig,
     options.toolkit,
+    options.coderProvider,
   );
 
   // Wire the GoalStack into DeepLoop for idle-time goal work

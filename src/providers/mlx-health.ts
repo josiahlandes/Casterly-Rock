@@ -21,6 +21,8 @@ export interface EnsureMlxServerOptions extends MlxReadinessOptions {
   startTimeoutMs?: number;
   /** Extra environment variables to pass to the server start script (e.g., KV cache config). */
   startEnv?: Record<string, string>;
+  /** Instance name for multi-instance support (namespaces PID/log files). Default: "default". */
+  instance?: string;
 }
 
 function normalizePositiveInt(value: number | undefined, fallback: number): number {
@@ -131,6 +133,7 @@ export async function ensureMlxServerReady(
   const autoStart = options?.autoStart !== false;
   const startWithSpec = options?.startWithSpec === true;
   const startEnv = options?.startEnv;
+  const instance = options?.instance;
 
   try {
     await waitForMlxServerReady(baseUrl, {
@@ -148,8 +151,15 @@ export async function ensureMlxServerReady(
   const scriptPath = resolve(projectRoot, 'scripts', 'mlx-server.sh');
   const args = ['start', ...(startWithSpec ? ['--spec'] : [])];
 
+  // Merge instance name into start environment so mlx-server.sh uses
+  // the correct PID file and log namespace.
+  const mergedEnv: Record<string, string> = {
+    ...(startEnv ?? {}),
+    ...(instance ? { MLX_INSTANCE: instance } : {}),
+  };
+
   try {
-    await runScript(scriptPath, args, projectRoot, startTimeoutMs, startEnv);
+    await runScript(scriptPath, args, projectRoot, startTimeoutMs, mergedEnv);
   } catch (startError) {
     const output = stringifyUnknown(startError).toLowerCase();
     // Benign race: another process started the server between our probe/start.

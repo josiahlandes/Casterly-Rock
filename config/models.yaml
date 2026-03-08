@@ -77,8 +77,8 @@ routing:
 hardware:
   platform: mac-studio-m4-max
   memory_gb: 128
-  max_concurrent_models: 2  # Two-model architecture: 122b + 35b-a3b
-  target_memory_usage_pct: 91  # ~117 GB of 128 GB (incl. 131K KV cache), ~11 GB headroom
+  max_concurrent_models: 3  # Triple-model: 27B reasoner (MLX) + 80B coder (MLX) + 35B fast (Ollama)
+  target_memory_usage_pct: 66  # ~84 GB of 128 GB (18+42+24), ~44 GB headroom
 
 # Ollama settings
 ollama:
@@ -95,13 +95,14 @@ ollama:
   kv_cache_type: q8_0
 
 # MLX settings (Apple Silicon-native inference via vllm-mlx)
-# Achieves 50-87% faster inference than Ollama for large dense models.
-# Activate by setting CASTERLY_DEEP_PROVIDER=mlx before starting the daemon.
-# See scripts/mlx-server.sh for server launch.
+# Triple-model architecture: reasoner (MLX :8000) + coder (MLX :8001) + fast (Ollama)
+# See scripts/mlx-server.sh for multi-instance server launch.
+
+# Reasoner instance — 27B dense, thinking model for planning/review
 mlx:
   base_url: http://localhost:8000
-  model: mlx-community/Qwen3.5-122B-MLX-4bit
-  timeout_ms: 1800000          # 30 minutes — same budget as Ollama coding tasks
+  model: nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx
+  timeout_ms: 300000           # 5 minutes — planning/review, shorter outputs
 
   # Speculative decoding: draft model generates candidate tokens, main model verifies.
   # 1.5-2x speedup with zero quality loss (mathematically identical output distribution).
@@ -111,16 +112,8 @@ mlx:
     num_speculative_tokens: 5  # Tokens per speculation step (higher = faster but lower acceptance rate)
 
   # KV cache quantization (Tier 4, Item 12 — K8V4 mixed-precision)
-  # Asymmetric quantization: keys at 8-bit, values at 4-bit.
-  # Keys are more sensitive to quantization than values (KIVI, Liu et al. 2024).
-  # Achieves ~59% KV cache reduction with <0.1 perplexity degradation.
-  #
-  # Presets: none (FP16), q8 (uniform 8-bit), q4 (uniform 4-bit), k8v4 (mixed)
-  # Bit widths: 2, 3, 4, 5, 6, 8 (from mlx.core.quantize)
-  # Group sizes: 32, 64, 128
-  #
-  # Status: config validated but not active until vllm-mlx adds --kv-bits support.
-  # Track: https://github.com/ml-explore/mlx-lm/issues/615
+  # 27B has 64 full attention layers with standard KV cache.
+  # K8V4 proven lossless at 128K context (benchmark 2026-03-03).
   kv_cache:
     preset: k8v4             # Recommended: best quality/memory tradeoff
     key_bits: 8              # Explicit override (matches preset)
@@ -128,3 +121,15 @@ mlx:
     group_size: 64           # Quantization group size
     quantized_kv_start: 0    # Start quantization immediately (server mode)
     server_support: false    # Flip to true when vllm-mlx supports --kv-bits
+
+# Coder instance — 80B-A3B Hybrid MoE+DeltaNet, non-thinking tool-calling model
+mlx_coder:
+  base_url: http://localhost:8001
+  model: nightmedia/Qwen3-Coder-Next-mxfp4-mlx
+  timeout_ms: 600000           # 10 minutes — multi-file code generation, longer outputs
+
+  # KV cache: FP16 (no quantization)
+  # 80B-A3B has only 12 standard attention layers (36 DeltaNet layers use fixed state).
+  # At 256K context with 12 layers, KV cache is ~0.6 GB — not worth quantizing.
+  kv_cache:
+    preset: none             # FP16 — negligible KV footprint

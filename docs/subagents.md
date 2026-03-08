@@ -45,7 +45,7 @@ When to trigger:
 - Model performance tuning.
 
 Checklist:
-- Coding tasks use qwen3.5:122b (handles both reasoning and code generation).
+- Coding tasks use the 80B-A3B coder (tool-calling code generation) with 27B reasoner for planning/review.
 - Fast triage/review tasks use qwen3.5:35b-a3b.
 - Mode-based selection is consistent with `src/coding/modes/`.
 

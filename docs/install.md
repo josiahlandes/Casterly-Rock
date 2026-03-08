@@ -11,7 +11,9 @@ This guide covers installation, configuration, and running Casterly on Mac Studi
 | Node.js | 18.x or later | Runtime environment |
 | npm | 9.x or later | Package management |
 | macOS | 12.x or later | Primary platform (for iMessage) |
-| Ollama | Latest | Local LLM provider |
+| Ollama | Latest | Local LLM provider (FastLoop) |
+| vllm-mlx | Latest | MLX inference server (DeepLoop) |
+| Python 3.10+ | Latest | Required by vllm-mlx |
 
 ### Hardware
 
@@ -31,18 +33,22 @@ cd casterly
 # 2. Install dependencies
 npm install
 
-# 3. Set up Ollama models
-ollama pull qwen3.5:122b
+# 3. Set up Ollama (FastLoop)
 ollama pull qwen3.5:35b-a3b
 
-# 4. Build and install
+# 4. Set up MLX models (DeepLoop)
+pip install vllm-mlx huggingface-hub
+huggingface-cli download nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx
+huggingface-cli download nightmedia/Qwen3-Coder-Next-mxfp4-mlx
+
+# 5. Build and install
 npm run install:host
 
-# 5. Add to PATH (if not already)
+# 6. Add to PATH (if not already)
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 
-# 6. Run
+# 7. Run
 casterly "Hello, what can you do?"
 ```
 
@@ -59,15 +65,12 @@ This installs:
 - `zod` - Runtime schema validation
 - Development tools (TypeScript, ESLint, Vitest)
 
-### Step 2: Set Up Ollama
+### Step 2: Set Up Ollama (FastLoop)
 
 1. Install Ollama from [ollama.ai](https://ollama.ai)
 
-2. Pull the required models:
+2. Pull the FastLoop model:
    ```bash
-   # DeepLoop: reasoning, planning, and code generation (~81 GB)
-   ollama pull qwen3.5:122b
-
    # FastLoop: triage, review, acknowledgment (~24 GB, MoE: 35B total, 3B active)
    ollama pull qwen3.5:35b-a3b
    ```
@@ -77,21 +80,62 @@ This installs:
    curl http://localhost:11434/api/tags
    ```
 
-4. Check models are available:
+### Step 3: Set Up vllm-mlx (DeepLoop)
+
+vllm-mlx runs two instances for the DeepLoop's reasoner and coder models.
+
+1. Install vllm-mlx:
    ```bash
-   ollama list
+   pip install vllm-mlx
    ```
 
-### Step 3: Configure Casterly
+2. Download the DeepLoop models:
+   ```bash
+   # Reasoner: 27B dense model for planning/review (~18 GB)
+   huggingface-cli download nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx
+
+   # Coder: 80B-A3B MoE for tool-calling code generation (~42 GB, MXFP4)
+   huggingface-cli download nightmedia/Qwen3-Coder-Next-mxfp4-mlx
+   ```
+
+3. Start the MLX servers using the instance manager:
+   ```bash
+   # Start the reasoner instance (port 8000)
+   MLX_INSTANCE=reasoner MLX_PORT=8000 \
+   MLX_MODEL=nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx \
+   MLX_MAX_TOKENS=32768 MLX_REASONING_PARSER=qwen3 \
+   ./scripts/mlx-server.sh start
+
+   # Start the coder instance (port 8001)
+   MLX_INSTANCE=coder MLX_PORT=8001 \
+   MLX_MODEL=nightmedia/Qwen3-Coder-Next-mxfp4-mlx \
+   MLX_MAX_TOKENS=16384 \
+   ./scripts/mlx-server.sh start
+   ```
+
+4. Verify both servers:
+   ```bash
+   curl http://localhost:8000/health
+   curl http://localhost:8001/health
+   ```
+
+5. Check status:
+   ```bash
+   ./scripts/mlx-server.sh status
+   ```
+
+Note: The daemon auto-starts MLX servers if they're not running (configured in `src/providers/mlx-health.ts`).
+
+### Step 4: Configure Casterly
 
 Edit `config/default.yaml`:
 
 ```yaml
 local:
   provider: ollama
-  model: qwen3.5:122b
+  model: qwen3.5:35b-a3b
   baseUrl: http://localhost:11434
-  timeoutMs: 300000  # 5 minutes for 122B models
+  timeoutMs: 300000  # 5 minutes
 ```
 
 Model routing is configured in `config/models.yaml`:
@@ -100,7 +144,7 @@ Model routing is configured in `config/models.yaml`:
 models:
   primary:
     provider: ollama
-    model: qwen3.5:122b
+    model: qwen3.5:35b-a3b
     temperature: 0.6
 
   fast:
@@ -108,13 +152,23 @@ models:
     model: qwen3.5:35b-a3b
     temperature: 0.3
 
+mlx:
+  base_url: http://localhost:8000
+  model: nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx
+  timeout_ms: 300000
+
+mlx_coder:
+  base_url: http://localhost:8001
+  model: nightmedia/Qwen3-Coder-Next-mxfp4-mlx
+  timeout_ms: 600000
+
 hardware:
   platform: mac-studio-m4-max
   memory_gb: 128
-  max_concurrent_models: 2
+  max_concurrent_models: 3
 ```
 
-### Step 4: Build and Install
+### Step 5: Build and Install
 
 ```bash
 npm run install:host
@@ -124,7 +178,7 @@ This:
 1. Compiles TypeScript to JavaScript
 2. Creates a symlink at `~/.local/bin/casterly`
 
-### Step 5: Verify Installation
+### Step 6: Verify Installation
 
 ```bash
 # Check installation
@@ -201,6 +255,25 @@ For production use, the `tyrion.sh` script manages the daemon as a background pr
 
 The `update` command is designed for remote development: push code via Claude Code, then text Tyrion "update" to pull, build, and restart.
 
+### MLX Server Management
+
+```bash
+# Start individual instances
+MLX_INSTANCE=reasoner ./scripts/mlx-server.sh start
+MLX_INSTANCE=coder ./scripts/mlx-server.sh start
+
+# Check status of all instances
+./scripts/mlx-server.sh status
+
+# Stop individual instances
+MLX_INSTANCE=reasoner ./scripts/mlx-server.sh stop
+MLX_INSTANCE=coder ./scripts/mlx-server.sh stop
+
+# View logs
+MLX_INSTANCE=reasoner ./scripts/mlx-server.sh logs
+MLX_INSTANCE=coder ./scripts/mlx-server.sh logs
+```
+
 ## Workspace Setup
 
 Create personalization files in `~/.casterly/workspace/`:
@@ -274,6 +347,10 @@ After installation:
 ├── logs/                   # Daemon and update logs
 │   ├── tyrion.log
 │   └── update.log
+├── mlx/                    # MLX server state
+│   ├── reasoner.pid        # Reasoner instance PID
+│   ├── coder.pid           # Coder instance PID
+│   └── logs/               # Per-instance server logs
 ├── workspace/              # Personalization files
 │   ├── IDENTITY.md
 │   ├── SOUL.md
@@ -312,27 +389,52 @@ source ~/.zshrc
    curl http://localhost:11434/api/tags
    ```
 
+### "MLX server not ready"
+
+1. Check if the MLX servers are running:
+   ```bash
+   ./scripts/mlx-server.sh status
+   ```
+
+2. Start them manually:
+   ```bash
+   MLX_INSTANCE=reasoner ./scripts/mlx-server.sh start
+   MLX_INSTANCE=coder ./scripts/mlx-server.sh start
+   ```
+
+3. Check health endpoints:
+   ```bash
+   curl http://localhost:8000/health
+   curl http://localhost:8001/health
+   ```
+
 ### "Model not found"
 
 Pull the required models:
 
 ```bash
-ollama pull qwen3.5:122b
+# FastLoop (Ollama)
 ollama pull qwen3.5:35b-a3b
+
+# DeepLoop (HuggingFace -> MLX)
+huggingface-cli download nightmedia/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx
+huggingface-cli download nightmedia/Qwen3-Coder-Next-mxfp4-mlx
 ```
 
 ### "Out of memory"
 
-With 128GB unified memory, the two-model architecture uses ~105 GB (81 GB + 24 GB), leaving ~23 GB headroom. If you encounter memory issues:
+With 128GB unified memory, the triple-model architecture uses ~84 GB (18 + 42 + 24 GB), leaving ~44 GB headroom. If you encounter memory issues:
 
 1. Check what models are loaded:
    ```bash
    ollama ps
+   ./scripts/mlx-server.sh status
    ```
 
 2. Unload unused models:
    ```bash
    ollama stop <model-name>
+   MLX_INSTANCE=<name> ./scripts/mlx-server.sh stop
    ```
 
 ### iMessage permissions (macOS)

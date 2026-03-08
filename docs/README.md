@@ -1,6 +1,6 @@
 # Casterly Documentation
 
-> Local-first, privacy-first AI steward — all inference on-device via Ollama.
+> Local-first, privacy-first AI steward — all inference on-device via Ollama and vllm-mlx.
 
 ## Start Here
 
@@ -8,15 +8,15 @@
 |-----|-------------------|
 | [Vision](vision.md) | Mission: local-first autonomy, capability amplification, privacy-by-architecture |
 | [Rulebook](rulebook.md) | Non-negotiable invariants (mandatory reading before changes) |
-| [Install Guide](install.md) | Prerequisites, Ollama setup, Mac Studio M4 Max config |
+| [Install Guide](install.md) | Prerequisites, Ollama + MLX setup, Mac Studio M4 Max config |
 
 ## Architecture
 
 | Doc | Scope |
 |-----|-------|
-| [Architecture](architecture.md) | System overview: dual-loop, event flow, module map |
-| [Dual-Loop System](dual-loop.md) | FastLoop + DeepLoop + TaskBoard — how the two models work together |
-| [Providers & Routing](providers-and-routing.md) | Ollama provider, two-model registry, concurrent inference |
+| [Architecture](architecture.md) | System overview: triple-model architecture, event flow, module map |
+| [Dual-Loop System](dual-loop.md) | FastLoop + DeepLoop (27B reasoner + 80B coder) + TaskBoard |
+| [Providers & Routing](providers-and-routing.md) | Ollama + MLX providers, three-model registry, concurrent inference |
 
 ## Subsystems
 

@@ -2,21 +2,22 @@
 
 > **Source**: `src/dual-loop/`
 
-Two independent LLM loops run concurrently and coordinate through a shared TaskBoard. The FastLoop (35B-A3B) handles user-facing interaction; the DeepLoop (122B) handles reasoning, planning, and code generation.
+Two independent LLM loops run concurrently and coordinate through a shared TaskBoard. The FastLoop (35B-A3B) handles user-facing interaction; the DeepLoop uses a 27B dense reasoner for planning/review and an 80B-A3B MoE coder for tool-calling code generation.
 
 ## Why Two Loops
 
 | Problem with single-loop | Dual-loop solution |
 |--------------------------|-------------------|
-| User waits 30-60s for acknowledgment while 122B reasons | FastLoop acknowledges in <2s |
-| 35B-A3B sits idle while 122B works | Both models active concurrently |
+| User waits 30-60s for acknowledgment while reasoning model thinks | FastLoop acknowledges in <2s |
+| FastLoop model sits idle while reasoner works | Both models active concurrently |
 | Scheduled work blocks user interaction | FastLoop always responsive |
 
 ## Components
 
 ### FastLoop (User-Facing)
 
-**Model**: `qwen3.5:35b-a3b` (MoE — 35B total, 3B active per token)
+**Model**: `qwen3.5:35b-a3b` (MoE -- 35B total, 3B active per token)
+**Server**: Ollama (localhost:11434)
 **Source**: `src/dual-loop/fast-loop.ts`
 **Cadence**: ~2-second heartbeat
 
@@ -33,19 +34,38 @@ Heartbeat priority order:
 3. Progress updates for active tasks
 4. Sleep until next heartbeat
 
-### DeepLoop (Reasoning Engine)
+### DeepLoop (Reasoning + Coding Engine)
 
-**Model**: `qwen3.5:122b`
-**Source**: `src/dual-loop/deep-loop.ts`
-**Cadence**: Natural pace (10-60s per turn)
+The DeepLoop uses two specialized models with distinct roles:
+
+#### Reasoner (27B Dense)
+
+**Model**: `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled` (dense -- all 27B params active per token)
+**Server**: vllm-mlx (localhost:8000)
+**Thinking**: ON (generates `<think>` blocks via `--reasoning-parser qwen3`)
+**KV Cache**: K8V4 (asymmetric quantization, lossless at 128K context)
 
 Responsibilities:
-- **Claim** queued tasks from the TaskBoard
 - **Plan** complex tasks into steps with scoped context
-- **Execute** via the 96-tool agent toolkit (ReAct pattern)
-- **Generate code** directly (SWE-bench 72.0 — no separate coder model)
-- **Handle revisions** when review requests changes
+- **Review** completed work and request revisions
+- **Summarize** results into user-facing responses
 - **Autonomous work** during idle: events from EventBus, goals from GoalStack
+
+#### Coder (80B-A3B MoE)
+
+**Model**: `Qwen3-Coder-Next` (Hybrid MoE+DeltaNet -- 80B total, 3B active per token, MXFP4)
+**Server**: vllm-mlx (localhost:8001)
+**Thinking**: OFF (non-thinking instruct model)
+**KV Cache**: FP16 (only 12 KV layers, quantization saves negligible memory)
+**Context**: 256K native
+
+Responsibilities:
+- **Execute** via the 96-tool agent toolkit (ReAct pattern)
+- **Generate code** with tool-calling (SWE-bench capable)
+- **Handle revisions** when review requests changes
+
+**Source**: `src/dual-loop/deep-loop.ts`
+**Cadence**: Natural pace (10-60s per turn)
 
 Work priority order:
 1. Queued user tasks (highest)
@@ -53,27 +73,55 @@ Work priority order:
 3. System events (file changes, test failures)
 4. Goal stack work
 
+### Model Routing within DeepLoop
+
+The reasoner and coder are routed automatically within DeepLoop:
+
+```
+Task claimed by DeepLoop
+    |
+    v
+Reasoner (27B) generates plan
+    |
+    v
+For each step:
+    |-- Planning/review step --> Reasoner (27B)
+    |-- Code/tool step -------> Coder (80B-A3B) via providerOverride
+    |
+    v
+Reasoner (27B) reviews output
+    |
+    v
+Reasoner (27B) generates summary
+```
+
+The routing is controlled by `dispatchToCoder()` in `deep-loop.ts`, which passes the `coderProvider` as a `providerOverride` to `executeWithTools()`.
+
 ### TaskBoard (Shared State)
 
 **Source**: `src/dual-loop/task-board.ts`
 **Storage**: `~/.casterly/taskboard.json`
 
-The TaskBoard is the **sole communication channel** between loops. Both loops read and write tasks through synchronous in-memory operations — no locks needed because JS is single-threaded.
+The TaskBoard is the **sole communication channel** between loops. Both loops read and write tasks through synchronous in-memory operations -- no locks needed because JS is single-threaded.
 
 #### Task Lifecycle
 
 ```
 User message arrives
-    ↓
+    |
+    v
 FastLoop triages
-    ↓
-┌──────────────────────────────────────────────────┐
-│  simple/conversational → answered_directly       │
-│  complex → queued (for DeepLoop)                 │
-└──────────────────────────────────────────────────┘
-    ↓ (complex path)
-DeepLoop claims → planning → implementing → done
-    ↓
+    |
+    v
++--------------------------------------------------+
+|  simple/conversational -> answered_directly       |
+|  complex -> queued (for DeepLoop)                 |
++--------------------------------------------------+
+    | (complex path)
+    v
+DeepLoop claims -> planning (27B) -> implementing (80B) -> reviewing (27B) -> done
+    |
+    v
 FastLoop delivers response via voice filter
 ```
 
@@ -82,9 +130,9 @@ FastLoop delivers response via voice filter
 | Status | Owner | Description |
 |--------|-------|-------------|
 | `queued` | null | Waiting for DeepLoop to claim |
-| `planning` | deep | DeepLoop generating plan |
-| `implementing` | deep | DeepLoop executing steps |
-| `reviewing` | deep | DeepLoop self-reviewing |
+| `planning` | deep | Reasoner generating plan |
+| `implementing` | deep | Coder executing steps |
+| `reviewing` | deep | Reasoner self-reviewing |
 | `revision` | null | Review requested changes; DeepLoop will re-claim |
 | `done` | null | Complete; FastLoop delivers response |
 | `failed` | null | Abandoned or max retries exceeded |
@@ -93,7 +141,7 @@ FastLoop delivers response via voice filter
 #### Ownership Protocol
 
 ```typescript
-// Atomic claim (JS single-threaded — no locks needed)
+// Atomic claim (JS single-threaded -- no locks needed)
 claimNext(owner: 'fast' | 'deep', statuses: TaskStatus[]): Task | null
 ```
 
@@ -109,6 +157,7 @@ The Coordinator starts both loops, monitors health, and handles graceful degrada
 - Saves TaskBoard state every 30 seconds
 - Archives completed tasks older than 7 days
 - Provides health dashboard (running state, error counts, task stats)
+- Accepts optional `coderProvider` to forward to DeepLoop for model specialization
 
 ### DualLoopController
 
@@ -116,10 +165,11 @@ The Coordinator starts both loops, monitors health, and handles graceful degrada
 
 Adapts the Coordinator to the daemon's `AutonomousController` interface:
 
-- `start()` → launches the coordinator as a long-running background task
-- `tick()` → no-op (coordinator runs continuously)
-- `runTriggeredCycle(trigger)` → routes user messages to FastLoop, returns immediately
+- `start()` -> launches the coordinator as a long-running background task
+- `tick()` -> no-op (coordinator runs continuously)
+- `runTriggeredCycle(trigger)` -> routes user messages to FastLoop, returns immediately
 - Status commands (`status`, `health`, `activity`) read from Coordinator health
+- Accepts `coderProvider` in options and forwards to coordinator
 
 ## Context Management
 
@@ -141,7 +191,15 @@ Per-task tier selection (set once, never changed mid-ReAct):
 |-----------------|------|---------|
 | Single step | standard | 24,576 |
 | 2-3 steps | standard | 24,576 |
-| 4+ steps or resumed | extended | 262,144 |
+| 4+ steps or resumed | extended | 131,072 |
+
+### Coder Context Tiers
+
+| Task complexity | Tier | num_ctx |
+|-----------------|------|---------|
+| Standard | base | 8,192 |
+| Extended | extended | 65,536 |
+| Maximum | max | 262,144 |
 
 ### Context Pressure
 
@@ -162,13 +220,17 @@ DeepLoop checks for higher-priority tasks every 5 turns. If a user submits an ur
 ```
 t=0.0s  User sends: "Refactor auth to JWT"
 t=0.5s  FastLoop triages as 'complex'
-t=1.0s  FastLoop creates task, acknowledges: "On it — planning now"
+t=1.0s  FastLoop creates task, acknowledges: "On it -- planning now"
 t=2.0s  DeepLoop claims task, reads triage notes
-t=30s   DeepLoop finishes plan (5 steps), starts implementing
-t=35s   User asks: "How's it going?"
-t=35.5s FastLoop reads TaskBoard: "3/5 steps done. Working on token validation."
-t=120s  DeepLoop finishes, writes userFacing response
-t=121s  FastLoop delivers response via voice filter
+t=5.0s  Reasoner (27B) generates 5-step plan
+t=6.0s  Coder (80B) starts executing step 1 with tools
+t=60s   Coder finishes step 3/5, working on token validation
+t=60.5s User asks: "How's it going?"
+t=61.0s FastLoop reads TaskBoard: "3/5 steps done. Working on token validation."
+t=120s  Coder finishes all steps
+t=125s  Reasoner reviews output, approves
+t=130s  Reasoner writes userFacing summary
+t=131s  FastLoop delivers response via voice filter
 ```
 
 ## Key Files
@@ -177,12 +239,12 @@ t=121s  FastLoop delivers response via voice filter
 |------|---------|
 | `src/dual-loop/coordinator.ts` | Lifecycle, health monitoring, message routing |
 | `src/dual-loop/fast-loop.ts` | 35B-A3B event loop: triage, delivery, progress |
-| `src/dual-loop/deep-loop.ts` | 122B work loop: planning, tool-calling, code gen |
+| `src/dual-loop/deep-loop.ts` | Planning (27B), tool-calling (80B), code gen, review |
 | `src/dual-loop/task-board.ts` | In-memory shared state with JSON persistence |
 | `src/dual-loop/task-board-types.ts` | Task, PlanStep, TaskArtifact type definitions |
 | `src/dual-loop/context-tiers.ts` | Tier selection and context budgeting |
 | `src/dual-loop/triage-prompt.ts` | Triage system prompt and response parsing |
 | `src/dual-loop/review-prompt.ts` | Code review prompt and response parsing |
 | `src/dual-loop/dual-loop-controller.ts` | Daemon integration adapter |
-| `src/dual-loop/deep-loop-events.ts` | Event/goal → task conversion for idle work |
+| `src/dual-loop/deep-loop-events.ts` | Event/goal -> task conversion for idle work |
 | `src/dual-loop/project-store.ts` | PROJECT.md management for generated projects |

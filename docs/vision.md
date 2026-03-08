@@ -58,20 +58,21 @@ The Mac Studio M4 Max with 128GB unified memory is not a deployment target. It i
 
 ### What 128GB Enables
 
-- **qwen3.5:122b + qwen3.5:35b-a3b concurrently** — the 122B reasoning model and the 35B-A3B triage model coexisting in memory (~105 GB total, ~23 GB headroom). No cold starts, no swapping, no choosing between them.
-- **MoE efficiency** — 35B total parameters with only 3B active per token means the triage model delivers blazing inference speed while leaving ample memory for the 122B executive.
+- **Three specialized models concurrently** — a 27B dense reasoner, an 80B-A3B MoE coder, and a 35B-A3B MoE triage model all coexisting in memory (~84 GB total, ~44 GB headroom). No cold starts, no swapping, no choosing between them.
+- **MoE efficiency** — both the coder (80B, 3B active) and triage (35B, 3B active) are MoE architectures, delivering blazing inference speed while leaving ample memory for the dense reasoner.
 - **Large context windows** — 128K token windows paired with LLM-controlled context management. Quality over quantity: the right 32K tokens outperforms 128K tokens of noise.
 - **On-device embeddings** for semantic memory without competing for inference memory.
 - **Full macOS integration** — iMessage, Calendar, Reminders, Notes, Finder, System Events — all accessible locally via AppleScript and native APIs.
 
-### The Dual-Loop Architecture
+### The Triple-Model Architecture
 
 | Role | Model | Memory | Purpose |
 |------|-------|--------|---------|
-| DeepLoop (executive) | qwen3.5:122b | ~81 GB | Reasoning, planning, code generation, verification |
+| DeepLoop (reasoner) | Qwen3.5-27B Dense | ~18 GB | Planning, review, self-correction (thinking ON) |
+| DeepLoop (coder) | Qwen3-Coder-80B-A3B MoE | ~42 GB | Tool-calling code generation (thinking OFF) |
 | FastLoop (triage) | qwen3.5:35b-a3b | ~24 GB | Triage, review, acknowledgment, lightweight tasks |
 
-The two-model setup is a mixture of experts where the **gating function is the LLM itself**. The executive decides at runtime which model handles each task, based on characteristics, self-assessed strengths, and past delegation outcomes. The FastLoop handles latency-sensitive work, freeing the DeepLoop for substantive reasoning.
+The triple-model setup splits the DeepLoop into two specialists: a dense reasoner for planning/review and a hybrid MoE+DeltaNet coder for tool execution. The FastLoop handles latency-sensitive work, freeing the DeepLoop for substantive reasoning and code generation.
 
 ## Architecture: The Thin Runtime
 
@@ -199,7 +200,7 @@ During dream cycles, the advanced self-improvement mechanisms also run: adversar
 
 ## The Guiding Principle
 
-The 122B model makes worse decisions than a frontier model at each step. But with free tokens, it gets to make more of them, correct its mistakes, and learn from its history. The self-knowledge system captures which strategies work, and the model's effective capability rises above its raw parameter count.
+A local model makes worse decisions than a frontier model at each step. But with free tokens, it gets to make more of them, correct its mistakes, and learn from its history. The self-knowledge system captures which strategies work, and the models' effective capability rises above their raw parameter count.
 
 That's the unique advantage of local-first capability amplification: you can afford to let the model be wrong, try again, and get better — and through clever system design, ensure that every retry makes the next attempt more likely to succeed.
 
