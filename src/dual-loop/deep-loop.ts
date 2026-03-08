@@ -1501,13 +1501,26 @@ export class DeepLoop {
           promptChars: reviewPrompt.length,
         });
 
-      const response = await this.callWithTier(tier, {
-        prompt: reviewPrompt,
-        systemPrompt,
-        temperature: 0.1,
-        maxTokens: 1024,
-        providerOptions: { format: REVIEW_FORMAT_SCHEMA, think: false },
-      });
+      let response: string;
+      try {
+        response = await this.callWithTier(tier, {
+          prompt: reviewPrompt,
+          systemPrompt,
+          temperature: 0.1,
+          maxTokens: 1024,
+          providerOptions: { format: REVIEW_FORMAT_SCHEMA, think: false },
+        });
+      } catch (error) {
+        // Don't fail the entire task for review infrastructure errors.
+        // Matches the pattern used in integrationReview.
+        tracer.log('deep-loop', 'warn',
+          `Self-review pass ${currentPass + 1} failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          approved: true,
+          reviewResult: 'approved',
+          reviewNotes: `Auto-approved: review infrastructure error (${error instanceof Error ? error.message : String(error)})`,
+        };
+      }
 
       const outcome = parseReviewResponse(response);
 
@@ -1977,8 +1990,10 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
     // as the same call — prevents loops where the model re-reads the
     // same file with slightly different params.
     const TOOL_CALL_LOOP_THRESHOLD = 5;
+    const CONSECUTIVE_LOOP_BREAK_LIMIT = 3; // Hard break after this many consecutive loop detections
     const FILE_ACCESS_TOOLS = new Set(['read_file', 'read_files', 'grep', 'glob']);
     const toolCallCounts = new Map<string, number>();
+    let consecutiveLoopDetections = 0;
 
     function getToolSignature(name: string, input: Record<string, unknown>): string {
       if (FILE_ACCESS_TOOLS.has(name)) {
@@ -2063,10 +2078,22 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
       }
 
       if (loopDetected) {
+        consecutiveLoopDetections++;
         tracer.log('deep-loop', 'warn',
           `Tool call loop detected at turn ${turn + 1} — same call repeated ${TOOL_CALL_LOOP_THRESHOLD}+ times. Breaking loop.`,
         );
-        // Record the turn but inject a loop-break nudge instead of continuing
+
+        // Hard break: after N consecutive loop detections, stop the tool loop entirely.
+        // The model is stuck and won't recover from nudges alone.
+        if (consecutiveLoopDetections >= CONSECUTIVE_LOOP_BREAK_LIMIT) {
+          tracer.log('deep-loop', 'warn',
+            `${consecutiveLoopDetections} consecutive loop detections — hard-breaking tool loop at turn ${turn + 1}.`,
+          );
+          break;
+        }
+
+        // Record the turn and inject a loop-break nudge with matching callIds
+        // so the model sees proper tool results for its actual requests.
         conversationHistory.push({
           text: response.text,
           toolCalls: response.toolCalls.map((tc) => ({
@@ -2075,13 +2102,17 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
             arguments: JSON.stringify(tc.input),
           })),
         });
-        allToolResults.push({
-          callId: `loop-break-${turn}`,
-          result: '[SYSTEM] Loop detected: you have repeated the same tool call 5+ times. Stop calling this tool and try a different approach, or provide your final answer.',
-          isError: true,
-        });
+        for (const tc of response.toolCalls) {
+          allToolResults.push({
+            callId: tc.id,
+            result: '[SYSTEM] Loop detected: you have repeated the same tool call 5+ times. Stop calling this tool and try a different approach, or provide your final answer.',
+            isError: true,
+          });
+        }
         continue;
       }
+      // Reset consecutive counter when a turn proceeds without loop detection
+      consecutiveLoopDetections = 0;
 
       // Record this assistant turn in conversation history
       conversationHistory.push({

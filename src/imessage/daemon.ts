@@ -588,9 +588,12 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         { projectRoot, allowedDirectories: [projectRoot] },
         agentState,
       );
-      // coding_complex categories + communication (for message_user / clarification)
+      // coding_complex categories + communication (for message_user / clarification).
+      // Excludes 'introspection' — budget/context/queue tools are for the autonomous
+      // loop, not the coder. They provide zero-arg safe harbors that smaller models
+      // fall into when confused, causing pathological tool loops.
       const toolkit = buildFilteredToolkit(fullToolkit, [
-        'core', 'quality', 'git', 'state', 'reasoning', 'memory', 'introspection', 'communication',
+        'core', 'quality', 'git', 'state', 'reasoning', 'memory', 'communication',
       ]);
 
       autonomousController = createDualLoopController({

@@ -60,7 +60,7 @@ Responsibilities:
 **Context**: 256K native
 
 Responsibilities:
-- **Execute** via the 96-tool agent toolkit (ReAct pattern)
+- **Execute** via the agent toolkit (ReAct pattern) — core, quality, git, state, reasoning, memory, communication tools (no introspection tools — these cause pathological loops in smaller models)
 - **Generate code** with tool-calling (SWE-bench capable)
 - **Handle revisions** when review requests changes
 
@@ -86,16 +86,45 @@ Reasoner (27B) generates plan
     v
 For each step:
     |-- Planning/review step --> Reasoner (27B)
-    |-- Code/tool step -------> Coder (80B-A3B) via providerOverride
+    |-- Code/tool step -------> Coder (80B-A3B) via 3-pass pipeline
+    |       Pass 1 (implement): Build features (50% of turn budget)
+    |       Pass 2 (verify):    Re-read files, trace logic, fix bugs (30%)
+    |       Pass 3 (enhance):   Add polish, depth, improvements (20%)
     |
     v
-Reasoner (27B) reviews output
+Reasoner (27B) reviews output (self-review)
     |
     v
 Reasoner (27B) generates summary
 ```
 
 The routing is controlled by `dispatchToCoder()` in `deep-loop.ts`, which passes the `coderProvider` as a `providerOverride` to `executeWithTools()`.
+
+#### Three-Pass Coder Pipeline
+
+Each coding step runs through three passes with different system prompts and turn budgets. Configured via `coder_passes` and `coder_pass_budget_ratios` in `autonomous.yaml`.
+
+| Pass | Focus | Budget | Temperature |
+|------|-------|--------|-------------|
+| Implement | Build features, create files | 50% | 0.3 |
+| Verify | State variable audit, scenario tracing, guard pattern check | 30% | 0.3 |
+| Enhance | Visual polish, progression, UX improvements | 20% | 0.5 |
+
+The verify pass uses a structured checklist: read all files, audit every state variable for write/read pairing, verify cross-file contracts, trace happy/failure/boundary scenarios, check guard patterns at damage sites, and verify numerical/timing correctness.
+
+`stepFileOps` accumulates across passes (not reset between them). The workspace manifest is updated after each pass so subsequent passes see files from prior passes.
+
+#### Tool Loop Protection
+
+The `executeWithTools` loop tracks tool call signatures and detects when the model repeats the same call 5+ times. When detected:
+
+1. A nudge with matching `callId` is injected telling the model to try a different approach
+2. If 3 consecutive turns trigger loop detection, the loop is **hard-broken** (not just nudged)
+3. `maxTurns` cap provides the ultimate backstop
+
+#### Self-Review Error Handling
+
+Both integration review and self-review auto-approve on provider failure. A transient MLX/Ollama error should never fail a task whose implementation is complete — review is a quality gate, not a correctness gate.
 
 ### TaskBoard (Shared State)
 
