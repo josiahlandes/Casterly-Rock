@@ -12,6 +12,11 @@
  *   - Only runs when DeepLoop has no active tasks (idle)
  *   - Individual phase failures don't abort the cycle
  *
+ * Nanochat-inspired enhancements:
+ *   - Intensity Dial: single parameter (1-10) derives all dream settings
+ *   - Phase Progress: phases report progress 0→1 with interruption recovery
+ *   - Autoresearch: propose→implement→measure→keep/revert experiments
+ *
  * The scheduler also tracks state to disk so it survives daemon restarts.
  *
  * Privacy: All dream cycle operations are local. No data leaves the machine.
@@ -28,6 +33,12 @@ import type { IssueLog } from '../autonomous/issue-log.js';
 import { Reflector } from '../autonomous/reflector.js';
 import { runTests } from '../ci-loop/test-runner.js';
 import { getFailingTests } from '../ci-loop/regression-guard.js';
+import { deriveFromIntensity, formatIntensitySummary } from '../autonomous/dream/intensity-dial.js';
+import type { IntensityDerivedSettings } from '../autonomous/dream/intensity-dial.js';
+import { PhaseProgressManager } from '../autonomous/dream/phase-progress.js';
+import type { PhaseExecutionSummary } from '../autonomous/dream/phase-progress.js';
+import { AutoresearchEngine } from '../autonomous/dream/autoresearch.js';
+import type { AutoresearchCycleResult, Hypothesis } from '../autonomous/dream/autoresearch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -55,6 +66,19 @@ export interface DreamSchedulerConfig {
 
   /** Working directory for test execution */
   workingDir: string;
+
+  /**
+   * Intensity dial (1-10). When set, overrides intervalHours,
+   * minIdleBeforeDreamSeconds, and dream cycle budgets with
+   * auto-derived values. Set to 0 or undefined to use explicit settings.
+   */
+  intensity?: number;
+
+  /** Whether autoresearch experiments are enabled during dream cycles */
+  autoresearchEnabled?: boolean;
+
+  /** Whether progress-based phase tracking is enabled */
+  phaseProgressEnabled?: boolean;
 }
 
 /** Persistent state for the dream scheduler */
@@ -70,6 +94,15 @@ interface DreamSchedulerState {
 
   /** Last dream outcome summary */
   lastOutcomeSummary: string;
+
+  /** Total autoresearch experiments run */
+  totalAutoresearchExperiments: number;
+
+  /** Total autoresearch experiments accepted */
+  totalAutoresearchAccepted: number;
+
+  /** Last phase progress summary */
+  lastPhaseProgressSummary: string;
 }
 
 /** Dependencies the scheduler needs from the dual-loop system */
@@ -111,12 +144,18 @@ export class DreamScheduler {
   private readonly runner: DreamCycleRunner;
   private readonly reflector: Reflector;
   private readonly deps: DreamSchedulerDeps;
+  private readonly intensitySettings: IntensityDerivedSettings | null;
+  private readonly phaseManager: PhaseProgressManager | null;
+  private readonly autoresearch: AutoresearchEngine | null;
 
   private state: DreamSchedulerState = {
     lastDreamDate: '',
     lastDreamTimestamp: '',
     totalDreamCycles: 0,
     lastOutcomeSummary: '',
+    totalAutoresearchExperiments: 0,
+    totalAutoresearchAccepted: 0,
+    lastPhaseProgressSummary: '',
   };
 
   private checkTimer: ReturnType<typeof setInterval> | null = null;
@@ -128,10 +167,45 @@ export class DreamScheduler {
     deps: DreamSchedulerDeps,
     config?: Partial<DreamSchedulerConfig>,
   ) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    const baseConfig = { ...DEFAULT_CONFIG, ...config };
+
+    // Apply intensity dial if set
+    if (baseConfig.intensity && baseConfig.intensity >= 1) {
+      this.intensitySettings = deriveFromIntensity(baseConfig.intensity);
+      // Override scheduler settings from intensity dial
+      baseConfig.intervalHours = this.intensitySettings.scheduler.intervalHours ?? baseConfig.intervalHours;
+      baseConfig.minIdleBeforeDreamSeconds = this.intensitySettings.scheduler.minIdleBeforeDreamSeconds ?? baseConfig.minIdleBeforeDreamSeconds;
+      // Merge dream config from intensity
+      baseConfig.dreamConfig = {
+        ...baseConfig.dreamConfig,
+        ...this.intensitySettings.dream,
+      };
+    } else {
+      this.intensitySettings = null;
+    }
+
+    this.config = baseConfig;
     this.deps = deps;
     this.reflector = new Reflector();
     this.runner = new DreamCycleRunner(this.config.dreamConfig);
+
+    // Initialize phase progress manager
+    this.phaseManager = baseConfig.phaseProgressEnabled !== false
+      ? new PhaseProgressManager({
+          defaultPhaseBudgetMs: this.intensitySettings
+            ? this.intensitySettings.phaseBudgetSeconds * 1000
+            : 300_000,
+        })
+      : null;
+
+    // Initialize autoresearch engine
+    this.autoresearch = baseConfig.autoresearchEnabled !== false
+      ? new AutoresearchEngine({
+          ...(this.intensitySettings?.autoresearch ?? {}),
+          testCommand: baseConfig.testCommand,
+          workingDir: baseConfig.workingDir,
+        })
+      : null;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -150,10 +224,23 @@ export class DreamScheduler {
     await this.loadState();
     await this.reflector.initialize();
 
+    // Load phase progress state
+    if (this.phaseManager) {
+      await this.phaseManager.load();
+    }
+
+    // Load autoresearch log
+    if (this.autoresearch) {
+      await this.autoresearch.loadLog();
+    }
+
     tracer.log('dream', 'info', 'Dream scheduler started', {
       intervalHours: this.config.intervalHours,
       lastDreamDate: this.state.lastDreamDate || 'never',
       totalDreamCycles: this.state.totalDreamCycles,
+      intensity: this.intensitySettings?.intensity ?? 'manual',
+      phaseProgress: !!this.phaseManager,
+      autoresearch: !!this.autoresearch,
     });
 
     // Start periodic check
@@ -243,19 +330,61 @@ export class DreamScheduler {
   getSummary(): string {
     const lines: string[] = [];
     lines.push(`Dream scheduler: ${this.config.enabled ? 'enabled' : 'disabled'}`);
+    if (this.intensitySettings) {
+      lines.push(`Intensity: ${this.intensitySettings.intensity}/10`);
+    }
     lines.push(`Last dream: ${this.state.lastDreamDate || 'never'}`);
     lines.push(`Total cycles: ${this.state.totalDreamCycles}`);
+    if (this.state.totalAutoresearchExperiments > 0) {
+      lines.push(`Autoresearch: ${this.state.totalAutoresearchAccepted}/${this.state.totalAutoresearchExperiments} accepted`);
+    }
     if (this.dreaming) lines.push('Currently dreaming...');
     if (this.state.lastOutcomeSummary) {
       lines.push(`Last outcome: ${this.state.lastOutcomeSummary}`);
     }
+    if (this.phaseManager) {
+      const phaseProgress = this.phaseManager.getOverallProgress();
+      if (phaseProgress > 0 && phaseProgress < 1) {
+        lines.push(`Phase progress: ${(phaseProgress * 100).toFixed(0)}%`);
+      }
+    }
     return lines.join('\n');
+  }
+
+  /**
+   * Get the intensity dial settings (null if not using intensity dial).
+   */
+  getIntensitySettings(): Readonly<IntensityDerivedSettings> | null {
+    return this.intensitySettings;
+  }
+
+  /**
+   * Get the phase progress manager (null if disabled).
+   */
+  getPhaseManager(): PhaseProgressManager | null {
+    return this.phaseManager;
+  }
+
+  /**
+   * Get the autoresearch engine (null if disabled).
+   */
+  getAutoresearch(): AutoresearchEngine | null {
+    return this.autoresearch;
+  }
+
+  /**
+   * Signal preemption — stops the current dream cycle gracefully.
+   */
+  preempt(): void {
+    if (this.phaseManager) {
+      this.phaseManager.preempt();
+    }
   }
 
   // ── Internal ────────────────────────────────────────────────────────────
 
   /**
-   * Execute a dream cycle, followed by a CI health check.
+   * Execute a dream cycle, followed by CI health check and autoresearch.
    */
   private async runDreamCycle(): Promise<DreamOutcome> {
     const tracer = getTracer();
@@ -275,11 +404,18 @@ export class DreamScheduler {
       // Run CI health check: execute tests and file issues for failures
       await this.runCiHealthCheck();
 
+      // Run autoresearch experiments (propose→implement→measure→keep/revert)
+      const autoresearchResult = await this.runAutoresearch();
+      if (autoresearchResult) {
+        this.state.totalAutoresearchExperiments += autoresearchResult.experiments.length;
+        this.state.totalAutoresearchAccepted += autoresearchResult.acceptedCount;
+      }
+
       const now = new Date();
       this.state.lastDreamDate = now.toISOString().split('T')[0] ?? '';
       this.state.lastDreamTimestamp = now.toISOString();
       this.state.totalDreamCycles++;
-      this.state.lastOutcomeSummary = formatOutcomeSummary(outcome);
+      this.state.lastOutcomeSummary = formatOutcomeSummary(outcome, autoresearchResult);
 
       await this.saveState();
 
@@ -288,6 +424,8 @@ export class DreamScheduler {
         phasesSkipped: outcome.phasesSkipped,
         fragileFiles: outcome.fragileFilesFound,
         goalsReorganized: outcome.goalsReorganized,
+        autoresearchExperiments: autoresearchResult?.experiments.length ?? 0,
+        autoresearchAccepted: autoresearchResult?.acceptedCount ?? 0,
         duration: `${(outcome.durationMs / 1000).toFixed(1)}s`,
       });
 
@@ -299,6 +437,79 @@ export class DreamScheduler {
       this.dreaming = false;
       this.idleSince = null;
     }
+  }
+
+  /**
+   * Run autoresearch experiments during idle dream time.
+   *
+   * Generates hypotheses from known issues and failing tests,
+   * then runs the propose→implement→measure→keep/revert loop.
+   */
+  private async runAutoresearch(): Promise<AutoresearchCycleResult | null> {
+    if (!this.autoresearch) return null;
+    if (!this.config.testCommand) return null;
+
+    const tracer = getTracer();
+    tracer.log('dream', 'info', 'Running autoresearch experiments');
+
+    try {
+      // Generate hypotheses from known issues
+      const hypotheses = this.generateHypotheses();
+      if (hypotheses.length === 0) {
+        tracer.log('dream', 'info', 'No autoresearch hypotheses — codebase looks healthy');
+        return null;
+      }
+
+      // Create a test runner that uses the CI loop's test runner
+      const testRunner = async (command: string, cwd: string) => {
+        return runTests({ command, cwd, timeoutMs: this.autoresearch!.getConfig().testTimeoutMs });
+      };
+
+      // For now, autoresearch uses a no-op change applier since we need
+      // LLM providers for actual code modification. The pipeline is wired
+      // and ready for when the DeepLoop integrates LLM-driven changes.
+      const changeApplier = async (_hypothesis: Hypothesis) => {
+        return { success: false, modifiedFiles: [] as string[], error: 'LLM-driven changes not yet wired' };
+      };
+
+      return await this.autoresearch.runCycle(hypotheses, testRunner, changeApplier);
+    } catch (err) {
+      tracer.log('dream', 'warn', `Autoresearch failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Generate hypotheses from the issue log and test failures.
+   */
+  private generateHypotheses(): Hypothesis[] {
+    const hypotheses: Hypothesis[] = [];
+
+    // From issue log: test failures
+    const openIssues = this.deps.issueLog.getOpenIssues();
+    for (const issue of openIssues.slice(0, 5)) {
+      if (issue.tags?.includes('test-failure')) {
+        hypotheses.push({
+          id: `hyp-${issue.id}`,
+          title: `Fix: ${issue.title}`,
+          description: issue.description,
+          targetFiles: issue.relatedFiles ?? [],
+          expectedOutcome: 'Test passes after fix',
+          source: 'test-failure',
+        });
+      } else if (issue.tags?.includes('fragile')) {
+        hypotheses.push({
+          id: `hyp-${issue.id}`,
+          title: `Refactor: ${issue.title}`,
+          description: issue.description,
+          targetFiles: issue.relatedFiles ?? [],
+          expectedOutcome: 'Reduced fragility score',
+          source: 'fragile-code',
+        });
+      }
+    }
+
+    return hypotheses;
   }
 
   /**
@@ -395,6 +606,16 @@ export class DreamScheduler {
       if (data.lastDreamTimestamp) this.state.lastDreamTimestamp = data.lastDreamTimestamp;
       if (data.totalDreamCycles !== undefined) this.state.totalDreamCycles = data.totalDreamCycles;
       if (data.lastOutcomeSummary) this.state.lastOutcomeSummary = data.lastOutcomeSummary;
+      const dataAny = data as Record<string, unknown>;
+      if (typeof dataAny['totalAutoresearchExperiments'] === 'number') {
+        this.state.totalAutoresearchExperiments = dataAny['totalAutoresearchExperiments'];
+      }
+      if (typeof dataAny['totalAutoresearchAccepted'] === 'number') {
+        this.state.totalAutoresearchAccepted = dataAny['totalAutoresearchAccepted'];
+      }
+      if (typeof dataAny['lastPhaseProgressSummary'] === 'string') {
+        this.state.lastPhaseProgressSummary = dataAny['lastPhaseProgressSummary'];
+      }
     } catch {
       // No state file yet — that's fine, start fresh
     }
@@ -417,12 +638,18 @@ export class DreamScheduler {
 /**
  * Format a DreamOutcome into a short summary string.
  */
-function formatOutcomeSummary(outcome: DreamOutcome): string {
+function formatOutcomeSummary(
+  outcome: DreamOutcome,
+  autoresearchResult?: AutoresearchCycleResult | null,
+): string {
   const parts: string[] = [];
   parts.push(`${outcome.phasesCompleted.length} phases`);
   if (outcome.fragileFilesFound > 0) parts.push(`${outcome.fragileFilesFound} fragile files`);
   if (outcome.goalsReorganized > 0) parts.push(`${outcome.goalsReorganized} goals reorganized`);
   if (outcome.selfModelRebuilt) parts.push('self-model rebuilt');
+  if (autoresearchResult && autoresearchResult.experiments.length > 0) {
+    parts.push(`autoresearch: ${autoresearchResult.acceptedCount}/${autoresearchResult.experiments.length} accepted`);
+  }
   parts.push(`${(outcome.durationMs / 1000).toFixed(0)}s`);
   return parts.join(', ');
 }

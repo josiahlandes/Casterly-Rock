@@ -376,7 +376,31 @@ dream_cycles:
   # Dream cycles are low-priority goals the LLM pursues when no
   # higher-priority triggers are pending. No toggle. See docs/vision.md.
 
-  # Hours between consolidation runs
+  # ─────────────────────────────────────────────────────────────────────────────
+  # INTENSITY DIAL (nanochat-inspired single-parameter configuration)
+  # Set a value from 1-10 and all dream cycle settings are auto-derived.
+  # Set to 0 to use explicit settings below instead.
+  #   1 = "whisper" — barely there, cycles every ~72h
+  #   5 = "balanced" — daily cycles, moderate exploration (default)
+  #  10 = "obsessive" — cycles every ~4h, aggressive self-improvement
+  # ─────────────────────────────────────────────────────────────────────────────
+  intensity: 5
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PHASE PROGRESS (interruption recovery)
+  # When enabled, each dream phase reports progress 0→1 and saves checkpoints.
+  # If interrupted, the next cycle resumes from where it left off.
+  # ─────────────────────────────────────────────────────────────────────────────
+  phase_progress_enabled: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # AUTORESEARCH (propose→implement→measure→keep/revert)
+  # During idle dream time, runs experiments: propose hypothesis, apply change,
+  # measure with EvoScore, keep if no regressions, revert otherwise.
+  # ─────────────────────────────────────────────────────────────────────────────
+  autoresearch_enabled: true
+
+  # Hours between consolidation runs (overridden by intensity dial if set)
   consolidation_interval_hours: 24
 
   # Maximum turns for the exploration phase

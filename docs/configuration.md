@@ -108,6 +108,7 @@ Key settings:
 | `dual_loop` | FastLoop/DeepLoop model selection, context tiers, TaskBoard paths |
 | `events` | File watcher, git watcher, issue watcher settings |
 | `memory` | Vision tier toggles, dream cycle interval, store paths |
+| `dream_cycles` | Intensity dial, phase progress, autoresearch, consolidation |
 | `communication` | Message policy (throttle, quiet hours, event filtering) |
 | `invariants` | Post-change validation commands |
 
@@ -145,6 +146,32 @@ dual_loop:
 
 The `deep_loop.model` names (`qwen3.5-27b-reasoner`, `qwen3-coder-80b`) are logical names that map to ConcurrentProvider registrations in the daemon.
 
+### Dream Cycle Settings (nanochat-inspired)
+
+```yaml
+dream_cycles:
+  # Single-parameter control: set 1-10, all settings auto-derived
+  intensity: 5          # 1=whisper(72h), 5=balanced(24h), 10=obsessive(4h)
+
+  # Phase progress with interruption recovery
+  phase_progress_enabled: true
+
+  # Autoresearch: propose→implement→measure→keep/revert experiments
+  autoresearch_enabled: true
+```
+
+The **intensity dial** (inspired by nanochat's `--depth` parameter) derives all dream cycle settings from a single integer using power-law scaling:
+
+| Intensity | Interval | Idle Before | Exploration | Challenges | Autoresearch |
+|-----------|----------|-------------|-------------|------------|-------------|
+| 1         | ~72h     | ~30min      | 10 turns    | 5/cycle    | 1 exp/cycle |
+| 5         | ~24h     | ~5min       | 50 turns    | 20/cycle   | 3 exp/cycle |
+| 10        | ~4h      | ~1min       | 100+ turns  | 40/cycle   | 8 exp/cycle |
+
+**Phase progress** saves checkpoints so interrupted dream cycles resume where they left off. Each phase reports normalized progress (0→1) and can be time-budgeted.
+
+**Autoresearch** runs experiments during idle time: generates hypotheses from known issues, applies changes, measures with test suite, and auto-reverts on regression.
+
 ## Persistent State Paths
 
 All state lives under `~/.casterly/`:
@@ -160,6 +187,9 @@ All state lives under `~/.casterly/`:
 ├── traces/
 ├── system-prompt.md
 ├── taskboard.json
+├── dream-scheduler-state.json
+├── dream-phase-state.json
+├── autoresearch-log.json
 ├── autonomous/
 │   └── handoff.json
 ├── mlx/
