@@ -273,9 +273,15 @@ export class AutoresearchEngine {
       this.log.totalExperiments++;
       if (result.outcome === 'accepted') this.log.totalAccepted++;
 
-      // Prune old log entries
+      // Prune old log entries, keeping aggregates consistent
       if (this.log.experiments.length > this.config.maxLogEntries) {
+        const pruned = this.log.experiments.slice(this.config.maxLogEntries);
         this.log.experiments = this.log.experiments.slice(0, this.config.maxLogEntries);
+        // Decrement aggregates by what was pruned so they stay consistent
+        for (const entry of pruned) {
+          this.log.totalExperiments--;
+          if (entry.outcome === 'accepted') this.log.totalAccepted--;
+        }
       }
 
       this.log.lastUpdated = new Date().toISOString();
@@ -369,7 +375,7 @@ export class AutoresearchEngine {
       // Step 5: Compare
       result.netTestChange = postPassing - prePassing;
 
-      // Check for regressions: any test that was passing now failing
+      // Check for regressions: any test that was passing before is now failing
       const prePassingNames = new Set(
         result.preTestResult.tests
           .filter(t => t.status === 'passed')
@@ -381,15 +387,27 @@ export class AutoresearchEngine {
 
       result.hasRegressions = postFailingNames.some(name => prePassingNames.has(name));
 
-      // Decision: keep if no regressions and at least no worse
-      if (!result.hasRegressions && result.netTestChange >= 0 && postFailing <= (result.preTestResult.failed + result.preTestResult.errored)) {
+      // Also detect "new failures" — tests that didn't exist before and are now failing.
+      // This catches cases where netTestChange=0 but the test suite composition changed badly.
+      const preTestNames = new Set(result.preTestResult.tests.map(t => t.name));
+      const newFailures = postFailingNames.filter(name => !preTestNames.has(name));
+
+      // Decision: accept only if:
+      //   1. No regressions (previously passing tests still pass)
+      //   2. Net test count didn't decrease
+      //   3. No new test failures introduced
+      const shouldAccept = !result.hasRegressions
+        && result.netTestChange >= 0
+        && newFailures.length === 0;
+
+      if (shouldAccept) {
         result.outcome = 'accepted';
         this.dropSnapshot();
         tracer.log('dream', 'info', `Experiment accepted: +${result.netTestChange} tests`);
       } else {
         result.outcome = 'reverted';
         this.restoreSnapshot();
-        tracer.log('dream', 'info', `Experiment reverted: regression=${result.hasRegressions}, net=${result.netTestChange}`);
+        tracer.log('dream', 'info', `Experiment reverted: regression=${result.hasRegressions}, net=${result.netTestChange}, newFailures=${newFailures.length}`);
       }
     } catch (err) {
       result.error = err instanceof Error ? err.message : String(err);
@@ -407,60 +425,71 @@ export class AutoresearchEngine {
 
   // ── Git Snapshot Operations ────────────────────────────────────────────
 
+  /** Whether a valid snapshot currently exists. */
+  private snapshotActive = false;
+
   private createSnapshot(): void {
     if (!this.config.useGitStash) return;
+    const tracer = getTracer();
+
+    // Check for uncommitted staged changes that could cause conflicts
     try {
-      execSync('git stash push -m "autoresearch-snapshot" --include-untracked', {
+      const status = execSync('git status --porcelain', {
         cwd: this.config.workingDir,
         stdio: 'pipe',
-        timeout: 30_000,
-      });
-    } catch {
-      // If nothing to stash, that's fine — no-op
+        timeout: 10_000,
+      }).toString().trim();
+
+      // If there are existing changes, refuse to run — the tree must be clean
+      if (status.length > 0) {
+        throw new Error(
+          'Working tree is not clean. Autoresearch requires a clean git state to snapshot safely.',
+        );
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not clean')) throw err;
+      throw new Error(`Failed to check git status: ${err instanceof Error ? err.message : String(err)}`);
     }
+
+    // Nothing to stash (clean tree), but we record HEAD so we can hard-reset on restore
+    this.snapshotActive = true;
+    tracer.log('dream', 'info', 'Autoresearch snapshot: clean tree recorded');
   }
 
   private restoreSnapshot(): void {
     if (!this.config.useGitStash) return;
+    if (!this.snapshotActive) return;
+
+    const tracer = getTracer();
     try {
-      // Check if our stash exists
-      const stashList = execSync('git stash list', {
+      // Hard-reset to HEAD to discard any experiment changes.
+      // This is safe because createSnapshot() verified the tree was clean.
+      execSync('git checkout -- .', {
         cwd: this.config.workingDir,
         stdio: 'pipe',
-        timeout: 10_000,
-      }).toString();
-
-      if (stashList.includes('autoresearch-snapshot')) {
-        execSync('git stash pop', {
-          cwd: this.config.workingDir,
-          stdio: 'pipe',
-          timeout: 30_000,
-        });
-      }
-    } catch {
-      getTracer().log('dream', 'warn', 'Failed to restore git stash');
+        timeout: 30_000,
+      });
+      // Remove any untracked files the experiment may have created
+      execSync('git clean -fd', {
+        cwd: this.config.workingDir,
+        stdio: 'pipe',
+        timeout: 30_000,
+      });
+      this.snapshotActive = false;
+      tracer.log('dream', 'info', 'Autoresearch snapshot: restored (git checkout + clean)');
+    } catch (err) {
+      tracer.log('dream', 'error',
+        `Failed to restore snapshot: ${err instanceof Error ? err.message : String(err)}. ` +
+        'Working tree may be in a dirty state — manual intervention required.');
+      // Do NOT clear snapshotActive so callers know recovery failed
+      throw new Error('Snapshot restore failed — working tree may be corrupted');
     }
   }
 
   private dropSnapshot(): void {
     if (!this.config.useGitStash) return;
-    try {
-      const stashList = execSync('git stash list', {
-        cwd: this.config.workingDir,
-        stdio: 'pipe',
-        timeout: 10_000,
-      }).toString();
-
-      if (stashList.includes('autoresearch-snapshot')) {
-        execSync('git stash drop', {
-          cwd: this.config.workingDir,
-          stdio: 'pipe',
-          timeout: 10_000,
-        });
-      }
-    } catch {
-      // Not critical
-    }
+    // Experiment was accepted — the current tree state is the desired state.
+    this.snapshotActive = false;
   }
 
   // ── Validation ─────────────────────────────────────────────────────────
@@ -473,21 +502,23 @@ export class AutoresearchEngine {
     const invalid: string[] = [];
 
     for (const file of files) {
+      // Normalize: strip leading ./
+      const normalized = file.startsWith('./') ? file.slice(2) : file;
+
       // Check allowed directories
-      const inAllowed = this.config.allowedDirectories.some(
-        dir => file.startsWith(dir) || file.startsWith(`./${dir}`),
-      );
+      const inAllowed = this.config.allowedDirectories.some(dir => {
+        const normalizedDir = dir.startsWith('./') ? dir.slice(2) : dir;
+        return normalized.startsWith(normalizedDir);
+      });
       if (!inAllowed) {
         invalid.push(file);
         continue;
       }
 
-      // Check forbidden patterns (simple prefix/suffix matching)
-      const isForbidden = this.config.forbiddenPatterns.some(pattern => {
-        // Strip glob wildcards for simple matching
-        const clean = pattern.replace(/\*\*/g, '').replace(/\*/g, '');
-        return file.includes(clean);
-      });
+      // Check forbidden patterns using path-anchored matching
+      const isForbidden = this.config.forbiddenPatterns.some(pattern =>
+        matchForbiddenPattern(normalized, pattern),
+      );
       if (isForbidden) {
         invalid.push(file);
       }
@@ -549,4 +580,46 @@ export interface ChangeResult {
   modifiedFiles: string[];
   /** Error description if not successful */
   error?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Match a file path against a forbidden pattern.
+ * Supports simple glob patterns anchored to path boundaries:
+ *   - `dir/*`       → matches files directly inside `dir/`
+ *   - `**​/name*`    → matches any path segment containing `name`
+ *   - `dir/**`      → matches anything under `dir/`
+ *   - Literal paths → exact prefix match
+ */
+function matchForbiddenPattern(filePath: string, pattern: string): boolean {
+  // Handle **/ prefix (match anywhere in path)
+  if (pattern.startsWith('**/')) {
+    const suffix = pattern.slice(3).replace(/\*/g, '');
+    // Match any path segment that starts with the suffix
+    const segments = filePath.split('/');
+    return segments.some(seg => seg.startsWith(suffix) || seg.includes(suffix));
+  }
+
+  // Handle dir/* (single-level match under dir)
+  if (pattern.endsWith('/*') && !pattern.endsWith('**/*')) {
+    const dir = pattern.slice(0, -2); // strip /*
+    const normalizedDir = dir.endsWith('/') ? dir : dir + '/';
+    if (!filePath.startsWith(normalizedDir)) return false;
+    // Must be a direct child (no further /)
+    const rest = filePath.slice(normalizedDir.length);
+    return !rest.includes('/');
+  }
+
+  // Handle dir/** (recursive match under dir)
+  if (pattern.endsWith('/**')) {
+    const dir = pattern.slice(0, -3);
+    const normalizedDir = dir.endsWith('/') ? dir : dir + '/';
+    return filePath.startsWith(normalizedDir);
+  }
+
+  // Literal prefix match (anchored to start of path)
+  return filePath.startsWith(pattern) || filePath === pattern;
 }

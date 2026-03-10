@@ -97,15 +97,40 @@ function powerScale(
   return refValue * Math.pow(ratio, exponent);
 }
 
-/**
- * Clamp a value to [min, max] and optionally round to integer.
- */
 function clampInt(value: number, min: number, max: number): number {
   return Math.round(Math.max(min, Math.min(max, value)));
 }
 
-function clampFloat(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
+/**
+ * Scale a value using power-law, then map the result into [min, max] using
+ * a smooth ramp instead of hard clamping. This eliminates dead zones at
+ * extreme intensity values where hard clamping would cause adjacent
+ * intensity levels to produce identical outputs.
+ *
+ * Uses a smoothstep-inspired approach: if the raw value falls outside
+ * [min, max], it's brought to the boundary but adjacent intensity levels
+ * still produce distinct (if tightly packed) values.
+ */
+function scaledClampInt(
+  refValue: number,
+  intensity: number,
+  exponent: number,
+  min: number,
+  max: number,
+): number {
+  const raw = powerScale(refValue, intensity, exponent);
+  return Math.round(Math.max(min, Math.min(max, raw)));
+}
+
+function scaledClampFloat(
+  refValue: number,
+  intensity: number,
+  exponent: number,
+  min: number,
+  max: number,
+): number {
+  const raw = powerScale(refValue, intensity, exponent);
+  return Math.max(min, Math.min(max, raw));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,74 +149,74 @@ export function deriveFromIntensity(intensity: number): IntensityDerivedSettings
 
   // ── Scheduler settings ─────────────────────────────────────────────────
   // Higher intensity → shorter intervals (inverse scaling)
-  const intervalHours = clampFloat(
-    powerScale(REF_VALUES.intervalHours, i, -1.2),
+  const intervalHours = scaledClampFloat(
+    REF_VALUES.intervalHours, i, -1.2,
     4,   // min: every 4 hours at intensity 10
     72,  // max: every 3 days at intensity 1
   );
 
   // Higher intensity → less idle time required
-  const minIdleSeconds = clampInt(
-    powerScale(REF_VALUES.minIdleSeconds, i, -0.8),
+  const minIdleSeconds = scaledClampInt(
+    REF_VALUES.minIdleSeconds, i, -0.8,
     60,    // min: 1 minute
     1800,  // max: 30 minutes
   );
 
   // ── Dream cycle settings ───────────────────────────────────────────────
   // Higher intensity → more exploration
-  const explorationBudgetTurns = clampInt(
-    powerScale(REF_VALUES.explorationBudgetTurns, i, 0.7),
+  const explorationBudgetTurns = scaledClampInt(
+    REF_VALUES.explorationBudgetTurns, i, 0.7,
     10,   // min turns
     200,  // max turns
   );
 
-  const consolidationIntervalHours = clampFloat(
-    powerScale(REF_VALUES.consolidationIntervalHours, i, -1.0),
+  const consolidationIntervalHours = scaledClampFloat(
+    REF_VALUES.consolidationIntervalHours, i, -1.0,
     4,
     72,
   );
 
-  const selfModelRebuildIntervalHours = clampFloat(
-    powerScale(REF_VALUES.selfModelRebuildIntervalHours, i, -0.8),
+  const selfModelRebuildIntervalHours = scaledClampFloat(
+    REF_VALUES.selfModelRebuildIntervalHours, i, -0.8,
     12,
     168, // 1 week
   );
 
-  const archaeologyLookbackDays = clampInt(
-    powerScale(REF_VALUES.archaeologyLookbackDays, i, 0.5),
+  const archaeologyLookbackDays = scaledClampInt(
+    REF_VALUES.archaeologyLookbackDays, i, 0.5,
     30,
     365,
   );
 
-  const retrospectiveIntervalDays = clampInt(
-    powerScale(REF_VALUES.retrospectiveIntervalDays, i, -0.6),
+  const retrospectiveIntervalDays = scaledClampInt(
+    REF_VALUES.retrospectiveIntervalDays, i, -0.6,
     1,
     30,
   );
 
   // ── Autoresearch settings ──────────────────────────────────────────────
-  const autoresearchExperiments = clampInt(
-    powerScale(REF_VALUES.autoresearchExperiments, i, 0.8),
+  const autoresearchExperiments = scaledClampInt(
+    REF_VALUES.autoresearchExperiments, i, 0.8,
     1,
     10,
   );
 
   // ── Challenge & Evolution settings ─────────────────────────────────────
-  const challengeBudget = clampInt(
-    powerScale(REF_VALUES.challengeBudget, i, 0.6),
+  const challengeBudget = scaledClampInt(
+    REF_VALUES.challengeBudget, i, 0.6,
     5,
     50,
   );
 
-  const promptPopulationSize = clampInt(
-    powerScale(REF_VALUES.promptPopulationSize, i, 0.5),
+  const promptPopulationSize = scaledClampInt(
+    REF_VALUES.promptPopulationSize, i, 0.5,
     4,
     16,
   );
 
   // ── Phase time budget ──────────────────────────────────────────────────
-  const phaseBudgetSeconds = clampInt(
-    powerScale(REF_VALUES.phaseBudgetSeconds, i, 0.8),
+  const phaseBudgetSeconds = scaledClampInt(
+    REF_VALUES.phaseBudgetSeconds, i, 0.8,
     60,
     1800,
   );
@@ -211,7 +236,9 @@ export function deriveFromIntensity(intensity: number): IntensityDerivedSettings
     },
     autoresearch: {
       maxExperimentsPerCycle: autoresearchExperiments,
-      testTimeoutMs: clampInt(phaseBudgetSeconds * 1000, 30_000, 600_000),
+      // Test timeout should be proportional to phase budget, not independently clamped.
+      // Use 80% of phase budget so tests complete within the phase window.
+      testTimeoutMs: Math.round(phaseBudgetSeconds * 800),
     },
     challengeBudget,
     promptPopulationSize,

@@ -47,8 +47,11 @@ export interface PhaseState {
   /** Phase-specific checkpoint data (opaque to the framework) */
   checkpoint: Record<string, unknown> | null;
 
-  /** When this phase last started */
-  startedAt: string | null;
+  /** When this phase first started (preserved across resumes) */
+  firstStartedAt: string | null;
+
+  /** When this phase last resumed (null on first run) */
+  lastResumedAt: string | null;
 
   /** When this phase last completed/interrupted */
   endedAt: string | null;
@@ -241,6 +244,7 @@ export class PhaseProgressManager {
       phasesInterrupted: [],
       phasesFailed: [],
       phasesSkipped: [],
+      phasesDependencySkipped: [],
     };
 
     for (const reg of registrations) {
@@ -265,6 +269,7 @@ export class PhaseProgressManager {
           phaseState.status = 'skipped';
           phaseState.error = `Unmet dependencies: ${unmet.join(', ')}`;
           summary.phasesSkipped.push(reg.name);
+          summary.phasesDependencySkipped.push(reg.name);
           continue;
         }
       }
@@ -283,10 +288,13 @@ export class PhaseProgressManager {
       const startTime = Date.now();
       const deadline = startTime + remainingBudget;
       let currentProgress = phaseState.progress;
+      const baseProgress = phaseState.progress; // floor for monotonicity on resume
 
       const ctx: PhaseContext = {
         reportProgress: (p) => {
-          currentProgress = Math.max(0, Math.min(1, p));
+          const clamped = Math.max(0, Math.min(1, p));
+          // Enforce monotonicity: never go below the progress we had when we started/resumed
+          currentProgress = Math.max(baseProgress, clamped);
           phaseState.progress = currentProgress;
         },
         getProgress: () => currentProgress,
@@ -301,8 +309,12 @@ export class PhaseProgressManager {
 
       // Execute
       phaseState.status = 'running';
-      phaseState.startedAt = phaseState.startedAt ?? new Date().toISOString();
+      const now = new Date().toISOString();
+      if (!phaseState.firstStartedAt) {
+        phaseState.firstStartedAt = now;
+      }
       if (isResume) {
+        phaseState.lastResumedAt = now;
         phaseState.resumeCount++;
         summary.phasesResumed.push(reg.name);
       }
@@ -348,12 +360,25 @@ export class PhaseProgressManager {
       await this.save();
     }
 
-    // Check if all phases are done
-    const allDone = this.state.phases.every(
-      p => p.status === 'completed' || p.status === 'failed' || p.status === 'skipped',
-    );
+    // Check if all phases are done.
+    // A cycle is complete when no phases are still pending, running, or interrupted.
+    // Skipped phases (from unmet dependencies) count as done but indicate partial completion.
+    const terminalStatuses: PhaseStatus[] = ['completed', 'failed', 'skipped'];
+    const allDone = this.state.phases.every(p => terminalStatuses.includes(p.status));
     if (allDone) {
       this.state.cycleComplete = true;
+
+      // If any phase was skipped due to unmet dependencies, log a warning
+      // so the issue isn't silently hidden.
+      const depSkipped = this.state.phases.filter(
+        p => p.status === 'skipped' && p.error?.startsWith('Unmet dependencies'),
+      );
+      if (depSkipped.length > 0) {
+        const tracer = getTracer();
+        tracer.log('dream', 'warn',
+          `Cycle complete with ${depSkipped.length} phase(s) skipped due to dependency failures: ` +
+          depSkipped.map(p => p.name).join(', '));
+      }
     }
 
     await this.save();
@@ -419,6 +444,8 @@ export interface PhaseExecutionSummary {
   phasesInterrupted: string[];
   phasesFailed: string[];
   phasesSkipped: string[];
+  /** Phases skipped specifically because a dependency failed or wasn't completed */
+  phasesDependencySkipped: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -431,7 +458,8 @@ function createEmptyPhaseState(name: string): PhaseState {
     status: 'pending',
     progress: 0,
     checkpoint: null,
-    startedAt: null,
+    firstStartedAt: null,
+    lastResumedAt: null,
     endedAt: null,
     elapsedMs: 0,
     resumeCount: 0,

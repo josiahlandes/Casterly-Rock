@@ -184,6 +184,56 @@ describe('AutoresearchEngine', () => {
       expect(result.outcome).toBe('error');
       expect(result.error).toContain('Forbidden paths');
     });
+
+    it('should not false-positive on similar path prefixes', async () => {
+      // "src/security-audit.ts" should NOT be matched by "src/security/*"
+      const testRunner: TestRunner = vi.fn()
+        .mockResolvedValueOnce(makeTestResult())
+        .mockResolvedValueOnce(makeTestResult());
+      const changeApplier: ChangeApplier = vi.fn().mockResolvedValue({
+        success: true,
+        modifiedFiles: ['src/security-audit.ts'],
+      });
+
+      const result = await engine.runExperiment(
+        makeHypothesis({ targetFiles: ['src/security-audit.ts'] }),
+        testRunner,
+        changeApplier,
+      );
+
+      // Should NOT be blocked — 'src/security-audit.ts' is not inside 'src/security/'
+      expect(result.outcome).not.toBe('error');
+    });
+
+    it('should reject experiments with new failing tests even if net count is zero', async () => {
+      const testRunner: TestRunner = vi.fn()
+        .mockResolvedValueOnce(makeTestResult()) // pre: 3/3 pass
+        .mockResolvedValueOnce(makeTestResult({  // post: same count but new test-d fails
+          tests: [
+            { name: 'test-a', status: 'passed' },
+            { name: 'test-b', status: 'passed' },
+            { name: 'test-c', status: 'passed' },
+            { name: 'test-d', status: 'failed', errorMessage: 'new failure' },
+          ],
+          total: 4,
+          passed: 3,
+          failed: 1,
+        }));
+
+      const changeApplier: ChangeApplier = vi.fn().mockResolvedValue({
+        success: true,
+        modifiedFiles: ['src/foo.ts'],
+      });
+
+      const result = await engine.runExperiment(
+        makeHypothesis(),
+        testRunner,
+        changeApplier,
+      );
+
+      // netTestChange=0, no regressions (test-d didn't exist before), but it's a NEW failure
+      expect(result.outcome).toBe('reverted');
+    });
   });
 
   describe('runCycle()', () => {

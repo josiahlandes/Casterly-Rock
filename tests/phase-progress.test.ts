@@ -217,7 +217,60 @@ describe('PhaseProgressManager', () => {
 
       // b depends on a, but a failed, so b should be skipped
       expect(summary.phasesSkipped).toContain('b');
+      expect(summary.phasesDependencySkipped).toContain('b');
       expect(summary.phasesFailed).toContain('a');
+    });
+
+    it('should enforce progress monotonicity on resume', async () => {
+      manager.beginCycle('test-cycle', ['a']);
+
+      // Simulate a phase that was interrupted at 0.8 progress
+      const state = manager.getState()!;
+      state.phases[0]!.status = 'interrupted';
+      state.phases[0]!.checkpoint = { step: 5 };
+      state.phases[0]!.progress = 0.8;
+
+      let observedProgress = 0;
+      const registrations: PhaseRegistration[] = [
+        {
+          name: 'a',
+          executor: async (ctx) => {
+            // Try to report a lower progress value — should be clamped to 0.8
+            ctx.reportProgress(0.3);
+            observedProgress = ctx.getProgress();
+            ctx.reportProgress(0.9);
+            ctx.reportProgress(1);
+          },
+        },
+      ];
+
+      await manager.executePhases(registrations);
+
+      // Progress should never have gone below 0.8
+      expect(observedProgress).toBe(0.8);
+      expect(state.phases[0]!.progress).toBe(1);
+    });
+
+    it('should track firstStartedAt and lastResumedAt separately', async () => {
+      manager.beginCycle('test-cycle', ['a']);
+
+      // First run
+      const registrations: PhaseRegistration[] = [
+        {
+          name: 'a',
+          executor: async (ctx) => {
+            ctx.reportProgress(0.5);
+            ctx.saveCheckpoint({ step: 1 });
+          },
+          budgetMs: 1, // very short budget → will be interrupted
+        },
+      ];
+
+      await manager.executePhases(registrations);
+      const state = manager.getState()!;
+      const firstStarted = state.phases[0]!.firstStartedAt;
+      expect(firstStarted).not.toBeNull();
+      expect(state.phases[0]!.lastResumedAt).toBeNull(); // first run, no resume
     });
   });
 

@@ -38,7 +38,7 @@ import type { IntensityDerivedSettings } from '../autonomous/dream/intensity-dia
 import { PhaseProgressManager } from '../autonomous/dream/phase-progress.js';
 import type { PhaseExecutionSummary } from '../autonomous/dream/phase-progress.js';
 import { AutoresearchEngine } from '../autonomous/dream/autoresearch.js';
-import type { AutoresearchCycleResult, Hypothesis } from '../autonomous/dream/autoresearch.js';
+import type { AutoresearchCycleResult, ChangeApplier, Hypothesis } from '../autonomous/dream/autoresearch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -147,6 +147,7 @@ export class DreamScheduler {
   private readonly intensitySettings: IntensityDerivedSettings | null;
   private readonly phaseManager: PhaseProgressManager | null;
   private readonly autoresearch: AutoresearchEngine | null;
+  private changeApplier: ChangeApplier | null = null;
 
   private state: DreamSchedulerState = {
     lastDreamDate: '',
@@ -161,6 +162,7 @@ export class DreamScheduler {
   private checkTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private dreaming = false;
+  private preempted = false;
   private idleSince: number | null = null;
 
   constructor(
@@ -180,6 +182,8 @@ export class DreamScheduler {
         ...baseConfig.dreamConfig,
         ...this.intensitySettings.dream,
       };
+      // challengeBudget and promptPopulationSize are stored on intensitySettings
+      // and accessible via getIntensitySettings() for subsystems that need them.
     } else {
       this.intensitySettings = null;
     }
@@ -373,9 +377,20 @@ export class DreamScheduler {
   }
 
   /**
+   * Set the change applier for autoresearch experiments.
+   * Until this is called, autoresearch will generate hypotheses but skip
+   * the experiment loop.
+   */
+  setChangeApplier(applier: ChangeApplier): void {
+    this.changeApplier = applier;
+  }
+
+  /**
    * Signal preemption — stops the current dream cycle gracefully.
+   * Propagates to all subsystems: phase manager, autoresearch, and dream runner.
    */
   preempt(): void {
+    this.preempted = true;
     if (this.phaseManager) {
       this.phaseManager.preempt();
     }
@@ -391,6 +406,7 @@ export class DreamScheduler {
     this.dreaming = true;
 
     tracer.log('dream', 'info', '=== Dream cycle starting (dual-loop) ===');
+    this.preempted = false;
 
     try {
       const outcome = await this.runner.run(
@@ -402,10 +418,12 @@ export class DreamScheduler {
       );
 
       // Run CI health check: execute tests and file issues for failures
-      await this.runCiHealthCheck();
+      if (!this.preempted) {
+        await this.runCiHealthCheck();
+      }
 
       // Run autoresearch experiments (propose→implement→measure→keep/revert)
-      const autoresearchResult = await this.runAutoresearch();
+      const autoresearchResult = !this.preempted ? await this.runAutoresearch() : null;
       if (autoresearchResult) {
         this.state.totalAutoresearchExperiments += autoresearchResult.experiments.length;
         this.state.totalAutoresearchAccepted += autoresearchResult.acceptedCount;
@@ -465,14 +483,16 @@ export class DreamScheduler {
         return runTests({ command, cwd, timeoutMs: this.autoresearch!.getConfig().testTimeoutMs });
       };
 
-      // For now, autoresearch uses a no-op change applier since we need
-      // LLM providers for actual code modification. The pipeline is wired
-      // and ready for when the DeepLoop integrates LLM-driven changes.
-      const changeApplier = async (_hypothesis: Hypothesis) => {
-        return { success: false, modifiedFiles: [] as string[], error: 'LLM-driven changes not yet wired' };
-      };
+      // Autoresearch requires a real change applier (LLM-driven code modification).
+      // Until the DeepLoop's LLM providers are integrated, we skip the experiment
+      // loop and only log that hypotheses were generated for future processing.
+      if (!this.changeApplier) {
+        tracer.log('dream', 'info',
+          `Autoresearch: ${hypotheses.length} hypothesis(es) ready but change applier not wired — skipping experiments`);
+        return null;
+      }
 
-      return await this.autoresearch.runCycle(hypotheses, testRunner, changeApplier);
+      return await this.autoresearch.runCycle(hypotheses, testRunner, this.changeApplier);
     } catch (err) {
       tracer.log('dream', 'warn', `Autoresearch failed: ${err instanceof Error ? err.message : String(err)}`);
       return null;
