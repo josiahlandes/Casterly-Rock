@@ -25,6 +25,7 @@ import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
 import type { GoalStack } from '../autonomous/goal-stack.js';
 import type { IssueLog } from '../autonomous/issue-log.js';
+import type { WorldModel } from '../autonomous/world-model.js';
 import type { AgentToolkit } from '../autonomous/tools/types.js';
 import type {
   AutonomousController,
@@ -59,6 +60,8 @@ export interface DualLoopControllerOptions {
   goalStack: GoalStack;
   /** Issue log for tracking reported problems */
   issueLog?: IssueLog | undefined;
+  /** World model for codebase health tracking (used by dream cycles) */
+  worldModel?: WorldModel | undefined;
   /** Voice filter for response delivery */
   voiceFilter: VoiceFilter;
   /** Coordinator configuration from autonomous.yaml */
@@ -114,6 +117,16 @@ export function createDualLoopController(
 
   // Wire the GoalStack into DeepLoop for idle-time goal work
   coordinator.getDeepLoop().setGoalStack(options.goalStack);
+
+  // Wire dream scheduler for idle-time self-improvement cycles
+  if (options.worldModel && options.issueLog) {
+    coordinator.initDreamScheduler({
+      worldModel: options.worldModel,
+      goalStack: options.goalStack,
+      issueLog: options.issueLog,
+      isDeepLoopIdle: () => false, // placeholder — the coordinator overrides this
+    });
+  }
 
   // Wire response delivery: FastLoop → voice filter → send
   // Voice filter and delivery are separate concerns: if the voice filter
@@ -283,6 +296,7 @@ export function createDualLoopController(
           `DeepLoop: ${health.deep.running ? 'running' : 'stopped'}${health.deep.currentTask ? ` [${health.deep.currentTask}]` : ''}`,
           `Tasks: ${health.taskBoard.active} active, ${health.taskBoard.queued} queued, ${health.taskBoard.doneToday} done today`,
           `Cycles: ${totalCycles} total, ${successfulCycles} succeeded`,
+          coordinator.getDreamSchedulerSummary(),
         ].join('\n');
       case 'health':
         return coordinator.getHealthSummary();

@@ -138,6 +138,11 @@ export type {
   DelegateAgentConfig,
 } from './agent.js';
 
+// ── Dream Scheduler ─────────────────────────────────────────────────────────
+
+export { DreamScheduler } from './dream-scheduler.js';
+export type { DreamSchedulerConfig, DreamSchedulerDeps } from './dream-scheduler.js';
+
 // ── Runtime Config ───────────────────────────────────────────────────────────
 
 export { parseDualLoopRuntimeConfig } from './config.js';

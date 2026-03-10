@@ -24,6 +24,8 @@ import { DeepLoop, createDeepLoop } from './deep-loop.js';
 import type { DeepLoopConfig } from './deep-loop.js';
 import type { ContextTiersConfig } from './context-tiers.js';
 import type { TaskBoardConfig } from './task-board-types.js';
+import { DreamScheduler } from './dream-scheduler.js';
+import type { DreamSchedulerConfig, DreamSchedulerDeps } from './dream-scheduler.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -76,6 +78,8 @@ export interface CoordinatorConfig {
   saveIntervalMs: number;
   /** How often to archive old tasks (ms) */
   archiveIntervalMs: number;
+  /** Dream cycle scheduler settings (undefined = disabled) */
+  dreamScheduler?: Partial<DreamSchedulerConfig>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +111,7 @@ export class LoopCoordinator {
   private readonly fastLoop: FastLoop;
   private readonly deepLoop: DeepLoop;
   private readonly eventBus: EventBus;
+  private dreamScheduler: DreamScheduler | null = null;
   private running: boolean = false;
   private startedAt: string | null = null;
   private fastHealth: LoopHealth = { running: false, errorCount: 0, restartCount: 0 };
@@ -155,6 +160,39 @@ export class LoopCoordinator {
     );
   }
 
+  // ── Dream Scheduler ─────────────────────────────────────────────────────
+
+  /**
+   * Initialize the dream scheduler with runtime dependencies.
+   *
+   * Called by the DualLoopController after construction, once the
+   * necessary stores (worldModel, goalStack, issueLog) are available.
+   * The scheduler checks whether DeepLoop is idle by inspecting the TaskBoard.
+   */
+  initDreamScheduler(deps: DreamSchedulerDeps): void {
+    const schedulerConfig = this.config.dreamScheduler ?? { enabled: true };
+
+    this.dreamScheduler = new DreamScheduler(
+      {
+        ...deps,
+        isDeepLoopIdle: () => {
+          // DeepLoop is idle when there are no active or queued tasks
+          const active = this.taskBoard.getActive();
+          const counts = this.taskBoard.getStatusCounts();
+          return active.length === 0 && (counts['queued'] ?? 0) === 0;
+        },
+      },
+      schedulerConfig,
+    );
+  }
+
+  /**
+   * Get the dream scheduler summary (for status reports).
+   */
+  getDreamSchedulerSummary(): string {
+    return this.dreamScheduler?.getSummary() ?? 'Dream scheduler not initialized';
+  }
+
   // ── Lifecycle ───────────────────────────────────────────────────────────
 
   /**
@@ -162,8 +200,9 @@ export class LoopCoordinator {
    *
    * 1. Load TaskBoard from disk
    * 2. Start periodic save and archive timers
-   * 3. Launch both loops as concurrent coroutines
-   * 4. Wait for any loop to exit (crash or stop)
+   * 3. Start the dream scheduler (if configured)
+   * 4. Launch both loops as concurrent coroutines
+   * 5. Wait for any loop to exit (crash or stop)
    */
   async start(): Promise<void> {
     const tracer = getTracer();
@@ -197,7 +236,13 @@ export class LoopCoordinator {
       }
     }, this.config.archiveIntervalMs);
 
-    // 4. Launch both loops
+    // 4. Start the dream scheduler (runs dream cycles during idle periods)
+    if (this.dreamScheduler) {
+      await this.dreamScheduler.start();
+      tracer.log('coordinator', 'info', 'Dream scheduler started');
+    }
+
+    // 5. Launch both loops
     const fastPromise = this.runWithRestart('fast', () => this.fastLoop.run());
     const deepPromise = this.runWithRestart('deep', () => this.deepLoop.run());
 
@@ -228,6 +273,11 @@ export class LoopCoordinator {
     this.running = false;
     this.fastLoop.stop();
     this.deepLoop.stop();
+
+    // Stop dream scheduler
+    if (this.dreamScheduler) {
+      await this.dreamScheduler.stop();
+    }
 
     // Clear timers
     if (this.saveTimer) {
@@ -305,6 +355,7 @@ export class LoopCoordinator {
     lines.push(`FastLoop: ${h.fast.running ? 'running' : 'stopped'} (${h.fast.errorCount} errors, ${h.fast.restartCount} restarts)`);
     lines.push(`DeepLoop: ${h.deep.running ? 'running' : 'stopped'}${h.deep.currentTask ? ` [working on ${h.deep.currentTask}]` : ''} (${h.deep.errorCount} errors, ${h.deep.restartCount} restarts)`);
     lines.push(`TaskBoard: ${h.taskBoard.active} active, ${h.taskBoard.queued} queued, ${h.taskBoard.reviewing} reviewing, ${h.taskBoard.doneToday} done today`);
+    lines.push(this.getDreamSchedulerSummary());
 
     return lines.join('\n');
   }
