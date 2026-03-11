@@ -10,7 +10,6 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import YAML from 'yaml';
-import { loadConfig } from '../src/autonomous/loop.js';
 
 const PROJECT_ROOT = resolve(import.meta.dirname, '..');
 
@@ -119,13 +118,6 @@ describe('config/models.yaml', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('config/autonomous.yaml', () => {
-  it('loads successfully via loadConfig', async () => {
-    const configPath = resolve(PROJECT_ROOT, 'config/autonomous.yaml');
-    const config = await loadConfig(configPath);
-    expect(config).toBeDefined();
-    expect(config.provider).toBe('ollama');
-  });
-
   it('autonomous model matches models.yaml autonomous entry', () => {
     const modelsYaml = loadYaml('config/models.yaml');
     const autoYaml = loadYaml('config/autonomous.yaml');

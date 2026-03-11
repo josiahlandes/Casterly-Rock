@@ -30,7 +30,7 @@ import type { AgentToolkit } from '../autonomous/tools/types.js';
 import type {
   AutonomousController,
   AutonomousStatus,
-} from '../autonomous/controller.js';
+} from '../autonomous/controller-types.js';
 import type { AgentTrigger, AgentOutcome } from '../autonomous/agent-loop.js';
 import type { VoiceFilter } from '../imessage/voice-filter.js';
 import type { HandoffState } from '../autonomous/types.js';

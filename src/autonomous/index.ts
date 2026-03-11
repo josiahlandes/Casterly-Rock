@@ -8,45 +8,12 @@
 // Types
 export * from './types.js';
 
-// Provider abstraction
-// @deprecated — Legacy 4-phase provider. Use LlmProvider from providers/base.js instead.
-// Retained for test/script compatibility; will be removed in a future release.
-export { createProvider, BaseAutonomousProvider, PROMPTS } from './provider.js';
-export type {
-  AutonomousProvider,
-  AnalyzeResult,
-  HypothesizeResult,
-  ImplementContext,
-  ImplementResult,
-  ReflectContext,
-  ReflectResult,
-  TokenUsage,
-} from './provider.js';
-
 // Core modules
-export { Validator, buildInvariants } from './validator.js';
 export { Reflector } from './reflector.js';
 export type { AggregateStats, MemoryEntry } from './reflector.js';
 
-// Main loop
-export { AutonomousLoop, AbortError, loadConfig, main } from './loop.js';
-
-// Controller (daemon-side management)
-export { createAutonomousController } from './controller.js';
-export type { AutonomousController } from './controller.js';
-
-// Reports
-export { formatDailyReport, formatMorningSummary } from './report.js';
-
-// Status reports (iMessage dashboard)
-export {
-  formatStatusOverview,
-  formatGoalsSummary,
-  formatIssuesSummary,
-  formatHealthReport,
-  formatActivityReport,
-  formatRelativeTime,
-} from './status-report.js';
+// Controller types (shared interface for daemon)
+export type { AutonomousController, AutonomousStatus } from './controller-types.js';
 
 // Test & coverage parser
 export {
@@ -145,21 +112,6 @@ export {
 
 // User model (from world-model)
 export type { UserModel } from './world-model.js';
-
-// Memory configuration
-export {
-  loadPhase1Config,
-  memoryConfigSchema,
-  identityConfigSchema,
-  debugConfigSchema,
-  phase1ConfigSchema,
-} from './memory-config.js';
-export type {
-  MemoryConfig,
-  IdentitySchemaConfig,
-  DebugSchemaConfig,
-  Phase1Config,
-} from './memory-config.js';
 
 // ── Phase 2: Agent Loop (ReAct) ─────────────────────────────────────────────
 
@@ -394,13 +346,13 @@ export type {
   LoraTrainerConfig,
 } from './dream/lora-trainer.js';
 
-// ── Phase 7: Communication ───────────────────────────────────────────────────
+// ── Communication types (from store-interfaces) ─────────────────────────────
 
-// Message policy
 export type {
   NotifiableEvent,
   DailySummaryStats,
-  ThrottleConfig,
-  MessagePolicyConfig,
   PolicyDecision,
-} from './communication/policy.js';
+  IMessagePolicy,
+  IMessageDelivery,
+  DeliveryResult,
+} from './tools/store-interfaces.js';
