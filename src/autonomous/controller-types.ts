@@ -40,7 +40,7 @@ export interface AutonomousController {
   /** Run a triggered cycle (e.g., from user message). Bypasses enabled check. */
   runTriggeredCycle(trigger: AgentTrigger): Promise<AgentOutcome>;
   /** Generate a concise status dashboard for iMessage. */
-  getStatusReport(command: string): string;
+  getStatusReport(command: string): string | Promise<string>;
   /** Whether autonomous mode is enabled. */
   readonly enabled: boolean;
   /** Whether a cycle is currently executing. */

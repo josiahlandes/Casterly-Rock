@@ -37,6 +37,7 @@ import type { HandoffState } from '../autonomous/types.js';
 import { createLoopCoordinator } from './coordinator.js';
 import type { CoordinatorConfig } from './coordinator.js';
 import type { DeliverFn } from './fast-loop.js';
+import { readRecentActivity, formatLedgerReport } from '../observability/activity-ledger.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -117,6 +118,9 @@ export function createDualLoopController(
 
   // Wire the GoalStack into DeepLoop for idle-time goal work
   coordinator.getDeepLoop().setGoalStack(options.goalStack);
+
+  // Wire GoalStack + IssueLog persistence into coordinator save timer
+  coordinator.setPersistableStores(options.goalStack, options.issueLog);
 
   // Wire dream scheduler for idle-time self-improvement cycles
   if (options.worldModel && options.issueLog) {
@@ -285,7 +289,14 @@ export function createDualLoopController(
 
   // ── getStatusReport ────────────────────────────────────────────────────
 
-  function getStatusReport(command: string): string {
+  async function getStatusReport(command: string): Promise<string> {
+    // Parametric ledger command: "ledger:N" where N is hours
+    if (command.startsWith('ledger:')) {
+      const hours = parseInt(command.slice(7), 10);
+      const entries = await readRecentActivity(hours);
+      return formatLedgerReport(entries, hours);
+    }
+
     const health = coordinator.getHealth();
 
     switch (command) {
@@ -308,8 +319,20 @@ export function createDualLoopController(
         return options.issueLog
           ? options.issueLog.getSummaryText()
           : 'Issue tracking not configured.';
+      case 'commands':
+        return [
+          'Available commands:',
+          '  status         — system dashboard',
+          '  health         — loop health details',
+          '  activity       — task board summary',
+          '  goals          — goal stack overview',
+          '  issues         — open issues',
+          '  ledger N hours — activity log (last N hours)',
+          '  ledger N days  — activity log (last N days)',
+          '  commands       — this list',
+        ].join('\n');
       default:
-        return `Dual-loop mode: ${enabled ? 'active' : 'inactive'}. Commands: status, goals, issues, health, activity`;
+        return `Dual-loop mode: ${enabled ? 'active' : 'inactive'}. Send "commands" for a full list.`;
     }
   }
 

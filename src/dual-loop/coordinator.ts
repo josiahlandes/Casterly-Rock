@@ -26,6 +26,8 @@ import type { ContextTiersConfig } from './context-tiers.js';
 import type { TaskBoardConfig } from './task-board-types.js';
 import { DreamScheduler } from './dream-scheduler.js';
 import type { DreamSchedulerConfig, DreamSchedulerDeps } from './dream-scheduler.js';
+import type { GoalStack } from '../autonomous/goal-stack.js';
+import type { IssueLog } from '../autonomous/issue-log.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -112,6 +114,8 @@ export class LoopCoordinator {
   private readonly deepLoop: DeepLoop;
   private readonly eventBus: EventBus;
   private dreamScheduler: DreamScheduler | null = null;
+  private goalStack: GoalStack | null = null;
+  private issueLog: IssueLog | null = null;
   private running: boolean = false;
   private startedAt: string | null = null;
   private fastHealth: LoopHealth = { running: false, errorCount: 0, restartCount: 0 };
@@ -187,6 +191,15 @@ export class LoopCoordinator {
   }
 
   /**
+   * Store references to GoalStack and IssueLog so the coordinator
+   * can load/save them alongside the TaskBoard.
+   */
+  setPersistableStores(goalStack: GoalStack, issueLog?: IssueLog): void {
+    this.goalStack = goalStack;
+    if (issueLog) this.issueLog = issueLog;
+  }
+
+  /**
    * Get the dream scheduler summary (for status reports).
    */
   getDreamSchedulerSummary(): string {
@@ -217,11 +230,35 @@ export class LoopCoordinator {
     this.taskBoard.markExistingDoneAsDelivered(); // Don't re-deliver old tasks
     tracer.log('coordinator', 'info', 'TaskBoard loaded');
 
+    // Load GoalStack and IssueLog from disk (if wired)
+    if (this.goalStack) {
+      await this.goalStack.load();
+      tracer.log('coordinator', 'info', 'GoalStack loaded');
+    }
+    if (this.issueLog) {
+      await this.issueLog.load();
+      tracer.log('coordinator', 'info', 'IssueLog loaded');
+    }
+
     // 2. Start periodic save timer (persist dirty state to disk)
     this.saveTimer = setInterval(() => {
       if (this.taskBoard.isDirty()) {
         void this.taskBoard.save().catch((err) => {
           tracer.log('coordinator', 'error', 'TaskBoard save failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+      if (this.goalStack) {
+        void this.goalStack.save().catch((err) => {
+          tracer.log('coordinator', 'error', 'GoalStack save failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+      if (this.issueLog) {
+        void this.issueLog.save().catch((err) => {
+          tracer.log('coordinator', 'error', 'IssueLog save failed', {
             error: err instanceof Error ? err.message : String(err),
           });
         });
@@ -290,6 +327,8 @@ export class LoopCoordinator {
     }
 
     // Final save
+    if (this.goalStack) await this.goalStack.save();
+    if (this.issueLog) await this.issueLog.save();
     await this.taskBoard.save();
     this.taskBoard.close();
 

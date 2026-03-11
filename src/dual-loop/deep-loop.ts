@@ -51,6 +51,7 @@ import type { StateManager } from '../state/state-manager.js';
 // Metacognition — preflection and confabulation guard
 import { preflectHeuristic, buildKnowledgeManifest, buildContextualGuard, CONFABULATION_GUARD_PROMPT } from '../metacognition/index.js';
 import type { PreflectionResult, KnowledgeSource } from '../metacognition/index.js';
+import { appendActivity } from '../observability/activity-ledger.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -582,6 +583,17 @@ export class DeepLoop {
           resolvedAt: new Date().toISOString(),
         });
         tracer.log('deep-loop', 'info', `Task ${task.id} self-review approved, marking done`);
+
+        const resolvedAt = new Date().toISOString();
+        const elapsed = task.createdAt
+          ? new Date(resolvedAt).getTime() - new Date(task.createdAt).getTime()
+          : undefined;
+        void appendActivity({
+          timestamp: resolvedAt,
+          type: 'task_completed',
+          summary: `Task ${task.id} completed (origin: ${task.origin ?? 'unknown'}): ${(task.triageNotes ?? task.originalMessage ?? task.id).slice(0, 120)}`,
+          ...(elapsed !== undefined ? { durationMs: elapsed } : {}),
+        });
 
         // Post-task skill learning: capture multi-step patterns as reusable skills
         this.tryLearnSkillFromTask(task, planned);

@@ -161,30 +161,30 @@ describe('DualLoopController', () => {
   });
 
   describe('getStatusReport', () => {
-    it('returns status info for status command', () => {
+    it('returns status info for status command', async () => {
       const controller = createDualLoopController(makeOptions());
-      const report = controller.getStatusReport('status');
+      const report = await controller.getStatusReport('status');
       expect(report).toContain('Dual-loop');
       expect(report).toContain('FastLoop');
       expect(report).toContain('DeepLoop');
     });
 
-    it('returns health info for health command', () => {
+    it('returns health info for health command', async () => {
       const controller = createDualLoopController(makeOptions());
-      const report = controller.getStatusReport('health');
+      const report = await controller.getStatusReport('health');
       expect(report).toContain('Coordinator');
     });
 
-    it('returns activity info for activity command', () => {
+    it('returns activity info for activity command', async () => {
       const controller = createDualLoopController(makeOptions());
-      const report = controller.getStatusReport('activity');
+      const report = await controller.getStatusReport('activity');
       expect(report).toContain('no active tasks');
     });
 
-    it('returns help for unknown commands', () => {
+    it('returns help for unknown commands', async () => {
       const controller = createDualLoopController(makeOptions());
-      const report = controller.getStatusReport('xyz');
-      expect(report).toContain('Commands');
+      const report = await controller.getStatusReport('xyz');
+      expect(report).toContain('commands');
     });
   });
 

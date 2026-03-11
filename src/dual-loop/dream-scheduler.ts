@@ -39,6 +39,8 @@ import { PhaseProgressManager } from '../autonomous/dream/phase-progress.js';
 import type { PhaseExecutionSummary } from '../autonomous/dream/phase-progress.js';
 import { AutoresearchEngine } from '../autonomous/dream/autoresearch.js';
 import type { AutoresearchCycleResult, ChangeApplier, Hypothesis } from '../autonomous/dream/autoresearch.js';
+import { safeWriteFile } from '../persistence/safe-write.js';
+import { appendActivity } from '../observability/activity-ledger.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -437,6 +439,52 @@ export class DreamScheduler {
 
       await this.saveState();
 
+      // Write detailed dream cycle outcome to ~/.casterly/dreams/YYYY-MM-DD.json
+      const dreamDate = this.state.lastDreamDate;
+      const dreamsDir = path.join(process.env['HOME'] || '/tmp', '.casterly', 'dreams');
+      const dreamPath = path.join(dreamsDir, `${dreamDate}.json`);
+      const dreamDetail = {
+        date: dreamDate,
+        timestamp: now.toISOString(),
+        durationMs: outcome.durationMs,
+        phasesCompleted: outcome.phasesCompleted,
+        phasesSkipped: outcome.phasesSkipped,
+        fragileFilesFound: outcome.fragileFilesFound,
+        goalsReorganized: outcome.goalsReorganized,
+        selfModelRebuilt: outcome.selfModelRebuilt,
+        reflectionsConsolidated: outcome.reflectionsConsolidated,
+        abandonedFilesFound: outcome.abandonedFilesFound,
+        retrospectiveWritten: outcome.retrospectiveWritten,
+        ...(autoresearchResult ? {
+          autoresearch: {
+            experiments: autoresearchResult.experiments.length,
+            accepted: autoresearchResult.acceptedCount,
+          },
+        } : {}),
+      };
+
+      try {
+        await safeWriteFile(dreamPath, JSON.stringify(dreamDetail, null, 2));
+      } catch (writeErr) {
+        tracer.log('dream', 'error', `Failed to write dream detail: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+      }
+
+      // Append to activity ledger
+      await appendActivity({
+        timestamp: now.toISOString(),
+        type: 'dream_cycle',
+        summary: this.state.lastOutcomeSummary,
+        durationMs: outcome.durationMs,
+        metrics: {
+          phasesCompleted: outcome.phasesCompleted.length,
+          phasesSkipped: outcome.phasesSkipped.length,
+          fragileFiles: outcome.fragileFilesFound,
+          goalsReorganized: outcome.goalsReorganized,
+        },
+      }).catch((err) => {
+        tracer.log('dream', 'warn', `Activity ledger append failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+
       tracer.log('dream', 'info', '=== Dream cycle complete ===', {
         phasesCompleted: outcome.phasesCompleted,
         phasesSkipped: outcome.phasesSkipped,
@@ -608,6 +656,14 @@ export class DreamScheduler {
         tracer.log('dream', 'info', `Filed ${newIssues} new issue(s) for failing tests`, {
           totalFailing: failingTests.length,
         });
+
+        // Log to activity ledger
+        await appendActivity({
+          timestamp: new Date().toISOString(),
+          type: 'issue_filed',
+          summary: `Filed ${newIssues} issue(s) for ${failingTests.length} failing test(s)`,
+          metrics: { newIssues, totalFailing: failingTests.length },
+        }).catch(() => { /* best-effort */ });
       }
     } catch (err) {
       tracer.log('dream', 'warn', `CI health check failed: ${err instanceof Error ? err.message : String(err)}`);

@@ -11,6 +11,7 @@ import type { DeepLoopConfig } from './deep-loop.js';
 import type { TaskBoardConfig } from './task-board-types.js';
 import type { ContextTiersConfig } from './context-tiers.js';
 import { DEFAULT_CONTEXT_TIERS } from './context-tiers.js';
+import type { DreamSchedulerConfig } from './dream-scheduler.js';
 
 export interface DualLoopRuntimeConfig {
   enabled: boolean;
@@ -229,6 +230,35 @@ function parseContextTiers(rawDualLoop: Record<string, unknown>): ContextTiersCo
   return hasOverrides ? { fast, deep, coder } : undefined;
 }
 
+function parseDreamSchedulerConfig(raw: Record<string, unknown>): Partial<DreamSchedulerConfig> {
+  const config: Partial<DreamSchedulerConfig> = {};
+
+  const enabled = readBoolean(raw, 'enabled');
+  if (enabled !== undefined) config.enabled = enabled;
+
+  const intensity = readPositiveInt(raw, 'intensity');
+  if (intensity !== undefined) config.intensity = intensity;
+
+  const intervalHours = readPositiveInt(raw, 'consolidation_interval_hours');
+  if (intervalHours !== undefined) config.intervalHours = intervalHours;
+
+  const autoresearchEnabled = readBoolean(raw, 'autoresearch_enabled');
+  if (autoresearchEnabled !== undefined) config.autoresearchEnabled = autoresearchEnabled;
+
+  const phaseProgressEnabled = readBoolean(raw, 'phase_progress_enabled');
+  if (phaseProgressEnabled !== undefined) config.phaseProgressEnabled = phaseProgressEnabled;
+
+  const explorationBudgetTurns = readPositiveInt(raw, 'exploration_budget_turns');
+  if (explorationBudgetTurns !== undefined) {
+    config.dreamConfig = {
+      ...config.dreamConfig,
+      explorationBudgetTurns,
+    };
+  }
+
+  return config;
+}
+
 /**
  * Parse dual-loop runtime config from a YAML object loaded from autonomous.yaml.
  */
@@ -284,6 +314,13 @@ export function parseDualLoopRuntimeConfig(rawAutonomousConfig: unknown): DualLo
   const archiveIntervalMs = readPositiveInt(dualLoopRaw, 'archive_interval_ms');
   if (archiveIntervalMs !== undefined) {
     coordinatorConfig.archiveIntervalMs = archiveIntervalMs;
+  }
+
+  // Parse dream_cycles from root level (not inside dual_loop)
+  const dreamCyclesRaw = asRecord(root?.['dream_cycles']);
+  if (dreamCyclesRaw) {
+    const dreamScheduler = parseDreamSchedulerConfig(dreamCyclesRaw);
+    if (hasKeys(dreamScheduler)) coordinatorConfig.dreamScheduler = dreamScheduler;
   }
 
   return hasKeys(coordinatorConfig)

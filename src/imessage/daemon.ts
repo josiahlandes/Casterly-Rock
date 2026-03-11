@@ -42,6 +42,8 @@ import {
 import { parseDualLoopRuntimeConfig } from '../dual-loop/config.js';
 import { ensureMlxServerReady } from '../providers/mlx-health.js';
 import type { LlmProvider } from '../providers/base.js';
+import { safeWriteFile } from '../persistence/safe-write.js';
+import { appendActivity } from '../observability/activity-ledger.js';
 
 export interface DaemonConfig {
   pollIntervalMs: number;
@@ -81,7 +83,7 @@ async function processMessage(
   const sender = message.senderHandle || message.chatId;
 
   // Status dashboard — instant reply, no agent loop needed
-  const statusReply = handleStatusCommand(message.text, autonomousController);
+  const statusReply = await handleStatusCommand(message.text, autonomousController);
   if (statusReply !== null) {
     send(sender, statusReply);
     return;
@@ -135,7 +137,8 @@ async function processMessage(
 
 // ─── Status Command Patterns ─────────────────────────────────────────────────
 
-const STATUS_COMMANDS_RE = /^(status|goals|issues|health|activity)$/i;
+const STATUS_COMMANDS_RE = /^(status|goals|issues|health|activity|commands)$/i;
+const LEDGER_RE = /^ledger\s+(\d+)\s+(hours?|days?)$/i;
 
 // ─── Autonomous Command Patterns ─────────────────────────────────────────────
 
@@ -176,8 +179,19 @@ function handleAutonomousCommand(
 function handleStatusCommand(
   text: string,
   controller?: AutonomousController,
-): string | null {
+): string | Promise<string> | null {
   const trimmed = text.trim().toLowerCase();
+
+  // Parametric ledger command: "ledger 8 hours", "ledger 2 days"
+  const ledgerMatch = LEDGER_RE.exec(trimmed);
+  if (ledgerMatch) {
+    if (!controller) return 'System is not configured.';
+    const n = parseInt(ledgerMatch[1]!, 10);
+    const unit = ledgerMatch[2]!.toLowerCase();
+    const hours = unit.startsWith('day') ? n * 24 : n;
+    return controller.getStatusReport(`ledger:${hours}`);
+  }
+
   const match = STATUS_COMMANDS_RE.exec(trimmed);
   if (!match) return null;
 
@@ -649,6 +663,27 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
       safeLogger.info('Morning summary: generating from handoff + reflector');
       try {
         const summary = await autonomousController.getMorningSummary();
+
+        // Persist morning summary to reports directory
+        const reportDate = new Date().toISOString().split('T')[0] ?? '';
+        const reportsDir = join(process.env['HOME'] || '/tmp', '.casterly', 'reports');
+        const reportPath = join(reportsDir, `${reportDate}.md`);
+        try {
+          await safeWriteFile(reportPath, summary);
+          safeLogger.info('Morning summary saved to file', { path: reportPath });
+        } catch (reportErr) {
+          safeLogger.error('Failed to write morning report file', {
+            error: reportErr instanceof Error ? reportErr.message : String(reportErr),
+          });
+        }
+
+        // Log to activity ledger
+        await appendActivity({
+          timestamp: new Date().toISOString(),
+          type: 'morning_summary',
+          summary: `Morning summary generated for ${reportDate}`,
+        }).catch(() => { /* best-effort */ });
+
         const voiced = await voiceFilter.apply(summary);
         const result = deliver(recipient, voiced);
         if (!result.success) {
@@ -745,7 +780,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         return;
       }
 
-      const statusReply = handleStatusCommand(message.text, autonomousController);
+      const statusReply = await handleStatusCommand(message.text, autonomousController);
       if (statusReply !== null) {
         deliver(consoleSender, statusReply);
         rl.prompt();
@@ -842,7 +877,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         }
 
         // ─── Status Commands (any allowed sender) ────────────────────
-        const pollStatusReply = handleStatusCommand(message.text, autonomousController);
+        const pollStatusReply = await handleStatusCommand(message.text, autonomousController);
         if (pollStatusReply !== null) {
           deliver(sender, pollStatusReply);
           continue;
