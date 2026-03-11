@@ -78,7 +78,8 @@ src/
 ├── imessage-daemon.ts        # iMessage daemon entry
 ├── dual-loop/                # FastLoop, DeepLoop, TaskBoard, Coordinator
 ├── autonomous/               # Agent loop, tools, memory stores, dream cycles
-│   ├── dream/                # Challenge gen/eval, prompt evolution, LoRA
+│   ├── dream/                # Challenge gen/eval, prompt evolution, LoRA,
+│   │   │                     #   intensity dial, phase progress, autoresearch
 │   ├── memory/               # Advanced memory (links, evolution, AUDN)
 │   ├── tools/                # Agent tool registry and map
 │   ├── watchers/             # File, git, issue watchers

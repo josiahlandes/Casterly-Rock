@@ -985,245 +985,6 @@ describe('Reasoning Scaler (Phase 5)', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TRAIT: Proportional Judgment — Severity-Aware Communication
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('Proportional Judgment', () => {
-  describe('event type differentiation', () => {
-    it('security concerns always pass event-level filtering', async () => {
-      const { MessagePolicy } = await import(
-        '../src/autonomous/communication/policy.js'
-      );
-      const policy = new MessagePolicy({
-        enabled: true,
-        throttle: {
-          maxPerHour: 100,
-          maxPerDay: 100,
-          quietHours: false,
-          quietStart: '22:00',
-          quietEnd: '08:00',
-        },
-      });
-
-      const decision = policy.shouldNotify({
-        type: 'security_concern',
-        description: 'SQL injection vulnerability found',
-        severity: 'critical',
-      });
-
-      expect(decision.allowed).toBe(true);
-    });
-
-    it('critical/high security concerns bypass throttle limits', async () => {
-      const { MessagePolicy } = await import(
-        '../src/autonomous/communication/policy.js'
-      );
-      const policy = new MessagePolicy({
-        enabled: true,
-        throttle: {
-          maxPerHour: 1,
-          maxPerDay: 1,
-          quietHours: false,
-          quietStart: '22:00',
-          quietEnd: '08:00',
-        },
-      });
-
-      // Exhaust the throttle
-      policy.recordSent({ type: 'fix_complete', description: 'test', branch: 'main' });
-      policy.recordSent({ type: 'fix_complete', description: 'test', branch: 'main' });
-
-      // Normal event should be throttled
-      const normalDecision = policy.shouldNotify({
-        type: 'fix_complete',
-        description: 'Fixed a typo',
-        branch: 'auto/typo',
-      });
-      expect(normalDecision.allowed).toBe(false);
-
-      // Critical security should bypass throttle
-      const criticalDecision = policy.shouldNotify({
-        type: 'security_concern',
-        description: 'API key exposed',
-        severity: 'critical',
-      });
-      expect(criticalDecision.allowed).toBe(true);
-
-      // High security should also bypass
-      const highDecision = policy.shouldNotify({
-        type: 'security_concern',
-        description: 'Weak encryption',
-        severity: 'high',
-      });
-      expect(highDecision.allowed).toBe(true);
-
-      // Low security should NOT bypass
-      const lowDecision = policy.shouldNotify({
-        type: 'security_concern',
-        description: 'Minor info disclosure',
-        severity: 'low',
-      });
-      expect(lowDecision.allowed).toBe(false);
-    });
-
-    it('critical security concerns bypass quiet hours', async () => {
-      const { MessagePolicy } = await import(
-        '../src/autonomous/communication/policy.js'
-      );
-      const policy = new MessagePolicy({
-        enabled: true,
-        throttle: {
-          maxPerHour: 100,
-          maxPerDay: 100,
-          quietHours: true,
-          quietStart: '00:00',
-          quietEnd: '23:59',
-        },
-      });
-
-      // It's always quiet hours with this config
-      const normalDecision = policy.shouldNotify({
-        type: 'fix_complete',
-        description: 'Fixed test',
-        branch: 'auto/fix',
-      });
-      expect(normalDecision.allowed).toBe(false);
-
-      // Critical security bypasses quiet hours
-      const criticalDecision = policy.shouldNotify({
-        type: 'security_concern',
-        description: 'Credentials exposed',
-        severity: 'critical',
-      });
-      expect(criticalDecision.allowed).toBe(true);
-    });
-
-    it('test failures under investigation are suppressed', async () => {
-      const { MessagePolicy } = await import(
-        '../src/autonomous/communication/policy.js'
-      );
-      const policy = new MessagePolicy({
-        enabled: true,
-        testFailureMinSeverity: 'unresolvable',
-        throttle: {
-          maxPerHour: 100,
-          maxPerDay: 100,
-          quietHours: false,
-          quietStart: '22:00',
-          quietEnd: '08:00',
-        },
-      });
-
-      const investigating = policy.shouldNotify({
-        type: 'test_failure',
-        test: 'detector.test.ts',
-        investigating: true,
-      });
-
-      const unresolvable = policy.shouldNotify({
-        type: 'test_failure',
-        test: 'detector.test.ts',
-        investigating: false,
-      });
-
-      // Investigating → suppress (Tyrion is handling it)
-      expect(investigating.allowed).toBe(false);
-      // Not investigating → notify (Tyrion needs help)
-      expect(unresolvable.allowed).toBe(true);
-    });
-
-    it('daily summaries respect dailySummaryEnabled flag', async () => {
-      const { MessagePolicy } = await import(
-        '../src/autonomous/communication/policy.js'
-      );
-
-      const enabled = new MessagePolicy({
-        enabled: true,
-        dailySummaryEnabled: true,
-        throttle: { maxPerHour: 100, maxPerDay: 100, quietHours: false, quietStart: '22:00', quietEnd: '08:00' },
-      });
-
-      const disabled = new MessagePolicy({
-        enabled: true,
-        dailySummaryEnabled: false,
-        throttle: { maxPerHour: 100, maxPerDay: 100, quietHours: false, quietStart: '22:00', quietEnd: '08:00' },
-      });
-
-      const event = {
-        type: 'daily_summary' as const,
-        stats: { cyclesRun: 5, issuesFixed: 2, testsPassing: 100, testsFailing: 0, healthSummary: 'Healthy' },
-      };
-
-      expect(enabled.shouldNotify(event).allowed).toBe(true);
-      expect(disabled.shouldNotify(event).allowed).toBe(false);
-    });
-  });
-
-  describe('message formatting reflects severity', () => {
-    it('security concern includes severity level', async () => {
-      const { MessagePolicy } = await import(
-        '../src/autonomous/communication/policy.js'
-      );
-      const policy = new MessagePolicy();
-
-      const message = policy.formatMessage({
-        type: 'security_concern',
-        description: 'Hardcoded API key in source',
-        severity: 'critical',
-      });
-
-      expect(message).toContain('critical');
-      expect(message).toContain('Hardcoded API key');
-    });
-
-    it('fix_complete is brief and factual (quietness trait)', async () => {
-      const { MessagePolicy } = await import(
-        '../src/autonomous/communication/policy.js'
-      );
-      const policy = new MessagePolicy();
-
-      const message = policy.formatMessage({
-        type: 'fix_complete',
-        description: 'Fixed flaky detector test, was an unanchored regex',
-        branch: 'auto/fix-detector',
-      });
-
-      // Should be results-oriented, not narration
-      expect(message).toContain('Fixed');
-      expect(message).toContain('Branch');
-      // Should not contain process narration
-      expect(message).not.toContain('I noticed');
-      expect(message).not.toContain('I investigated');
-      expect(message).not.toContain('I found that');
-      // Should end with a period (factual)
-      expect(message.endsWith('.')).toBe(true);
-    });
-
-    it('test_failure distinguishes investigating vs needs help', async () => {
-      const { MessagePolicy } = await import(
-        '../src/autonomous/communication/policy.js'
-      );
-      const policy = new MessagePolicy();
-
-      const investigating = policy.formatMessage({
-        type: 'test_failure',
-        test: 'parser.test.ts',
-        investigating: true,
-      });
-
-      const needsHelp = policy.formatMessage({
-        type: 'test_failure',
-        test: 'parser.test.ts',
-        investigating: false,
-      });
-
-      expect(investigating).toContain('investigating');
-      expect(needsHelp).toContain('help');
-    });
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // TRAIT: Quietness — "Report Results, Not Process"
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1461,37 +1222,29 @@ describe('Dream Cycle Pipeline (Phase 6)', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Wiring Validation', () => {
-  describe('modules that ARE wired into the runtime', () => {
-    it('WorldModel is used in loop.ts', () => {
+  describe('modules that ARE wired into the dual-loop runtime', () => {
+    it('WorldModel is used in dual-loop-controller.ts', () => {
       const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
+        resolve(PROJECT_ROOT, 'src/dual-loop/dual-loop-controller.ts'),
         'utf8',
       );
       expect(source).toContain('WorldModel');
     });
 
-    it('GoalStack is used in loop.ts', () => {
+    it('GoalStack is used in dual-loop-controller.ts', () => {
       const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
+        resolve(PROJECT_ROOT, 'src/dual-loop/dual-loop-controller.ts'),
         'utf8',
       );
       expect(source).toContain('GoalStack');
     });
 
-    it('IssueLog is used in loop.ts', () => {
+    it('IssueLog is used in dual-loop-controller.ts', () => {
       const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
+        resolve(PROJECT_ROOT, 'src/dual-loop/dual-loop-controller.ts'),
         'utf8',
       );
       expect(source).toContain('IssueLog');
-    });
-
-    it('EventBus is used in loop.ts', () => {
-      const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
-        'utf8',
-      );
-      expect(source).toContain('EventBus');
     });
 
     it('buildIdentityPrompt is used in agent-loop.ts', () => {
@@ -1501,17 +1254,9 @@ describe('Wiring Validation', () => {
       );
       expect(source).toContain('buildIdentityPrompt');
     });
-
-    it('ContextManager is used in loop.ts', () => {
-      const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
-        'utf8',
-      );
-      expect(source).toContain('ContextManager');
-    });
   });
 
-  describe('modules NOW wired into the runtime (Phase 5/6 integration)', () => {
+  describe('Phase 5/6 modules wired into the runtime', () => {
     it('AdversarialTester is wired into agent-tools.ts', () => {
       const source = readFileSync(
         resolve(PROJECT_ROOT, 'src/autonomous/agent-tools.ts'),
@@ -1521,39 +1266,12 @@ describe('Wiring Validation', () => {
       expect(source).toContain('adversarial_test');
     });
 
-    it('ReasoningScaler is wired into loop.ts', () => {
+    it('DreamCycleRunner is wired into dream-scheduler.ts', () => {
       const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
-        'utf8',
-      );
-      expect(source).toContain('ReasoningScaler');
-      expect(source).toContain('assessDifficulty');
-    });
-
-    it('DreamCycleRunner is wired into loop.ts', () => {
-      const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
+        resolve(PROJECT_ROOT, 'src/dual-loop/dream-scheduler.ts'),
         'utf8',
       );
       expect(source).toContain('DreamCycleRunner');
-      expect(source).toContain('runDreamCycleIfDue');
-    });
-
-    it('self-model is passed from dream cycle to agent loop', () => {
-      const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
-        'utf8',
-      );
-      expect(source).toContain('selfModelSummary');
-    });
-
-    it('difficulty assessment feeds into agent loop (turns use flat budget)', () => {
-      const source = readFileSync(
-        resolve(PROJECT_ROOT, 'src/autonomous/loop.ts'),
-        'utf8',
-      );
-      expect(source).toContain('scaledMaxTurns');
-      expect(source).toContain('assessDifficulty');
     });
   });
 

@@ -36,10 +36,6 @@ import {
   createApprovalBridge,
 } from '../approval/index.js';
 import {
-  AutonomousLoop,
-  loadConfig as loadAutonomousConfig,
-  createProvider as createAutonomousProvider,
-  createAutonomousController,
   triggerFromMessage,
   type AutonomousController,
 } from '../autonomous/index.js';
@@ -459,18 +455,15 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
     safeLogger.warn('Voice filter config not found, disabled');
   }
 
-  // ── Autonomous controller ──────────────────────────────────────────────
-  // Attempt to load autonomous config and create the controller.
-  // If dual_loop.enabled is true in autonomous.yaml, create a DualLoopController
-  // instead of the standard AutonomousController.
+  // ── Autonomous controller (dual-loop) ──────────────────────────────────
+  // Create a DualLoopController from autonomous.yaml config.
   // If the autonomous module is not configured, the controller stays undefined
   // and autonomous commands will respond with "not configured".
   let autonomousController: AutonomousController | undefined;
   const dualLoopRuntime = parseDualLoopRuntimeConfig(rawAutonomousYaml);
-  const dualLoopEnabled = dualLoopRuntime.enabled;
 
   try {
-    if (dualLoopEnabled) {
+    {
       // ── Dual-loop mode ──────────────────────────────────────────────
       const { createDualLoopController } = await import('../dual-loop/index.js');
       const { OllamaProvider } = await import('../providers/ollama.js');
@@ -604,6 +597,7 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         eventBus,
         goalStack,
         issueLog: agentState.issueLog,
+        worldModel: agentState.worldModel,
         voiceFilter,
         coordinatorConfig: dualLoopRuntime.coordinatorConfig,
         sendMessageFn: deliver,
@@ -616,30 +610,6 @@ export async function startDaemon(daemonConfig: DaemonConfig): Promise<void> {
         fastModel: 'qwen3.5:35b-a3b',
         reasonerModel: 'mlx:' + deepProvider.model,
         coderModel: 'mlx:' + coderProvider.model,
-      });
-    } else {
-      // ── Standard single-loop mode ───────────────────────────────────
-      const autonomousConfig = await loadAutonomousConfig(autonomousConfigPath);
-      const autonomousProvider = await createAutonomousProvider(autonomousConfig);
-      const autonomousLoop = new AutonomousLoop(
-        autonomousConfig,
-        process.cwd(),
-        autonomousProvider,
-        {
-          approvalBridge,
-          approvalRecipient: allowedSenders?.[0],
-        },
-        autonomousConfig.agentLoop,
-      );
-
-      autonomousController = createAutonomousController({
-        loop: autonomousLoop,
-        cycleIntervalMinutes: autonomousConfig.cycleIntervalMinutes,
-      });
-
-      safeLogger.info('Autonomous controller initialized', {
-        model: autonomousConfig.model,
-        interval: autonomousConfig.cycleIntervalMinutes,
       });
     }
 

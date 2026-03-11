@@ -4,13 +4,12 @@
  * Validates that the entire Tyrion system is properly wired:
  * - All exports resolve (no broken imports)
  * - Module interfaces are compatible
- * - Configuration types match runtime expectations
  * - Security constraints are enforced
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve } from 'node:path';
 
 const PROJECT_ROOT = resolve(import.meta.dirname, '..');
 
@@ -21,45 +20,12 @@ const PROJECT_ROOT = resolve(import.meta.dirname, '..');
 describe('autonomous module exports', () => {
   it('exports all core types', async () => {
     const types = await import('../src/autonomous/types.js');
-    // Verify key interfaces exist as type exports (they don't have runtime presence,
-    // but the module should load without error)
     expect(types).toBeDefined();
-  });
-
-  it('exports provider interface and factory', async () => {
-    const provider = await import('../src/autonomous/provider.js');
-    expect(provider.createProvider).toBeDefined();
-    expect(typeof provider.createProvider).toBe('function');
-    expect(provider.BaseAutonomousProvider).toBeDefined();
-    expect(provider.PROMPTS).toBeDefined();
-    expect(provider.PROMPTS.analyze).toBeTruthy();
-    expect(provider.PROMPTS.hypothesize).toBeTruthy();
-    expect(provider.PROMPTS.implement).toBeTruthy();
-    expect(provider.PROMPTS.reflect).toBeTruthy();
-  });
-
-  it('exports loop class and utilities', async () => {
-    const loop = await import('../src/autonomous/loop.js');
-    expect(loop.AutonomousLoop).toBeDefined();
-    expect(loop.AbortError).toBeDefined();
-    expect(loop.loadConfig).toBeDefined();
-    expect(typeof loop.loadConfig).toBe('function');
-  });
-
-  it('exports validator', async () => {
-    const validator = await import('../src/autonomous/validator.js');
-    expect(validator.Validator).toBeDefined();
-    expect(validator.buildInvariants).toBeDefined();
   });
 
   it('exports reflector', async () => {
     const reflector = await import('../src/autonomous/reflector.js');
     expect(reflector.Reflector).toBeDefined();
-  });
-
-  it('exports controller', async () => {
-    const controller = await import('../src/autonomous/controller.js');
-    expect(controller.createAutonomousController).toBeDefined();
   });
 
   it('exports world model (Phase 1)', async () => {
@@ -149,18 +115,6 @@ describe('autonomous module exports', () => {
     expect(arch.createCodeArchaeologist).toBeDefined();
   });
 
-  it('exports message policy (Phase 7)', async () => {
-    const policy = await import('../src/autonomous/communication/policy.js');
-    expect(policy.MessagePolicy).toBeDefined();
-    expect(policy.createMessagePolicy).toBeDefined();
-  });
-
-  it('exports reports', async () => {
-    const report = await import('../src/autonomous/report.js');
-    expect(report.formatDailyReport).toBeDefined();
-    expect(report.formatMorningSummary).toBeDefined();
-  });
-
   it('exports test parser', async () => {
     const parser = await import('../src/autonomous/test-parser.js');
     expect(parser.parseVitestJson).toBeDefined();
@@ -201,11 +155,6 @@ describe('autonomous barrel export (index.ts)', () => {
     const auto = await import('../src/autonomous/index.js');
 
     // Core
-    expect(auto.AutonomousLoop).toBeDefined();
-    expect(auto.AbortError).toBeDefined();
-    expect(auto.loadConfig).toBeDefined();
-    expect(auto.createProvider).toBeDefined();
-    expect(auto.Validator).toBeDefined();
     expect(auto.Reflector).toBeDefined();
 
     // Phase 1
@@ -235,9 +184,6 @@ describe('autonomous barrel export (index.ts)', () => {
     expect(auto.CodeArchaeologist).toBeDefined();
 
     // Utilities
-    expect(auto.createAutonomousController).toBeDefined();
-    expect(auto.formatDailyReport).toBeDefined();
-    expect(auto.formatMorningSummary).toBeDefined();
     expect(auto.parseVitestJson).toBeDefined();
   });
 });
@@ -247,30 +193,6 @@ describe('autonomous barrel export (index.ts)', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('security constraints', () => {
-  it('no cloud provider imports in autonomous modules', () => {
-    const autoDir = resolve(PROJECT_ROOT, 'src/autonomous');
-    const content = readFileSync(resolve(autoDir, 'provider.ts'), 'utf8');
-    expect(content).not.toContain("from 'openai'");
-    expect(content).not.toContain("from '@anthropic-ai'");
-    expect(content).not.toContain('api.openai.com');
-  });
-
-  it('provider factory only creates Ollama provider', () => {
-    const content = readFileSync(resolve(PROJECT_ROOT, 'src/autonomous/provider.ts'), 'utf8');
-    expect(content).toContain('OllamaAutonomousProvider');
-    expect(content).not.toContain('OpenAI');
-    expect(content).not.toContain('Anthropic');
-  });
-
-  it('forbidden patterns include sensitive file types', async () => {
-    const { loadConfig } = await import('../src/autonomous/loop.js');
-    const config = await loadConfig(resolve(PROJECT_ROOT, 'config/autonomous.yaml'));
-    const hasSensitivePatterns = config.forbiddenPatterns.some(
-      (p) => p.includes('.env') || p.includes('secret') || p.includes('credential')
-    );
-    expect(hasSensitivePatterns).toBe(true);
-  });
-
   it('protected paths are defined in CLAUDE.md', () => {
     const claudeMd = readFileSync(resolve(PROJECT_ROOT, 'CLAUDE.md'), 'utf8');
     expect(claudeMd).toContain('protected paths');
@@ -291,59 +213,16 @@ describe('security constraints', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PROMPTS template structure
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('prompt templates', () => {
-  it('all prompt templates have required placeholders', async () => {
-    const { PROMPTS } = await import('../src/autonomous/provider.js');
-
-    expect(PROMPTS.analyze).toContain('{{errorLogs}}');
-    expect(PROMPTS.analyze).toContain('{{performanceMetrics}}');
-    expect(PROMPTS.analyze).toContain('{{codebaseStats}}');
-    expect(PROMPTS.analyze).toContain('{{backlog}}');
-
-    expect(PROMPTS.hypothesize).toContain('{{observations}}');
-    expect(PROMPTS.hypothesize).toContain('confidence');
-
-    expect(PROMPTS.implement).toContain('{{hypothesis}}');
-    expect(PROMPTS.implement).toContain('{{fileContents}}');
-
-    expect(PROMPTS.reflect).toContain('{{cycleId}}');
-    expect(PROMPTS.reflect).toContain('{{outcome}}');
-  });
-
-  it('analyze prompt requests specific observation types', async () => {
-    const { PROMPTS } = await import('../src/autonomous/provider.js');
-    expect(PROMPTS.analyze).toContain('error_pattern');
-    expect(PROMPTS.analyze).toContain('performance_issue');
-    expect(PROMPTS.analyze).toContain('test_failure');
-    expect(PROMPTS.analyze).toContain('feature_request');
-  });
-
-  it('hypothesize prompt requests confidence scores', async () => {
-    const { PROMPTS } = await import('../src/autonomous/provider.js');
-    expect(PROMPTS.hypothesize).toContain('confidence: 0-1');
-  });
-
-  it('implement prompt includes safety instructions', async () => {
-    const { PROMPTS } = await import('../src/autonomous/provider.js');
-    expect(PROMPTS.implement).toContain('minimal');
-    expect(PROMPTS.implement).toContain('existing');
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // File structure validation
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('project structure', () => {
   const requiredDirs = [
     'src/autonomous',
-    'src/autonomous/providers',
     'src/autonomous/dream',
-    'src/autonomous/communication',
     'src/autonomous/reasoning',
+    'src/autonomous/tools',
+    'src/dual-loop',
     'src/models',
     'config',
     'tests',
@@ -357,9 +236,6 @@ describe('project structure', () => {
   }
 
   const requiredFiles = [
-    'src/autonomous/loop.ts',
-    'src/autonomous/provider.ts',
-    'src/autonomous/validator.ts',
     'src/autonomous/reflector.ts',
     'src/autonomous/types.ts',
     'src/autonomous/index.ts',
@@ -373,16 +249,15 @@ describe('project structure', () => {
     'src/autonomous/context-manager.ts',
     'src/autonomous/context-store.ts',
     'src/autonomous/debug.ts',
-    'src/autonomous/controller.ts',
-    'src/autonomous/report.ts',
+    'src/autonomous/controller-types.ts',
     'src/autonomous/test-parser.ts',
-    'src/autonomous/memory-config.ts',
     'src/autonomous/reasoning/scaling.ts',
     'src/autonomous/reasoning/adversarial.ts',
     'src/autonomous/dream/runner.ts',
     'src/autonomous/dream/self-model.ts',
     'src/autonomous/dream/archaeology.ts',
-    'src/autonomous/communication/policy.ts',
+    'src/autonomous/tools/store-interfaces.ts',
+    'src/dual-loop/dual-loop-controller.ts',
     'src/models/index.ts',
     'src/models/types.ts',
     'src/models/profiles.ts',
@@ -395,4 +270,3 @@ describe('project structure', () => {
     });
   }
 });
-

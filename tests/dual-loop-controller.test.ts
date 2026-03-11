@@ -200,7 +200,10 @@ describe('DualLoopController', () => {
     it('returns a summary string', async () => {
       const controller = createDualLoopController(makeOptions());
       const summary = await controller.getMorningSummary();
-      expect(summary).toContain('Dual-loop summary');
+      expect(summary).toContain('Good morning! Here is your overnight report:');
+      expect(summary).toContain('FastLoop:');
+      expect(summary).toContain('DeepLoop:');
+      expect(summary).toContain('Tasks:');
     });
   });
 

@@ -25,11 +25,12 @@ import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { EventBus } from '../autonomous/events.js';
 import type { GoalStack } from '../autonomous/goal-stack.js';
 import type { IssueLog } from '../autonomous/issue-log.js';
+import type { WorldModel } from '../autonomous/world-model.js';
 import type { AgentToolkit } from '../autonomous/tools/types.js';
 import type {
   AutonomousController,
   AutonomousStatus,
-} from '../autonomous/controller.js';
+} from '../autonomous/controller-types.js';
 import type { AgentTrigger, AgentOutcome } from '../autonomous/agent-loop.js';
 import type { VoiceFilter } from '../imessage/voice-filter.js';
 import type { HandoffState } from '../autonomous/types.js';
@@ -59,6 +60,8 @@ export interface DualLoopControllerOptions {
   goalStack: GoalStack;
   /** Issue log for tracking reported problems */
   issueLog?: IssueLog | undefined;
+  /** World model for codebase health tracking (used by dream cycles) */
+  worldModel?: WorldModel | undefined;
   /** Voice filter for response delivery */
   voiceFilter: VoiceFilter;
   /** Coordinator configuration from autonomous.yaml */
@@ -114,6 +117,16 @@ export function createDualLoopController(
 
   // Wire the GoalStack into DeepLoop for idle-time goal work
   coordinator.getDeepLoop().setGoalStack(options.goalStack);
+
+  // Wire dream scheduler for idle-time self-improvement cycles
+  if (options.worldModel && options.issueLog) {
+    coordinator.initDreamScheduler({
+      worldModel: options.worldModel,
+      goalStack: options.goalStack,
+      issueLog: options.issueLog,
+      isDeepLoopIdle: () => false, // placeholder — the coordinator overrides this
+    });
+  }
 
   // Wire response delivery: FastLoop → voice filter → send
   // Voice filter and delivery are separate concerns: if the voice filter
@@ -283,6 +296,7 @@ export function createDualLoopController(
           `DeepLoop: ${health.deep.running ? 'running' : 'stopped'}${health.deep.currentTask ? ` [${health.deep.currentTask}]` : ''}`,
           `Tasks: ${health.taskBoard.active} active, ${health.taskBoard.queued} queued, ${health.taskBoard.doneToday} done today`,
           `Cycles: ${totalCycles} total, ${successfulCycles} succeeded`,
+          coordinator.getDreamSchedulerSummary(),
         ].join('\n');
       case 'health':
         return coordinator.getHealthSummary();
@@ -321,19 +335,102 @@ export function createDualLoopController(
   async function getMorningSummary(): Promise<string> {
     const handoff = await getHandoff();
     const health = coordinator.getHealth();
+    const taskBoard = coordinator.getTaskBoard();
 
-    const parts: string[] = ['Good morning. Dual-loop summary:'];
-    parts.push(`Tasks completed: ${health.taskBoard.doneToday}`);
-    parts.push(`Active tasks: ${health.taskBoard.active}`);
+    const lines: string[] = [];
+    lines.push('Good morning! Here is your overnight report:');
+    lines.push('');
 
-    if (handoff) {
-      parts.push(`Pending branches: ${handoff.pendingBranches.length}`);
-      if (handoff.nightSummary.cyclesCompleted > 0) {
-        parts.push(`Overnight cycles: ${handoff.nightSummary.cyclesCompleted}`);
+    // ── System health ────────────────────────────────────────────────────
+    lines.push(`System: ${health.running ? 'running' : 'stopped'}`);
+    lines.push(`FastLoop: ${health.fast.running ? 'up' : 'down'} (${health.fast.errorCount} errors, ${health.fast.restartCount} restarts)`);
+    lines.push(`DeepLoop: ${health.deep.running ? 'up' : 'down'}${health.deep.currentTask ? ` [${health.deep.currentTask}]` : ''} (${health.deep.errorCount} errors, ${health.deep.restartCount} restarts)`);
+    lines.push('');
+
+    // ── Task board ───────────────────────────────────────────────────────
+    lines.push(`Tasks: ${health.taskBoard.doneToday} done today, ${health.taskBoard.active} active, ${health.taskBoard.queued} queued`);
+    if (health.taskBoard.reviewing > 0) {
+      lines.push(`  ${health.taskBoard.reviewing} awaiting review`);
+    }
+
+    // ── Codebase health ──────────────────────────────────────────────────
+    if (options.worldModel) {
+      const wm = options.worldModel.getHealth();
+      const tc = wm.typecheck.passed ? 'passing' : `${wm.typecheck.errorCount} errors`;
+      const tests = wm.tests.passed
+        ? `${wm.tests.passing} passing`
+        : `${wm.tests.passing} passing, ${wm.tests.failing} failing`;
+      const lint = wm.lint.passed ? 'clean' : `${wm.lint.errorCount} errors`;
+
+      lines.push('');
+      lines.push(`Typecheck: ${tc}`);
+      lines.push(`Tests: ${tests}`);
+      lines.push(`Lint: ${lint}`);
+
+      if (wm.tests.failingTests.length > 0) {
+        for (const t of wm.tests.failingTests.slice(0, 3)) {
+          lines.push(`  - ${t}`);
+        }
+        if (wm.tests.failingTests.length > 3) {
+          lines.push(`  ... and ${wm.tests.failingTests.length - 3} more`);
+        }
       }
     }
 
-    return parts.join('\n');
+    // ── Dream cycles ─────────────────────────────────────────────────────
+    const dreamSummary = coordinator.getDreamSchedulerSummary();
+    if (dreamSummary && !dreamSummary.includes('not initialized')) {
+      lines.push('');
+      lines.push(dreamSummary);
+    }
+
+    // ── Goals ────────────────────────────────────────────────────────────
+    const goalSummary = options.goalStack.getSummary();
+    if (goalSummary.totalOpen > 0) {
+      lines.push('');
+      const parts: string[] = [`Goals: ${goalSummary.totalOpen} open`];
+      if (goalSummary.inProgress.length > 0) parts.push(`${goalSummary.inProgress.length} in progress`);
+      if (goalSummary.blocked.length > 0) parts.push(`${goalSummary.blocked.length} blocked`);
+      lines.push(parts.join(', '));
+
+      for (const g of goalSummary.inProgress.slice(0, 3)) {
+        lines.push(`  - ${g.description}`);
+      }
+    }
+
+    // ── Issues ───────────────────────────────────────────────────────────
+    if (options.issueLog) {
+      const issueSummary = options.issueLog.getSummary();
+      if (issueSummary.totalOpen > 0) {
+        lines.push('');
+        lines.push(`Issues: ${issueSummary.totalOpen} open`);
+        for (const i of issueSummary.investigating.slice(0, 3)) {
+          lines.push(`  - [investigating] ${i.title}`);
+        }
+        const openNotInvestigating = issueSummary.openByPriority.filter(
+          (i) => i.status !== 'investigating',
+        );
+        for (const i of openNotInvestigating.slice(0, 2)) {
+          lines.push(`  - [${i.priority}] ${i.title}`);
+        }
+      }
+    }
+
+    // ── Pending branches (from handoff) ──────────────────────────────────
+    const pending = handoff?.pendingBranches ?? [];
+    if (pending.length > 0) {
+      lines.push('');
+      lines.push('Branches ready for review:');
+      for (const b of pending) {
+        lines.push(`  - ${b.branch}: ${b.proposal}`);
+        lines.push(`    Confidence: ${b.confidence.toFixed(2)}`);
+      }
+    }
+
+    lines.push('');
+    lines.push('Reply "status" for live dashboard or "merge <branch>" to integrate.');
+
+    return lines.join('\n');
   }
 
   // ── writeHandoff ──────────────────────────────────────────────────────
