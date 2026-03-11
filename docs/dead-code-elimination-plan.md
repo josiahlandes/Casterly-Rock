@@ -1,106 +1,122 @@
-# Dead Code Elimination Plan
+# Dead Code Elimination Plan (Corrected)
 
-> Generated 2026-03-11. Based on audit of `src/autonomous/` vs `src/dual-loop/`.
+> Generated 2026-03-11. Corrected after dependency-chain audit revealed no
+> truly orphaned modules exist.
 
 ## Context
 
-The system migrated from a single `AutonomousLoop` (4-phase: Analyze→Hypothesize→Implement→Reflect) to a dual-loop architecture (`FastLoop` + `DeepLoop` + `DreamScheduler`). The old single-loop path survives as a fallback in `src/imessage/daemon.ts:621-645`, gated by `dual_loop.enabled` in `autonomous.yaml`. This fallback is never used in production.
+The system migrated from a single `AutonomousLoop` (4-phase:
+Analyze→Hypothesize→Implement→Reflect) to a dual-loop architecture
+(`FastLoop` + `DeepLoop` + `DreamScheduler`). The old single-loop path
+survives as a fallback in `src/imessage/daemon.ts:621-645`, gated by
+`dual_loop.enabled` in `autonomous.yaml`.
 
-## Phase 1: Delete Completely Dead Code (safe, no dependencies)
+## Why the Original Audit Was Wrong
 
-These modules are exported from `src/autonomous/index.ts` but **never imported anywhere**:
+The first audit checked whether modules were imported *from outside*
+`src/autonomous/`. But the dual-loop imports `tools/types.ts`, which in turn
+imports `ConstitutionStore`, `CrystalStore`, and `TraceReplayStore`.
+`DreamCycleRunner` (used by `DreamScheduler` in the dual-loop) imports
+`CodeArchaeologist`, `SelfModel`, and `AdapterManager`. `AgentLoop` imports
+`LoopDetector`. `agent-tools.ts` imports `AdversarialTester`.
 
-| File | What it is | Why dead |
-|------|-----------|----------|
-| `src/autonomous/loop-detector.ts` | Infinite loop detector | Never imported or instantiated |
-| `src/autonomous/test-parser.ts` | Test output parser | Never imported externally |
-| `src/autonomous/reasoning/adversarial.ts` | AdversarialTester | Never instantiated |
-| `src/autonomous/dream/archaeology.ts` | CodeArchaeologist | Only in AutonomousLoop constructor |
-| `src/autonomous/dream/self-model.ts` | SelfModel builder | Only in AutonomousLoop constructor |
+**Every module originally flagged as "dead" is reachable through active
+dual-loop dependency chains.** There is no safe deletion without decoupling first.
 
-**Steps:**
-1. Delete the 5 files above
-2. Remove their exports from `src/autonomous/index.ts`
-3. Remove any associated test files
+## Dependency Map: What Bridges the Two Architectures
+
+These modules are shared between the old single-loop and the new dual-loop:
+
+| Bridge Module | Used by Single-Loop | Used by Dual-Loop via |
+|---------------|--------------------|-----------------------|
+| `tools/types.ts` | `agent-tools.ts` → `loop.ts` | `deep-loop.ts`, `coordinator.ts`, `state-manager.ts` |
+| `dream/runner.ts` | `loop.ts` | `DreamScheduler` → `coordinator.ts` |
+| `agent-loop.ts` | `controller.ts` → `loop.ts` | Shared (AgentLoop class) |
+| `identity.ts` | `context-manager.ts` | `deep-loop.ts` |
+| `agent-tools.ts` | `loop.ts` | Indirectly via `tools/types.ts` |
+
+Because `tools/types.ts` imports store types (ConstitutionStore, CrystalStore,
+TraceReplayStore), these stores cannot be deleted without modifying the shared
+type interface.
+
+## Revised Plan
+
+### Phase 1: Decouple Shared Types from Store Implementations
+
+**Goal:** Make `tools/types.ts` reference lightweight interfaces instead of
+concrete store classes.
+
+1. Extract `ConstitutionStore`, `CrystalStore`, `TraceReplayStore` type
+   signatures into a new `src/autonomous/tools/store-interfaces.ts`
+2. Update `tools/types.ts` to import from `store-interfaces.ts` instead of
+   the concrete modules
+3. Update `agent-tools.ts` to import concrete classes only where instantiated
+   (not at the type level)
 4. Run `npm run check`
 
-## Phase 2: Remove Single-Loop Fallback Path
+### Phase 2: Remove Single-Loop Fallback Path
 
-The `else` branch in `daemon.ts:621-645` is the only thing keeping 13+ modules alive.
+1. Remove the `else` block in `daemon.ts:621-645`
+2. Remove unused imports: `AutonomousLoop`, `loadConfig`, `createProvider`,
+   `createAutonomousController`
+3. Run `npm run check` to identify newly unreachable code
 
-**Steps:**
-1. In `src/imessage/daemon.ts`, remove the `else` block (lines 621-645) and make dual-loop the only path
-2. Remove the now-unused imports from daemon.ts: `AutonomousLoop`, `loadConfig`, `createProvider`, `createAutonomousController`
-3. Run `npm run check` to find all newly unreferenced code
+### Phase 3: Delete Newly Orphaned Single-Loop Modules
 
-## Phase 3: Delete Single-Loop-Only Modules
+After Phase 2, trace the dependency graph again. Modules that become orphaned:
 
-Once Phase 2 lands, these become orphaned:
+**Likely orphaned (only reachable via loop.ts):**
+- `src/autonomous/provider.ts` — legacy 4-phase provider
+- `src/autonomous/providers/ollama.ts` — old OllamaProvider
+- `src/autonomous/communication/delivery.ts` — MessageDelivery
+- `src/autonomous/communication/policy.ts` — MessagePolicy
+- `src/autonomous/report.ts` — old formatDailyReport/formatMorningSummary
+- `src/autonomous/status-report.ts` — old status formatters
+- `src/autonomous/validator.ts` — hypothesis validation
+- `src/autonomous/memory-config.ts` — single-loop Zod config
+- `src/autonomous/trigger-router.ts` — event→trigger routing
 
-### Legacy Provider System
-| File | Exports |
-|------|---------|
-| `src/autonomous/provider.ts` | `BaseAutonomousProvider`, `createProvider()` |
-| `src/autonomous/providers/ollama.ts` | `OllamaProvider` (old 4-phase) |
+**Requires re-verification (may still be needed via DreamCycleRunner):**
+- `src/autonomous/constitution-store.ts` — check if only loop.ts instantiates
+- `src/autonomous/crystal-store.ts` — check if only loop.ts instantiates
+- `src/autonomous/trace-replay.ts` — check if only loop.ts instantiates
 
-### Communication System
-| File | Exports |
-|------|---------|
-| `src/autonomous/communication/delivery.ts` | `MessageDelivery` |
-| `src/autonomous/communication/policy.ts` | `MessagePolicy` |
+**Must keep (used by DreamCycleRunner → DreamScheduler → dual-loop):**
+- `src/autonomous/dream/archaeology.ts` — CodeArchaeologist
+- `src/autonomous/dream/self-model.ts` — SelfModel
+- `src/autonomous/dream/adapter-manager.ts` — AdapterManager
+- `src/autonomous/loop-detector.ts` — LoopDetector (used by AgentLoop)
+- `src/autonomous/reasoning/adversarial.ts` — AdversarialTester (used by agent-tools)
 
-### Reporting (replaced by dual-loop-controller.ts)
-| File | Exports |
-|------|---------|
-| `src/autonomous/report.ts` | `formatDailyReport()`, `formatMorningSummary()` |
-| `src/autonomous/status-report.ts` | `formatStatusOverview()`, `formatGoalsSummary()`, etc. |
+**Extract before deleting:**
+- `AutonomousController` interface from `controller.ts` → move to
+  `src/autonomous/controller-types.ts` (used by `dual-loop-controller.ts`)
 
-### Single-Loop Orchestration
-| File | Exports |
-|------|---------|
-| `src/autonomous/loop.ts` | `AutonomousLoop` class |
-| `src/autonomous/controller.ts` | `createAutonomousController()` |
-| `src/autonomous/validator.ts` | Hypothesis validation |
-| `src/autonomous/memory-config.ts` | Zod config schema |
-| `src/autonomous/constitution-store.ts` | Constitutional rules |
-| `src/autonomous/crystal-store.ts` | Memory crystallization |
-| `src/autonomous/trace-replay.ts` | Execution trace replay |
+### Phase 4: Delete loop.ts Itself
 
-**Steps:**
-1. Delete all files listed above (13 files)
-2. Remove their exports from `src/autonomous/index.ts`
-3. Remove associated test files
-4. The `AutonomousController` interface in `controller.ts` is used by `dual-loop-controller.ts` — **extract** the interface to a shared types file before deleting controller.ts
-5. Run `npm run check`
+Once all modules that depend solely on `AutonomousLoop` are removed:
+1. Delete `src/autonomous/loop.ts`
+2. Remove its exports from `src/autonomous/index.ts`
+3. Delete associated test files (`tests/autonomous-loop.test.ts`)
+4. Run `npm run check`
 
-## Phase 4: Clean Up index.ts Barrel
+### Phase 5: Clean Up Barrel Exports
 
-After Phases 1-3, `src/autonomous/index.ts` will have many stale re-exports. Rebuild it to only export what the dual-loop and daemon actually import.
+Rebuild `src/autonomous/index.ts` to only re-export what is actually imported
+by the dual-loop, daemon, and shared modules.
 
-**Keep:** EventBus, GoalStack, IssueLog, WorldModel, Journal, ContextManager, Reflector, AgentLoop, debug/getTracer, identity, dream/*, memory/*, reasoning/scaling, reasoning/compute-scaler, tools/types, prompt-store, shadow-store.
+## Impact Summary (Revised)
 
-**Delete exports for:** everything removed in Phases 1-3.
+| Phase | What | Files Changed | Risk |
+|-------|------|--------------|------|
+| Phase 1 | Decouple types | 3 modified, 1 new | Low |
+| Phase 2 | Remove fallback | 1 modified | Low |
+| Phase 3 | Delete orphans | ~9-12 deleted | Medium — requires re-verification |
+| Phase 4 | Delete loop.ts | 1 deleted | Low (after Phase 3) |
+| Phase 5 | Clean barrel | 1 modified | None |
 
-## Phase 5: Verify & Evaluate Edge Cases
+## Key Lesson
 
-| Module | Status | Decision |
-|--------|--------|----------|
-| `context-store.ts` | Only used by `context-manager.ts` internally | Keep (internal dep) |
-| `identity.ts` | Used by context-manager + agent-loop | Keep |
-| `agent-tools.ts` | Used by both loop.ts and dual-loop | Keep, but verify after loop.ts deletion |
-| `tools/helpers.ts`, `tools/registry.ts`, `tools/tool-map.ts` | Used by agent-loop | Keep if agent-loop stays |
-
-## Impact Summary
-
-| Phase | Files Deleted | Risk |
-|-------|--------------|------|
-| Phase 1 | 5 | None — completely unused |
-| Phase 2 | 0 (code change) | Low — removes unused fallback |
-| Phase 3 | 13 | Medium — requires interface extraction |
-| Phase 4 | 0 (cleanup) | None |
-| **Total** | **18 files** | |
-
-## Execution Order
-
-Phase 1 → commit → Phase 2 → commit → Phase 3 → commit → Phase 4 → commit.
-Each phase gets its own commit with `npm run check` passing before proceeding.
+Never trust import-from-outside analysis alone. Always trace full dependency
+chains: A → B → C where A is alive means C is alive, even if C has no direct
+external importers.
