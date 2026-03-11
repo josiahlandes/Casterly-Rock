@@ -60,11 +60,14 @@ import type { JobStore } from '../scheduler/store.js';
 import type { ConcurrentProvider } from '../providers/concurrent.js';
 import type { DreamCycleRunner } from './dream/runner.js';
 import type { Reflector } from './reflector.js';
-import type { MessagePolicy } from './communication/policy.js';
-import type { MessageDelivery } from './communication/delivery.js';
-import type { CrystalStore } from './crystal-store.js';
-import type { ConstitutionStore } from './constitution-store.js';
-import type { TraceReplayStore } from './trace-replay.js';
+import type {
+  ICrystalStore,
+  IConstitutionStore,
+  ITraceReplayStore,
+  IMessagePolicy,
+  IMessageDelivery,
+  NotifiableEvent,
+} from './tools/store-interfaces.js';
 import type { EmbeddingProvider } from '../providers/embedding.js';
 import type { LinkNetwork, LinkType } from './memory/link-network.js';
 import type { MemoryEvolution, EvolvableMemory, EvolutionOp } from './memory/memory-evolution.js';
@@ -222,11 +225,11 @@ export interface AgentState {
   // ── Vision Tier 1: Self-Knowledge ──
 
   /** Vision Tier 1: Crystal store for memory crystallization */
-  crystalStore?: CrystalStore;
+  crystalStore?: ICrystalStore;
   /** Vision Tier 1: Constitution store for operational rules */
-  constitutionStore?: ConstitutionStore;
+  constitutionStore?: IConstitutionStore;
   /** Vision Tier 1: Trace replay store for self-debugging */
-  traceReplayStore?: TraceReplayStore;
+  traceReplayStore?: ITraceReplayStore;
 
   // ── Reconciliation: Dream cycle phases as tools ──
 
@@ -238,9 +241,9 @@ export interface AgentState {
   // ── Communication ──
 
   /** Message policy for throttling and filtering outbound messages */
-  messagePolicy?: MessagePolicy;
+  messagePolicy?: IMessagePolicy;
   /** Message delivery backend (iMessage, console outbox) */
-  messageDelivery?: MessageDelivery;
+  messageDelivery?: IMessageDelivery;
 
   // ── Advanced Memory (A-MEM) ──
 
