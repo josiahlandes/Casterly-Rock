@@ -429,6 +429,20 @@ export class DreamScheduler {
       if (autoresearchResult) {
         this.state.totalAutoresearchExperiments += autoresearchResult.experiments.length;
         this.state.totalAutoresearchAccepted += autoresearchResult.acceptedCount;
+
+        const accepted = autoresearchResult.acceptedCount;
+        const reverted = autoresearchResult.experiments.length - accepted;
+        await appendActivity({
+          timestamp: new Date().toISOString(),
+          type: 'autoresearch_experiment',
+          summary: `${autoresearchResult.experiments.length} experiment(s): ${accepted} accepted, ${reverted} reverted`,
+          durationMs: autoresearchResult.totalDurationMs,
+          metrics: {
+            experiments: autoresearchResult.experiments.length,
+            accepted,
+            reverted,
+          },
+        });
       }
 
       const now = new Date();

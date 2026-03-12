@@ -1169,9 +1169,9 @@ describe('Dream Cycle Pipeline (Phase 6)', () => {
         'utf8',
       );
 
-      // Should check for critical and high priority issues
-      expect(source).toContain("issue.priority === 'critical'");
-      expect(source).toContain("issue.priority === 'high'");
+      // Should map issue priorities to goal priorities (all priorities queued)
+      expect(source).toContain('priorityMap');
+      expect(source).toContain('issue.priority');
       // Should create goals from unaddressed issues
       expect(source).toContain('addGoal');
       // Should prune stale goals

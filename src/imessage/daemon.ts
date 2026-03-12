@@ -137,7 +137,7 @@ async function processMessage(
 
 // ─── Status Command Patterns ─────────────────────────────────────────────────
 
-const STATUS_COMMANDS_RE = /^(status|goals|issues|health|activity|commands)$/i;
+const STATUS_COMMANDS_RE = /^(status|goals|issues|health|activity|autoresearch|commands)$/i;
 const LEDGER_RE = /^ledger\s+(\d+)\s+(hours?|days?)$/i;
 
 // ─── Autonomous Command Patterns ─────────────────────────────────────────────

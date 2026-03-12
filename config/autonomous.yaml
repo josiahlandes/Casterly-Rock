@@ -384,7 +384,7 @@ dream_cycles:
   #   5 = "balanced" — daily cycles, moderate exploration (default)
   #  10 = "obsessive" — cycles every ~4h, aggressive self-improvement
   # ─────────────────────────────────────────────────────────────────────────────
-  intensity: 5
+  intensity: 7
 
   # ─────────────────────────────────────────────────────────────────────────────
   # PHASE PROGRESS (interruption recovery)

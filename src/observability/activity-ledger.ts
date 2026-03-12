@@ -24,7 +24,8 @@ export type ActivityType =
   | 'goal_attempted'
   | 'dream_cycle'
   | 'issue_filed'
-  | 'morning_summary';
+  | 'morning_summary'
+  | 'autoresearch_experiment';
 
 export interface ActivityEntry {
   timestamp: string;
@@ -124,6 +125,7 @@ const TYPE_LABELS: Record<ActivityType, string> = {
   dream_cycle: 'Dream cycle',
   issue_filed: 'Issue filed',
   morning_summary: 'Morning summary',
+  autoresearch_experiment: 'Autoresearch',
 };
 
 /**
@@ -159,7 +161,7 @@ export function formatLedgerReport(entries: ActivityEntry[], hours: number): str
   return lines.join('\n');
 }
 
-function formatRelativeTime(isoTimestamp: string): string {
+export function formatRelativeTime(isoTimestamp: string): string {
   const diffMs = Date.now() - new Date(isoTimestamp).getTime();
   const minutes = Math.floor(diffMs / 60_000);
 

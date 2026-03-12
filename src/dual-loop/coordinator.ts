@@ -28,6 +28,7 @@ import { DreamScheduler } from './dream-scheduler.js';
 import type { DreamSchedulerConfig, DreamSchedulerDeps } from './dream-scheduler.js';
 import type { GoalStack } from '../autonomous/goal-stack.js';
 import type { IssueLog } from '../autonomous/issue-log.js';
+import type { ChangeApplier } from '../autonomous/dream/autoresearch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -188,6 +189,14 @@ export class LoopCoordinator {
       },
       schedulerConfig,
     );
+  }
+
+  /**
+   * Wire a ChangeApplier into the dream scheduler's autoresearch engine.
+   * Must be called after initDreamScheduler().
+   */
+  setAutoresearchChangeApplier(applier: ChangeApplier): void {
+    this.dreamScheduler?.setChangeApplier(applier);
   }
 
   /**

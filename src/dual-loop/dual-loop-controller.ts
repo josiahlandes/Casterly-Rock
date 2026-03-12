@@ -37,7 +37,8 @@ import type { HandoffState } from '../autonomous/types.js';
 import { createLoopCoordinator } from './coordinator.js';
 import type { CoordinatorConfig } from './coordinator.js';
 import type { DeliverFn } from './fast-loop.js';
-import { readRecentActivity, formatLedgerReport } from '../observability/activity-ledger.js';
+import { readRecentActivity, formatLedgerReport, formatRelativeTime } from '../observability/activity-ledger.js';
+import { createChangeApplier } from '../autonomous/dream/change-applier.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -130,6 +131,12 @@ export function createDualLoopController(
       issueLog: options.issueLog,
       isDeepLoopIdle: () => false, // placeholder — the coordinator overrides this
     });
+
+    // Wire autoresearch ChangeApplier — uses coder model to implement hypotheses
+    const autoresearchProvider = options.coderProvider ?? options.deepProvider;
+    coordinator.setAutoresearchChangeApplier(
+      createChangeApplier(autoresearchProvider, process.cwd()),
+    );
   }
 
   // Wire response delivery: FastLoop → voice filter → send
@@ -319,6 +326,41 @@ export function createDualLoopController(
         return options.issueLog
           ? options.issueLog.getSummaryText()
           : 'Issue tracking not configured.';
+      case 'autoresearch': {
+        try {
+          const logPath = path.join(
+            process.env['HOME'] || '~',
+            '.casterly', 'autoresearch-log.json',
+          );
+          const raw = await fs.readFile(logPath, 'utf-8');
+          const log = JSON.parse(raw) as {
+            experiments: Array<{
+              hypothesisId: string;
+              hypothesisTitle: string;
+              outcome: string;
+              timestamp: string;
+              durationMs: number;
+            }>;
+          };
+          const total = log.experiments.length;
+          const accepted = log.experiments.filter((e) => e.outcome === 'accepted').length;
+          const reverted = log.experiments.filter((e) => e.outcome === 'reverted').length;
+          const errored = log.experiments.filter((e) => e.outcome === 'error').length;
+          const last5 = log.experiments.slice(-5).reverse();
+          const lines = [
+            `Autoresearch: ${total} experiments (${accepted} accepted, ${reverted} reverted, ${errored} errored)`,
+            '',
+            'Recent:',
+          ];
+          for (const e of last5) {
+            const ago = formatRelativeTime(e.timestamp);
+            lines.push(`  [${ago}] ${e.outcome}: ${e.hypothesisTitle} (${(e.durationMs / 1000).toFixed(0)}s)`);
+          }
+          return lines.join('\n');
+        } catch {
+          return 'Autoresearch: no experiments recorded yet.';
+        }
+      }
       case 'commands':
         return [
           'Available commands:',
@@ -327,6 +369,7 @@ export function createDualLoopController(
           '  activity       — task board summary',
           '  goals          — goal stack overview',
           '  issues         — open issues',
+          '  autoresearch   — experiment results',
           '  ledger N hours — activity log (last N hours)',
           '  ledger N days  — activity log (last N days)',
           '  commands       — this list',

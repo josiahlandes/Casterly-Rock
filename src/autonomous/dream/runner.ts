@@ -1042,24 +1042,24 @@ export class DreamCycleRunner {
     }
     const pruned = staleGoals.length;
 
-    // Check for high-priority issues that don't have goals yet
+    // Check for open issues that don't have goals yet — all priorities get queued
     const openIssues = issueLog.getOpenIssues();
     for (const issue of openIssues) {
-      if (issue.priority === 'critical' || issue.priority === 'high') {
-        const goals = goalStack.getOpenGoals();
-        const hasGoal = goals.some(
-          (g) => g.description.includes(issue.id) || g.description.includes(issue.title),
-        );
+      const goals = goalStack.getOpenGoals();
+      const hasGoal = goals.some(
+        (g) => g.description.includes(issue.id) || g.description.includes(issue.title),
+      );
 
-        if (!hasGoal) {
-          goalStack.addGoal({
-            source: 'self',
-            priority: issue.priority === 'critical' ? 2 : 3,
-            description: `Investigate issue ${issue.id}: ${issue.title}`,
-            notes: `Auto-created from ${issue.priority}-priority issue during dream cycle.`,
-          });
-          reorganized++;
-        }
+      if (!hasGoal) {
+        const priorityMap: Record<string, number> = { critical: 2, high: 3, medium: 5, low: 7 };
+        const goalPriority = priorityMap[issue.priority] ?? 7;
+        goalStack.addGoal({
+          source: 'self',
+          priority: goalPriority,
+          description: `Investigate issue ${issue.id}: ${issue.title}`,
+          notes: `Auto-created from ${issue.priority}-priority issue during dream cycle.`,
+        });
+        reorganized++;
       }
     }
 

@@ -467,12 +467,20 @@ export class TaskBoard {
 
   // ── Maintenance ─────────────────────────────────────────────────────────
 
-  /** Remove old completed/failed tasks beyond archiveAfterDays */
+  /** Remove old completed/failed tasks beyond archiveAfterDays (tiered retention) */
   archiveOld(): number {
     const tracer = getTracer();
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - this.config.archiveAfterDays);
-    const cutoffStr = cutoff.toISOString();
+    const now = new Date();
+
+    // Standard retention for done/failed tasks
+    const standardCutoff = new Date(now);
+    standardCutoff.setDate(standardCutoff.getDate() - this.config.archiveAfterDays);
+    const standardCutoffStr = standardCutoff.toISOString();
+
+    // Fast retention (1 day) for trivial answered_directly tasks
+    const fastCutoff = new Date(now);
+    fastCutoff.setDate(fastCutoff.getDate() - 1);
+    const fastCutoffStr = fastCutoff.toISOString();
 
     const before = this.data.tasks.length;
     this.data.tasks = this.data.tasks.filter((t) => {
@@ -480,12 +488,19 @@ export class TaskBoard {
       if (t.status !== 'done' && t.status !== 'failed' && t.status !== 'answered_directly') {
         return true;
       }
-      // Keep recent completed tasks
-      return t.updatedAt >= cutoffStr;
+      // Trivial triage responses: 1-day retention
+      const cutoff = t.status === 'answered_directly' ? fastCutoffStr : standardCutoffStr;
+      return t.updatedAt >= cutoff;
     });
 
     const removed = before - this.data.tasks.length;
     if (removed > 0) {
+      // Prune orphaned deliveredTaskIds
+      const taskIds = new Set(this.data.tasks.map((t) => t.id));
+      this.data.deliveredTaskIds = this.data.deliveredTaskIds.filter((id) => taskIds.has(id));
+      this.delivered.clear();
+      for (const id of this.data.deliveredTaskIds) this.delivered.add(id);
+
       this.dirty = true;
       tracer.log('task-board', 'info', `Archived ${removed} old tasks`);
     }
