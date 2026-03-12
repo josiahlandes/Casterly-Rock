@@ -323,9 +323,11 @@ export function createDualLoopController(
       case 'goals':
         return options.goalStack.getSummaryText();
       case 'issues':
-        return options.issueLog
-          ? options.issueLog.getSummaryText()
-          : 'Issue tracking not configured.';
+        if (options.issueLog) {
+          await options.issueLog.load(); // Reload from disk to pick up external edits
+          return options.issueLog.getSummaryText();
+        }
+        return 'Issue tracking not configured.';
       case 'autoresearch': {
         try {
           const logPath = path.join(

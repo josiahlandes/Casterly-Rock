@@ -79,6 +79,7 @@ function createMockDeps(overrides?: Partial<DreamSchedulerDeps>): DreamScheduler
       getSummaryText: vi.fn().mockReturnValue(''),
     } as unknown as DreamSchedulerDeps['goalStack'],
     issueLog: {
+      load: vi.fn().mockResolvedValue(undefined),
       getOpenIssues: vi.fn().mockReturnValue([]),
       fileIssue: vi.fn().mockReturnValue({ id: 'ISS-001' }),
       getSummaryText: vi.fn().mockReturnValue(''),
@@ -293,6 +294,7 @@ describe('DreamScheduler', () => {
 
       const deps = createMockDeps({
         issueLog: {
+          load: vi.fn().mockResolvedValue(undefined),
           getOpenIssues: vi.fn().mockReturnValue([]),
           fileIssue,
           getSummaryText: vi.fn().mockReturnValue(''),
@@ -350,6 +352,7 @@ describe('DreamScheduler', () => {
       const fileIssue = vi.fn();
       const deps = createMockDeps({
         issueLog: {
+          load: vi.fn().mockResolvedValue(undefined),
           getOpenIssues: vi.fn().mockReturnValue([
             { id: 'ISS-001', title: 'Test failure: test-known', description: '' },
           ]),

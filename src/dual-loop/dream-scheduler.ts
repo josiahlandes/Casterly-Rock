@@ -411,6 +411,9 @@ export class DreamScheduler {
     this.preempted = false;
 
     try {
+      // Reload issue log from disk to pick up externally filed issues
+      await this.deps.issueLog.load();
+
       const outcome = await this.runner.run(
         this.deps.worldModel,
         this.deps.goalStack,
