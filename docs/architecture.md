@@ -11,11 +11,11 @@ Event Sources (iMessage, CLI, File Watcher, Git Hooks, Cron, Goals)
          |
          v
 +------------------------------------------------------------------+
-|                   Loop Coordinator                               |
-|                                                                  |
-|  +------------------------+    +-------------------------------+ |
-|  |     FastLoop            |    |          DeepLoop              | |
-|  |  (qwen3.5:35b-a3b)     |    |                               | |
+|                   Loop Coordinator                                |
+|                                                                   |
+|  +------------------------+    +-------------------------------+  |
+|  |     FastLoop            |    |          DeepLoop             | |
+|  |  (qwen3.5:35b-a3b)     |    |                                | |
 |  |  Ollama :11434          |    |  Reasoner (27B dense)         | |
 |  |                         |    |  MLX :8000 -- plans, reviews  | |
 |  |  - Triage messages      |    |                               | |
