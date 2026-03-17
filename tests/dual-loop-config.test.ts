@@ -93,6 +93,45 @@ describe('parseDualLoopRuntimeConfig', () => {
     });
   });
 
+  it('parses termination config from deep section', () => {
+    const parsed = parseDualLoopRuntimeConfig({
+      dual_loop: {
+        enabled: true,
+        deep: {
+          termination: {
+            emergency_max_turns: 300,
+            checkpoint_interval: 20,
+            stall_threshold: 8,
+            reasoner_timeout_ms: 10000,
+            max_checkpoints_per_step: 25,
+          },
+        },
+      },
+    });
+
+    expect(parsed.coordinatorConfig?.deep?.termination).toEqual({
+      emergencyMaxTurns: 300,
+      checkpointInterval: 20,
+      stallThreshold: 8,
+      reasonerTimeoutMs: 10000,
+      maxCheckpointsPerStep: 25,
+    });
+  });
+
+  it('uses defaults when termination section is absent', () => {
+    const parsed = parseDualLoopRuntimeConfig({
+      dual_loop: {
+        enabled: true,
+        deep: {
+          model: 'test-model',
+        },
+      },
+    });
+
+    // termination not set — DeepLoop constructor merges with DEFAULT_TERMINATION
+    expect(parsed.coordinatorConfig?.deep?.termination).toBeUndefined();
+  });
+
   it('ignores invalid field values and keeps defaults for partial tier overrides', () => {
     const parsed = parseDualLoopRuntimeConfig({
       dual_loop: {

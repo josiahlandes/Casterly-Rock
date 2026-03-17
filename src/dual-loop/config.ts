@@ -7,7 +7,7 @@
 
 import type { CoordinatorConfig } from './coordinator.js';
 import type { FastLoopConfig } from './fast-loop.js';
-import type { DeepLoopConfig } from './deep-loop.js';
+import type { DeepLoopConfig, TerminationConfig } from './deep-loop.js';
 import type { TaskBoardConfig } from './task-board-types.js';
 import type { ContextTiersConfig } from './context-tiers.js';
 import { DEFAULT_CONTEXT_TIERS } from './context-tiers.js';
@@ -103,6 +103,31 @@ function parseDeepConfig(raw: Record<string, unknown>): Partial<DeepLoopConfig> 
   const rawRatios = raw['coder_pass_budget_ratios'];
   if (Array.isArray(rawRatios) && rawRatios.length > 0 && rawRatios.every((r) => typeof r === 'number' && r > 0)) {
     deep.coderPassBudgetRatios = rawRatios as number[];
+  }
+
+  // Parse reasoner-gated termination config
+  const terminationRaw = asRecord(raw['termination']);
+  if (terminationRaw) {
+    const termination: Partial<TerminationConfig> = {};
+
+    const emergencyMaxTurns = readPositiveInt(terminationRaw, 'emergency_max_turns');
+    if (emergencyMaxTurns !== undefined) termination.emergencyMaxTurns = emergencyMaxTurns;
+
+    const checkpointInterval = readPositiveInt(terminationRaw, 'checkpoint_interval');
+    if (checkpointInterval !== undefined) termination.checkpointInterval = checkpointInterval;
+
+    const stallThreshold = readPositiveInt(terminationRaw, 'stall_threshold');
+    if (stallThreshold !== undefined) termination.stallThreshold = stallThreshold;
+
+    const reasonerTimeoutMs = readPositiveInt(terminationRaw, 'reasoner_timeout_ms');
+    if (reasonerTimeoutMs !== undefined) termination.reasonerTimeoutMs = reasonerTimeoutMs;
+
+    const maxCheckpointsPerStep = readPositiveInt(terminationRaw, 'max_checkpoints_per_step');
+    if (maxCheckpointsPerStep !== undefined) termination.maxCheckpointsPerStep = maxCheckpointsPerStep;
+
+    if (hasKeys(termination)) {
+      deep.termination = termination as TerminationConfig;
+    }
   }
 
   return deep;

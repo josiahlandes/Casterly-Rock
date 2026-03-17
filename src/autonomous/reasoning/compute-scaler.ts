@@ -27,7 +27,7 @@ import type { Difficulty, ProblemContext } from './scaling.js';
  * Compute budget allocated for a task based on its difficulty.
  */
 export interface ComputeBudget {
-  /** Maximum tool-calling turns for this task */
+  /** @deprecated Advisory only — no longer enforced as hard limit. Kept for calibration. */
   maxTurns: number;
 
   /** Maximum verification passes (review cycles) */
@@ -53,6 +53,12 @@ export interface ComputeBudget {
 
   /** Difficulty level this budget was derived from */
   difficulty: Difficulty;
+
+  /** Reasoner checkpoint interval — ask reasoner every N coder turns */
+  checkpointInterval: number;
+
+  /** Stall detection threshold — flag after N turns with no new file operations */
+  stallThreshold: number;
 }
 
 /**
@@ -182,6 +188,8 @@ const DEFAULT_EASY_BUDGET: ComputeBudget = {
   contextTier: 'standard',
   useJudge: false,
   difficulty: 'easy',
+  checkpointInterval: 20,
+  stallThreshold: 8,
 };
 
 const DEFAULT_MEDIUM_BUDGET: ComputeBudget = {
@@ -194,6 +202,8 @@ const DEFAULT_MEDIUM_BUDGET: ComputeBudget = {
   contextTier: 'standard',
   useJudge: false,
   difficulty: 'medium',
+  checkpointInterval: 15,
+  stallThreshold: 10,
 };
 
 const DEFAULT_HARD_BUDGET: ComputeBudget = {
@@ -206,6 +216,8 @@ const DEFAULT_HARD_BUDGET: ComputeBudget = {
   contextTier: 'extended',
   useJudge: true,
   difficulty: 'hard',
+  checkpointInterval: 12,
+  stallThreshold: 12,
 };
 
 const DEFAULT_CONFIG: ComputeScalerConfig = {

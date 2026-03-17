@@ -26,7 +26,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Task, TaskArtifact, PlanStep, FileOperation, HandoffSnapshot } from './task-board-types.js';
 import { buildHandoffSnapshot, serializeHandoff } from './handoff.js';
-import { detectProjectDir, writeProjectMd } from './project-store.js';
+import { detectProjectDir, writeProjectMd, writeProjectState, readProjectState } from './project-store.js';
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
 import { selectDeepTier, selectDeepReviewTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
 import type { ReviewResult } from './task-board-types.js';
@@ -52,10 +52,33 @@ import type { StateManager } from '../state/state-manager.js';
 import { preflectHeuristic, buildKnowledgeManifest, buildContextualGuard, CONFABULATION_GUARD_PROMPT } from '../metacognition/index.js';
 import type { PreflectionResult, KnowledgeSource } from '../metacognition/index.js';
 import { appendActivity } from '../observability/activity-ledger.js';
+import { ReasonerMonitor, detectStall } from './reasoner-monitor.js';
+import type { ReasonerVerdict, CheckpointContext } from './reasoner-monitor.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Reasoner-gated adaptive termination settings.
+ *
+ * Instead of hard turn limits, the 27B reasoner evaluates progress at regular
+ * intervals and decides whether to continue, complete, flag a stall, or replan.
+ * The emergency max is an unconditional circuit breaker — a safety net, not a
+ * workflow constraint.
+ */
+export interface TerminationConfig {
+  /** Absolute circuit breaker — hard stop regardless of reasoner verdict */
+  emergencyMaxTurns: number;
+  /** Ask the 27B reasoner for a progress verdict every N coder turns */
+  checkpointInterval: number;
+  /** Flag stall when N consecutive turns produce no new file operations */
+  stallThreshold: number;
+  /** Timeout for each reasoner checkpoint call (ms) */
+  reasonerTimeoutMs: number;
+  /** Safety cap on reasoner evaluations per step */
+  maxCheckpointsPerStep: number;
+}
 
 /**
  * Configuration for the DeepLoop.
@@ -65,9 +88,9 @@ export interface DeepLoopConfig {
   model: string;
   /** Model ID for the coder model */
   coderModel: string;
-  /** Maximum tool-calling turns per task (total budget across all steps) */
+  /** @deprecated Advisory only — no longer enforced as hard limit. Kept for calibration hints. */
   maxTurnsPerTask: number;
-  /** Maximum tool-calling turns per individual plan step */
+  /** @deprecated Advisory only — no longer enforced as hard limit. */
   maxTurnsPerStep: number;
   /** Maximum review→revision cycles before failing */
   maxRevisionRounds: number;
@@ -78,10 +101,12 @@ export interface DeepLoopConfig {
   /** Context tier configs */
   tiers: DeepTierConfig;
   coderTiers: CoderTierConfig;
-  /** Number of coder passes per step (1 = single pass, 3 = implement/verify/enhance) */
+  /** @deprecated Advisory only — reasoner decides pass transitions. */
   coderPasses: number;
-  /** Turn budget ratio per pass (must sum to ~1.0) */
+  /** @deprecated Advisory only — passes are now adaptive. */
   coderPassBudgetRatios: number[];
+  /** Reasoner-gated adaptive termination settings */
+  termination: TerminationConfig;
 }
 
 /**
@@ -95,6 +120,14 @@ interface PlanResult {
 // ─────────────────────────────────────────────────────────────────────────────
 // Default Configuration
 // ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_TERMINATION: TerminationConfig = {
+  emergencyMaxTurns: 500,
+  checkpointInterval: 15,
+  stallThreshold: 10,
+  reasonerTimeoutMs: 15_000,
+  maxCheckpointsPerStep: 30,
+};
 
 const DEFAULT_CONFIG: DeepLoopConfig = {
   model: 'qwen3.5:122b',
@@ -120,6 +153,7 @@ const DEFAULT_CONFIG: DeepLoopConfig = {
   },
   coderPasses: 1,
   coderPassBudgetRatios: [1.0],
+  termination: DEFAULT_TERMINATION,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -304,6 +338,12 @@ export class DeepLoop {
   private skillFilesManager: SkillFilesManager | null = null;
   /** Optional StateManager — provides role-scoped views of system state */
   private stateManager: StateManager | null = null;
+  /** Reasoner-gated progress monitor for adaptive termination */
+  private readonly reasonerMonitor: ReasonerMonitor;
+  /** Last verdict from a checkpointed executeWithTools call (read by dispatchToCoder) */
+  private lastToolLoopVerdict: ReasonerVerdict | null = null;
+  /** Turns used in the last executeWithTools call (for adaptive phase tracking) */
+  private lastToolLoopTurnsUsed: number = 0;
 
   constructor(
     provider: LlmProvider,
@@ -315,7 +355,11 @@ export class DeepLoop {
     stateManager?: StateManager,
     coderProvider?: LlmProvider,
   ) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = {
+      ...DEFAULT_CONFIG,
+      ...config,
+      termination: { ...DEFAULT_TERMINATION, ...config?.termination },
+    };
     this.provider = provider;
     this.coderProvider = coderProvider;
     this.concurrentProvider = concurrentProvider;
@@ -327,6 +371,12 @@ export class DeepLoop {
     this.reasoningScaler = new ReasoningScaler({
       codingModel: this.config.coderModel,
       reasoningModel: this.config.model,
+    });
+    this.reasonerMonitor = new ReasonerMonitor({
+      provider: this.provider, // 27B reasoner
+      model: this.config.model,
+      timeoutMs: this.config.termination.reasonerTimeoutMs,
+      tiers: this.config.tiers,
     });
 
     // If stateManager is provided, pull goalStack and skillFilesManager from it
@@ -478,6 +528,14 @@ export class DeepLoop {
     });
 
     try {
+      // Pre-populate workspace manifest from project state for continuation tasks
+      if (task.projectDir && !task.workspaceManifest) {
+        const priorState = await readProjectState(process.cwd(), task.projectDir);
+        if (priorState?.manifest.length) {
+          this.taskBoard.update(task.id, { workspaceManifest: priorState.manifest });
+        }
+      }
+
       // Transition to planning
       this.taskBoard.update(task.id, { status: 'planning' });
 
@@ -534,6 +592,25 @@ export class DeepLoop {
           tracer.log('deep-loop', 'info', `PROJECT.md written for ${projectDir}`);
         } catch (err) {
           tracer.log('deep-loop', 'warn', `Failed to write PROJECT.md for ${projectDir}`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+
+        // Write structured project state for future iterations
+        try {
+          const currentTask = this.taskBoard.get(task.id);
+          await writeProjectState(process.cwd(), projectDir, {
+            updatedAt: new Date().toISOString(),
+            lastTaskId: task.id,
+            manifest: outcome.workspaceManifest ?? [],
+            ...(currentTask?.plan ? { plan: currentTask.plan } : {}),
+            ...(currentTask?.planSteps ? { planSteps: currentTask.planSteps } : {}),
+            ...(outcome.userFacing ? { lastDeliveredSummary: outcome.userFacing } : {}),
+            ...(task.originalMessage ? { lastRequest: task.originalMessage } : {}),
+          });
+          tracer.log('deep-loop', 'info', `PROJECT_STATE.json written for ${projectDir}`);
+        } catch (err) {
+          tracer.log('deep-loop', 'warn', `Failed to write PROJECT_STATE for ${projectDir}`, {
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -697,6 +774,36 @@ export class DeepLoop {
       }
     }
 
+    // Load structured project state for rich iteration context
+    let projectStateContext = '';
+    if (task.projectDir) {
+      const state = await readProjectState(process.cwd(), task.projectDir);
+      if (state) {
+        const parts: string[] = [];
+
+        if (state.manifest.length > 0) {
+          const manifestLines = state.manifest
+            .map((f) => `- \`${f.path}\` (${f.action}, ${f.lines ?? '?'} lines${f.exports?.length ? `, exports: ${f.exports.join(', ')}` : ''})`)
+            .join('\n');
+          parts.push(`**Current Files:**\n${manifestLines}`);
+        }
+
+        if (state.lastDeliveredSummary) {
+          parts.push(`**Last Delivered:**\n${state.lastDeliveredSummary.slice(0, 1000)}`);
+        }
+
+        if (state.plan) {
+          parts.push(`**Previous Plan:**\n${state.plan.slice(0, 1500)}`);
+        }
+
+        if (parts.length > 0) {
+          projectStateContext = `\n## Project State (Structured)\n\n${parts.join('\n\n')}`;
+        }
+
+        tracer.log('deep-loop', 'debug', `Loaded PROJECT_STATE for ${task.projectDir}: ${state.manifest.length} files`);
+      }
+    }
+
     // Search learned skills for prior art to inject into the planning prompt
     let skillContext = '';
     if (this.skillFilesManager) {
@@ -758,6 +865,7 @@ export class DeepLoop {
           ? `\n## Previous Progress\n\n${task.parkedState.contextSnapshot}`
           : '',
       existingProjectContext,
+      projectStateContext,
       skillContext,
       plannerContext,
       metacognitionContext,
@@ -1099,21 +1207,10 @@ export class DeepLoop {
       `## Instructions\nComplete ALL work described in the current step before stopping. Create every file mentioned, write complete implementations (not stubs), and verify imports match existing files in the workspace manifest. If files already exist from a prior step, read them and verify cross-file API compatibility: every method/property call on an imported object must exist in that module's source code. Fix mismatches using edit_file.`,
     ].filter(Boolean).join('\n\n');
 
-    // Compute budget determines turn limits — falls back to config defaults
-    const budgetMaxTask = this.activeBudget?.maxTurns ?? this.config.maxTurnsPerTask;
-    const budgetMaxStep = totalSteps <= 1
-      ? budgetMaxTask
-      : Math.min(this.config.maxTurnsPerStep, budgetMaxTask);
-
-    // Single-step tasks get the full task budget; multi-step get per-step cap
-    let maxTurns = totalSteps <= 1 ? budgetMaxTask : budgetMaxStep;
-
-    // Review/verify/test/fix steps get double the turn budget so the model
-    // has room to read dependencies, cross-check APIs, and apply fixes.
-    if (/\b(test|verify|review|validate|integration|fix)\b/i.test(step.description)) {
-      maxTurns = Math.min(maxTurns * 2, budgetMaxTask);
-    }
-    const response = await this.dispatchToCoder(prompt, '', maxTurns);
+    // Reasoner-gated adaptive termination: no hard turn limits.
+    // dispatchToCoder manages its own termination via reasoner checkpoints
+    // and the emergency circuit breaker. No turn budget computation needed.
+    const response = await this.dispatchToCoder(prompt, '');
 
     // Create an artifact from the response if it contains code
     const hasCode = response.includes('```') || response.includes('diff');
@@ -1212,6 +1309,25 @@ export class DeepLoop {
           resolvedAt: new Date().toISOString(),
         });
         tracer.log('deep-loop', 'info', `Revision for ${task.id} self-review approved, marking done`);
+
+        // Update PROJECT_STATE after successful revision
+        const resolvedTask = this.taskBoard.get(task.id);
+        const revProjectDir = resolvedTask?.projectDir;
+        if (revProjectDir && resolvedTask) {
+          try {
+            await writeProjectState(process.cwd(), revProjectDir, {
+              updatedAt: new Date().toISOString(),
+              lastTaskId: task.id,
+              manifest: resolvedTask.workspaceManifest ?? [],
+              ...(resolvedTask.plan ? { plan: resolvedTask.plan } : {}),
+              ...(resolvedTask.planSteps ? { planSteps: resolvedTask.planSteps } : {}),
+              ...(resolvedTask.userFacing ? { lastDeliveredSummary: resolvedTask.userFacing } : {}),
+              ...(resolvedTask.originalMessage ? { lastRequest: resolvedTask.originalMessage } : {}),
+            });
+          } catch {
+            // Non-fatal — state write failure shouldn't block completion
+          }
+        }
       } else {
         // Don't reset currentVerificationPass — continue from the failing pass
         this.taskBoard.update(task.id, {
@@ -1810,18 +1926,25 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
    * When a toolkit is available, runs an iterative tool-calling loop so
    * the model can read files, run commands, and write code via tools.
    *
-   * When `coderPasses > 1`, runs multiple passes with different focuses:
-   *   Pass 1 (implement): Build all features — current behavior.
-   *   Pass 2 (verify):    Re-read every file, trace logic, fix bugs.
-   *   Pass 3 (enhance):   Add polish, depth, visual improvements.
+   * Uses reasoner-gated adaptive termination: the 27B reasoner evaluates
+   * progress at checkpoint intervals and decides when each phase is done.
+   * Phases (implement → verify → enhance) proceed only when the reasoner
+   * confirms the prior phase is complete.
    */
   async dispatchToCoder(prompt: string, fileContents: string, maxTurns?: number): Promise<string> {
     const tracer = getTracer();
-    const totalTurns = maxTurns ?? this.config.maxTurnsPerStep;
-    const passCount = this.config.coderPasses;
-    const ratios = this.config.coderPassBudgetRatios;
+    const emergencyMax = this.config.termination.emergencyMaxTurns;
+    const checkpointInterval = this.activeBudget?.checkpointInterval
+      ?? this.config.termination.checkpointInterval;
+    const stallThreshold = this.activeBudget?.stallThreshold
+      ?? this.config.termination.stallThreshold;
     const passNames = ['implement', 'verify', 'enhance'] as const;
     type PassName = typeof passNames[number];
+
+    // Build phase list from config (advisory — reasoner decides transitions)
+    const phases: PassName[] = ['implement'];
+    if (this.config.coderPasses >= 2) phases.push('verify');
+    if (this.config.coderPasses >= 3) phases.push('enhance');
 
     // Route to dedicated coder provider when available (80B-A3B on MLX :8001)
     const effectiveCoderProvider = this.coderProvider ?? this.provider;
@@ -1835,35 +1958,35 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
       }
     };
 
-    const allPassOutputs: string[] = [];
+    const allPhaseOutputs: string[] = [];
+    let totalTurnsUsed = 0;
+    const taskSummary = prompt.slice(0, 200);
 
-    for (let pass = 0; pass < passCount; pass++) {
-      const ratio = ratios[pass] ?? ratios[0] ?? 1.0;
-      const passTurns = Math.max(3, Math.floor(totalTurns * ratio));
-      const passName: PassName = passNames[Math.min(pass, passNames.length - 1)] ?? 'implement';
+    for (let phaseIdx = 0; phaseIdx < phases.length; phaseIdx++) {
+      const phase = phases[phaseIdx]!;
 
-      // For verify/enhance passes, prepend workspace manifest and prior output
-      let passPrompt = prompt;
-      if (pass > 0) {
+      // For verify/enhance phases, prepend workspace manifest and prior output
+      let phasePrompt = prompt;
+      if (phaseIdx > 0) {
         const manifestContext = this.formatWorkspaceManifest(this.currentManifest ?? []);
-        passPrompt = [
-          `## Pass ${pass + 1}/${passCount}: ${passName.toUpperCase()}`,
+        phasePrompt = [
+          `## Phase ${phaseIdx + 1}/${phases.length}: ${phase.toUpperCase()}`,
           manifestContext,
-          `## Previous Pass Output\n${allPassOutputs[pass - 1]?.slice(0, 1500) ?? '(none)'}`,
+          `## Previous Phase Output\n${allPhaseOutputs[phaseIdx - 1]?.slice(0, 1500) ?? '(none)'}`,
           `## Original Task\n${prompt}`,
         ].filter(Boolean).join('\n\n');
       }
 
-      // Tier selection
-      const totalChars = passPrompt.length + fileContents.length;
+      // Tier selection — always use extended for adaptive mode (no turn budget to gate on)
+      const totalChars = phasePrompt.length + fileContents.length;
       const baseTier = selectCoderTier(totalChars, this.config.coderTiers);
-      const tier = passTurns > 5 ? 'extended' as const : baseTier;
+      const tier = 'extended' as const;
       const providerOptions = buildProviderOptions(this.config.coderTiers, tier);
 
       const request: GenerateRequest = {
-        prompt: fileContents ? `${passPrompt}\n\n---\n\n${fileContents}` : passPrompt,
-        systemPrompt: getSystemPrompt(passName),
-        temperature: passName === 'enhance' ? 0.5 : 0.3,
+        prompt: fileContents ? `${phasePrompt}\n\n---\n\n${fileContents}` : phasePrompt,
+        systemPrompt: getSystemPrompt(phase),
+        temperature: phase === 'enhance' ? 0.5 : 0.3,
         maxTokens: 16384,
         providerOptions: {
           ...providerOptions,
@@ -1871,23 +1994,33 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
         },
       };
 
-      if (passCount > 1) {
-        tracer.log('deep-loop', 'info', `Coder pass ${pass + 1}/${passCount} (${passName}): ${passTurns} turns`);
+      // Remaining emergency budget for this phase
+      const remainingBudget = emergencyMax - totalTurnsUsed;
+      if (remainingBudget <= 0) {
+        tracer.log('deep-loop', 'warn', `Emergency budget exhausted before ${phase} phase`);
+        break;
       }
+
+      tracer.log('deep-loop', 'info', `Coder phase: ${phase} (checkpoint every ${checkpointInterval} turns, emergency max ${remainingBudget})`);
 
       let output: string;
       if (this.toolkit) {
-        output = await this.executeWithTools(request, passTurns, undefined, effectiveCoderProvider);
+        output = await this.executeWithTools(request, remainingBudget, undefined, effectiveCoderProvider, {
+          interval: checkpointInterval,
+          stallThreshold,
+          phase,
+          taskSummary,
+        });
       } else {
         const response = await this.concurrentProvider.generate(this.config.coderModel, request);
         output = response.text;
       }
 
-      allPassOutputs.push(output);
+      allPhaseOutputs.push(output);
+      totalTurnsUsed += this.lastToolLoopTurnsUsed;
 
-      // Update the current manifest so subsequent passes see files from prior passes.
-      // stepFileOps accumulates across passes automatically (it's on `this.`).
-      if (this.currentManifest && pass < passCount - 1) {
+      // Update manifest between phases so the next phase sees all files
+      if (this.currentManifest && phaseIdx < phases.length - 1) {
         for (const op of this.stepFileOps) {
           const existing = this.currentManifest.find((f) => f.path === op.path);
           if (existing) {
@@ -1898,10 +2031,22 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
           }
         }
       }
+
+      // Check reasoner verdict to decide whether to proceed to next phase
+      const verdict = this.lastToolLoopVerdict;
+      if (verdict === 'stuck' || verdict === 'replan') {
+        tracer.log('deep-loop', 'info', `Phase ${phase} ended with verdict: ${verdict} — stopping`);
+        break;
+      }
+      if (verdict === 'complete') {
+        tracer.log('deep-loop', 'info', `Phase ${phase} complete — ${phaseIdx < phases.length - 1 ? `proceeding to ${phases[phaseIdx + 1]}` : 'all phases done'}`);
+        // Continue to next phase
+      }
+      // 'natural_stop' also proceeds — model had no more work
     }
 
-    // Return last pass output (most complete)
-    return allPassOutputs[allPassOutputs.length - 1] ?? '';
+    // Return last phase output (most complete)
+    return allPhaseOutputs[allPhaseOutputs.length - 1] ?? '';
   }
 
   // ── Preemption ──────────────────────────────────────────────────────────
@@ -1938,6 +2083,12 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
     maxTurns: number = 20,
     toolOverride?: ToolSchema[],
     providerOverride?: LlmProvider,
+    checkpoint?: {
+      interval: number;
+      stallThreshold: number;
+      phase: string;
+      taskSummary: string;
+    },
   ): Promise<string> {
     const activeProvider = providerOverride ?? this.provider;
     if (!this.toolkit) {
@@ -1951,13 +2102,18 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
     const tools = toolOverride ?? this.toolkit.schemas;
     let lastText = '';
 
+    // Reset adaptive termination state
+    this.lastToolLoopVerdict = null;
+    this.lastToolLoopTurnsUsed = 0;
+
     // Accumulate full conversation history so each turn sees ALL prior
     // tool results, not just the last batch. This is critical for multi-turn
     // research tasks where the model needs to synthesize data from earlier reads.
     const conversationHistory: PreviousAssistantMessage[] = [];
     const allToolResults: ToolResultMessage[] = [];
 
-    // Budget warning threshold
+    // Budget warning threshold — only fires near emergency max (effectively
+    // disabled when checkpointing is active, since the reasoner handles pacing)
     const warnAtTurn = Math.max(1, maxTurns - 2);
 
     // ── Loop detection ─────────────────────────────────────────────────
@@ -1972,6 +2128,14 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
     const FILE_ACCESS_TOOLS = new Set(['read_file', 'read_files', 'grep', 'glob']);
     const toolCallCounts = new Map<string, number>();
     let consecutiveLoopDetections = 0;
+
+    // ── Reasoner checkpoint state ──────────────────────────────────────
+    let lastNewFileOpTurn = 0;
+    let fileOpsAtStart = this.stepFileOps.length;
+    const recentToolNames: string[] = [];
+    let anyLoopDetected = false;
+    let checkpointCount = 0;
+    const maxCheckpoints = this.config.termination.maxCheckpointsPerStep;
 
     function getToolSignature(name: string, input: Record<string, unknown>): string {
       if (FILE_ACCESS_TOOLS.has(name)) {
@@ -2057,6 +2221,7 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
 
       if (loopDetected) {
         consecutiveLoopDetections++;
+        anyLoopDetected = true;
         tracer.log('deep-loop', 'warn',
           `Tool call loop detected at turn ${turn + 1} — same call repeated ${TOOL_CALL_LOOP_THRESHOLD}+ times. Breaking loop.`,
         );
@@ -2118,11 +2283,71 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
           result: resultText,
           isError: !result.success,
         });
+
+        // Track recent tool names for checkpoint context
+        recentToolNames.push(call.name);
+        if (recentToolNames.length > 5) recentToolNames.shift();
+      }
+
+      // Track file operation progress for stall detection
+      if (this.stepFileOps.length > fileOpsAtStart + (turn > 0 ? 0 : 0)) {
+        const currentFileOps = this.stepFileOps.length;
+        if (currentFileOps > fileOpsAtStart) {
+          lastNewFileOpTurn = turn;
+          fileOpsAtStart = currentFileOps;
+        }
+      }
+
+      // ── Reasoner checkpoint ────────────────────────────────────────
+      if (checkpoint && turn > 0) {
+        const turnsSinceLastFileOp = turn - lastNewFileOpTurn;
+        const isStalled = detectStall(turnsSinceLastFileOp, checkpoint.stallThreshold, anyLoopDetected);
+        const atInterval = (turn + 1) % checkpoint.interval === 0;
+
+        if (isStalled || atInterval) {
+          if (checkpointCount >= maxCheckpoints) {
+            tracer.log('deep-loop', 'warn', `Max checkpoints (${maxCheckpoints}) reached — forcing emergency stop`);
+            this.lastToolLoopVerdict = 'stuck';
+            this.lastToolLoopTurnsUsed = turn + 1;
+            break;
+          }
+
+          const manifestBrief = this.formatManifestBrief();
+          const verdict = await this.reasonerMonitor.evaluate({
+            stepDescription: request.prompt.slice(0, 500),
+            turnsElapsed: turn + 1,
+            fileOpsCount: this.stepFileOps.length,
+            turnsSinceLastFileOp,
+            recentToolCalls: recentToolNames.slice(-5),
+            loopDetected: anyLoopDetected,
+            manifestSummary: manifestBrief,
+            currentPhase: checkpoint.phase,
+            taskSummary: checkpoint.taskSummary,
+          });
+
+          checkpointCount++;
+          tracer.log('deep-loop', 'info',
+            `Reasoner checkpoint ${checkpointCount}: ${verdict.verdict} (turn ${turn + 1})`,
+            { reason: verdict.reason, ...(isStalled ? { stalled: true } : {}) },
+          );
+
+          if (verdict.verdict !== 'continue') {
+            this.lastToolLoopVerdict = verdict.verdict;
+            this.lastToolLoopTurnsUsed = turn + 1;
+            break;
+          }
+        }
       }
     }
 
+    // Store turns used for adaptive callers (dispatchToCoder reads this)
+    this.lastToolLoopTurnsUsed = Math.min(conversationHistory.length, maxTurns);
+
     if (allToolResults.length > 0 && conversationHistory.length >= maxTurns) {
       tracer.log('deep-loop', 'warn', `Tool loop hit maxTurns (${maxTurns}) — forcing wrap-up`);
+      if (!this.lastToolLoopVerdict) {
+        this.lastToolLoopVerdict = 'stuck'; // Emergency max reached
+      }
 
       // Give the model one final turn to synthesize what it found,
       // with full conversation history so it can reference all prior results.
@@ -2142,6 +2367,11 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
       } catch {
         // Fall back to whatever text we have
       }
+    }
+
+    // Natural stop (model had no more tool calls) — mark as complete if no verdict set
+    if (!this.lastToolLoopVerdict) {
+      this.lastToolLoopVerdict = 'complete';
     }
 
     return lastText;
@@ -2580,6 +2810,17 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
       `Use read_file to check a file's exports or constructor params before importing from it.`,
       `Maintain consistent naming conventions (case, separators) with existing files.`,
     ].join('\n');
+  }
+
+  /**
+   * Brief manifest summary for reasoner checkpoint context.
+   * Compact format: just file count and paths (no exports/imports guide).
+   */
+  private formatManifestBrief(): string {
+    const manifest = this.currentManifest ?? [];
+    if (manifest.length === 0) return '(no files yet)';
+    const paths = manifest.map((f) => f.path).join(', ');
+    return `${manifest.length} files: ${paths.slice(0, 300)}`;
   }
 
   /**

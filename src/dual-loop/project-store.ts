@@ -28,6 +28,29 @@ export interface DiscoveredProject {
   status: string;
 }
 
+/**
+ * Structured project state persisted as PROJECT_STATE.json.
+ *
+ * Survives TaskBoard archival (7-day window) so the planner has rich context
+ * when the user returns to iterate on a project days or weeks later.
+ */
+export interface ProjectState {
+  /** ISO timestamp of last update */
+  updatedAt: string;
+  /** Task ID that last wrote this state */
+  lastTaskId: string;
+  /** Workspace manifest — exact file paths, line counts, exports */
+  manifest: FileOperation[];
+  /** The plan used in the last task */
+  plan?: string;
+  /** Plan steps with completion status */
+  planSteps?: PlanStep[];
+  /** The user-facing summary that was delivered */
+  lastDeliveredSummary?: string;
+  /** The original user request that produced this state */
+  lastRequest?: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // slugify
 // ─────────────────────────────────────────────────────────────────────────────
@@ -348,4 +371,39 @@ async function updateExistingProjectMd(
   }
 
   await safeWriteFile(mdPath, content);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ProjectState (structured JSON state for cross-task iteration)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Write structured project state alongside PROJECT.md.
+ *
+ * This gives the planner exact file paths, line counts, exports, and the
+ * previous plan/summary when the user returns to iterate on a project.
+ */
+export async function writeProjectState(
+  projectRoot: string,
+  projectDir: string,
+  state: ProjectState,
+): Promise<void> {
+  const statePath = join(projectRoot, projectDir, 'PROJECT_STATE.json');
+  await safeWriteFile(statePath, JSON.stringify(state, null, 2));
+}
+
+/**
+ * Read structured project state. Returns null if the file doesn't exist.
+ */
+export async function readProjectState(
+  projectRoot: string,
+  projectDir: string,
+): Promise<ProjectState | null> {
+  const statePath = join(projectRoot, projectDir, 'PROJECT_STATE.json');
+  try {
+    const content = await readFile(statePath, 'utf8');
+    return JSON.parse(content) as ProjectState;
+  } catch {
+    return null;
+  }
 }

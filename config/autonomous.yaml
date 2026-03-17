@@ -153,16 +153,27 @@ dual_loop:
   deep:
     model: qwen3.5-27b-reasoner
     coder_model: qwen3-coder-80b
-    max_turns_per_task: 100
-    max_turns_per_step: 25
     max_revision_rounds: 3
     preempt_check_interval_turns: 5
     idle_sleep_ms: 10000
-    coder_passes: 3              # Multi-pass coding: implement → verify → enhance
-    coder_pass_budget_ratios:    # Turn budget ratio per pass (must sum to ~1.0)
-      - 0.50                     # Pass 1 (Implement): build all features
-      - 0.30                     # Pass 2 (Verify): re-read, trace logic, fix bugs
-      - 0.20                     # Pass 3 (Enhance): add polish and depth
+    coder_passes: 3              # Advisory: how many phases (implement/verify/enhance)
+
+    # DEPRECATED — advisory only, no longer enforced as hard limits.
+    # The reasoner-gated termination system decides when to stop.
+    # max_turns_per_task: 100
+    # max_turns_per_step: 25
+    # coder_pass_budget_ratios: [0.50, 0.30, 0.20]
+
+    # Reasoner-gated adaptive termination
+    # Instead of hard turn limits, the 27B reasoner evaluates progress at
+    # checkpoint intervals and decides: continue, complete, stuck, or replan.
+    # The emergency_max_turns is a safety net, not a workflow constraint.
+    termination:
+      emergency_max_turns: 500       # Absolute circuit breaker
+      checkpoint_interval: 15        # Ask reasoner every N coder turns
+      stall_threshold: 10            # Flag after N turns with no new file ops
+      reasoner_timeout_ms: 15000     # Timeout per checkpoint call (ms)
+      max_checkpoints_per_step: 30   # Safety cap on reasoner evaluations
 
   # Verification cascade: multi-pass review for high-stakes tasks.
   # Tasks with 3+ files or 3+ plan steps get multiple review passes
@@ -343,6 +354,7 @@ hardware:
     calibration_weight: 0.3
 
     # Per-difficulty budgets (overrides for defaults)
+    # max_turns is advisory only (for calibration tracking)
     budgets:
       easy:
         max_turns: 10
@@ -351,6 +363,8 @@ hardware:
         parallel_candidates: 1
         temperature: 0.1
         context_tier: standard
+        checkpoint_interval: 20    # Less frequent checks for easy tasks
+        stall_threshold: 8
       medium:
         max_turns: 25
         verification_depth: 2
@@ -358,6 +372,8 @@ hardware:
         parallel_candidates: 2
         temperature: 0.2
         context_tier: standard
+        checkpoint_interval: 15
+        stall_threshold: 10
       hard:
         max_turns: 50
         verification_depth: 3
@@ -367,6 +383,8 @@ hardware:
         max_tokens: 16384         # 80B coder needs large output for multi-file generation
         context_tier: extended
         use_judge: true
+        checkpoint_interval: 12    # More frequent checks for hard tasks
+        stall_threshold: 12        # Higher threshold — hard tasks may have long research phases
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DREAM CYCLES (Phase 6: quiet-hours strategic consolidation)
