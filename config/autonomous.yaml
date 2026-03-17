@@ -175,15 +175,16 @@ dual_loop:
       reasoner_timeout_ms: 15000     # Timeout per checkpoint call (ms)
       max_checkpoints_per_step: 30   # Safety cap on reasoner evaluations
 
-  # Verification cascade: multi-pass review for high-stakes tasks.
-  # Tasks with 3+ files or 3+ plan steps get multiple review passes
-  # with different focuses (correctness → security/robustness).
-  # See docs/roadmap.md Tier 2, Item 7.
-  verification_cascade:
-    # Minimum file count to trigger cascade (3+ files = high-stakes)
-    min_files_for_cascade: 3
-    # Minimum plan steps to trigger cascade
-    min_steps_for_cascade: 3
+  # 3-phase verification pipeline (replaces verification cascade).
+  # Phase 1: Automated gates (typecheck, lint, tests, validate_project)
+  # Phase 2: Smoke tests (browser, CLI, Python)
+  # Phase 3: Intent review (27B reasoner with tools, thinking ON)
+  review:
+    gate_timeout_ms: 15000           # Per-gate timeout for Phase 1
+    test_timeout_ms: 30000           # Test gate timeout (Phase 1)
+    smoke_test_timeout_ms: 15000     # Per-test timeout for Phase 2
+    browser_wait_ms: 3000            # Browser settle time before assertions
+    intent_review_max_turns: 8       # Phase 3 agentic tool loop cap
 
   # TaskBoard persistence
   task_board:

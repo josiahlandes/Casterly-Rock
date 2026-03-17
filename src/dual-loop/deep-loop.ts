@@ -30,7 +30,8 @@ import { detectProjectDir, writeProjectMd, writeProjectState, readProjectState }
 import type { DeepTierConfig, CoderTierConfig, ContextTier } from './context-tiers.js';
 import { selectDeepTier, selectDeepReviewTier, selectCoderTier, resolveNumCtx, buildProviderOptions, checkContextPressure, buildPressureWarning, compressPrompt } from './context-tiers.js';
 import type { ReviewResult } from './task-board-types.js';
-import { REVIEW_SYSTEM_PROMPT, REVIEW_FORMAT_SCHEMA, INTEGRATION_REVIEW_FORMAT_SCHEMA, CASCADE_REVIEW_PROMPTS, INTEGRATION_REVIEW_SYSTEM_PROMPT, buildReviewPrompt, parseReviewResponse } from './review-prompt.js';
+import { INTENT_REVIEW_SYSTEM_PROMPT, buildIntentReviewPrompt, parseReviewResponse } from './review-prompt.js';
+import { detectProjectType, runAutomatedGates, runSmokeTests } from './smoke-tests/index.js';
 import { runIdleCheck } from './deep-loop-events.js';
 import type { DeepLoopEventConfig } from './deep-loop-events.js';
 import { ComputeScaler } from '../autonomous/reasoning/compute-scaler.js';
@@ -616,32 +617,21 @@ export class DeepLoop {
         }
       }
 
-      // Verification cascade: single-pass for most tasks, multi-pass only for
-      // large multi-file projects (5+ files). The integration review already
-      // covers cross-module wiring, so the cascade's security pass is reserved
-      // for genuinely complex codebases.
-      const fileCount = outcome.workspaceManifest?.length ?? 0;
-      const budgetVerification = this.activeBudget?.verificationDepth ?? 1;
-      const isLargeProject = fileCount >= 5;
-      const verificationPasses = Math.max(budgetVerification, isLargeProject ? 2 : 1);
-
       // Update task with implementation results before self-review
       this.taskBoard.update(task.id, {
         status: 'reviewing',
-        owner: 'deep', // Keep ownership during self-review
+        owner: 'deep',
         userFacing: outcome.userFacing,
         implementationNotes: outcome.notes,
         ...(outcome.workspaceManifest && outcome.workspaceManifest.length > 0
           ? { workspaceManifest: outcome.workspaceManifest }
           : {}),
         ...(projectDir ? { projectDir } : {}),
-        ...(verificationPasses > 1 ? { verificationPasses, currentVerificationPass: 0 } : {}),
       });
 
       tracer.log('deep-loop', 'info', `Task ${task.id} entering self-review`, {
         stepsCompleted: outcome.stepsCompleted,
         artifactCount: outcome.artifacts.length,
-        verificationPasses,
       });
 
       // Skip self-review for information-only tasks (no file modifications).
@@ -675,9 +665,6 @@ export class DeepLoop {
         // Post-task skill learning: capture multi-step patterns as reusable skills
         this.tryLearnSkillFromTask(task, planned);
       } else {
-        // Don't reset currentVerificationPass — on revision, selfReview()
-        // will continue from the pass that failed instead of restarting
-        // the entire cascade from pass 0.
         this.taskBoard.update(task.id, {
           status: 'revision',
           owner: null,
@@ -1285,9 +1272,7 @@ export class DeepLoop {
       // Generate updated user-facing summary
       const userFacing = await this.generateSummary(task, [...existingArtifacts, artifact]);
 
-      // Self-review the revised output. Keep ownership during review.
-      // Don't reset currentVerificationPass — selfReview() continues from
-      // the pass that previously failed.
+      // Self-review the revised output via 3-phase pipeline.
       this.taskBoard.update(task.id, {
         status: 'reviewing',
         owner: 'deep',
@@ -1329,7 +1314,6 @@ export class DeepLoop {
           }
         }
       } else {
-        // Don't reset currentVerificationPass — continue from the failing pass
         this.taskBoard.update(task.id, {
           status: 'revision',
           owner: null,
@@ -1526,17 +1510,20 @@ export class DeepLoop {
     return [];
   }
 
-  // ── Self-Review ─────────────────────────────────────────────────────────
+  // ── Self-Review (3-Phase Verification Pipeline) ────────────────────────
 
   /**
-   * Self-review the task's artifacts using the 122B model.
+   * 3-phase verification pipeline for task review.
    *
-   * Single structured-output generate call per cascade pass (NOT an
-   * iterative tool loop). The model reviews its own output for correctness and security.
+   * Phase 1: Automated gates (typecheck, lint, tests, validate_project, file existence)
+   *          — deterministic, no LLM, catches ~80% of bugs in seconds.
+   * Phase 2: Smoke tests (browser, CLI, Python)
+   *          — deterministic, no LLM, verifies runtime behavior.
+   * Phase 3: Intent review (27B reasoner, thinking ON, read-only tools, 8 turns)
+   *          — agentic LLM review focused on intent matching and logic errors.
    *
-   * For high-stakes tasks, runs multiple passes:
-   *   Pass 0: Correctness review (REVIEW_SYSTEM_PROMPT)
-   *   Pass 1: Security review (CASCADE_REVIEW_PROMPTS[0])
+   * Phases 1-2 skip the LLM entirely — concrete tool output goes directly
+   * to revision feedback. Phase 3 only runs if Phases 1-2 pass.
    */
   private async selfReview(task: Task): Promise<{
     approved: boolean;
@@ -1546,253 +1533,142 @@ export class DeepLoop {
     passName?: string;
   }> {
     const tracer = getTracer();
-    const plan = task.plan ?? '(no plan)';
-    const artifacts = task.artifacts ?? [];
-    const totalPasses = task.verificationPasses ?? 1;
-    let currentPass = task.currentVerificationPass ?? 0;
+    const projectDir = task.projectDir;
+    const manifest = task.workspaceManifest ?? [];
 
-    // Integration review for multi-file tasks (runs before structured passes).
-    // Check both manifest length AND whether a project directory exists — the
-    // manifest may be empty if files were created via bash (bypassing tracking),
-    // but the project directory will still contain the files.
-    const manifestFileCount = task.workspaceManifest?.length ?? 0;
-    const hasProjectDir = !!task.projectDir;
-    const isMultiFile = manifestFileCount >= 2 || (hasProjectDir && manifestFileCount === 0);
-    if (isMultiFile && this.toolkit) {
-      const outcome = await this.integrationReview(task);
-      if (outcome.result !== 'approved') {
+    // ── Phase 1 & 2: Deterministic gates (no LLM) ──────────────────────
+    if (projectDir) {
+      const projectDirAbs = join(process.cwd(), projectDir);
+      const projectType = detectProjectType(manifest, projectDirAbs);
+
+      tracer.log('deep-loop', 'info', `Phase 1: Automated gates for ${task.id}`, {
+        projectType,
+        manifestFiles: manifest.length,
+      });
+
+      const phase1 = await runAutomatedGates(process.cwd(), projectDir, manifest, projectType);
+
+      this.taskBoard.update(task.id, {
+        reviewNotes: `Phase 1: ${phase1.passed ? 'PASSED' : 'FAILED'} (${phase1.totalDurationMs}ms)`,
+      });
+
+      if (!phase1.passed) {
+        const failedNames = phase1.gates
+          .filter((g) => !g.passed && !g.skipped)
+          .map((g) => g.gate)
+          .join(', ');
+
+        tracer.log('deep-loop', 'info', `Phase 1 failed for ${task.id}: ${failedNames}`);
         return {
           approved: false,
           reviewResult: 'changes_requested',
-          reviewNotes: outcome.issues.join('\n'),
-          reviewFeedback: outcome.issues.join('\n'),
-          passName: 'integration',
-        };
-      }
-    }
-
-    // Build reviewer context from StateManager if available (~200-400 tokens)
-    let reviewerContext = '';
-    if (this.stateManager) {
-      const view = this.stateManager.reviewerView();
-      const parts: string[] = [];
-
-      const issueSummary = view.issueLog.getSummaryText();
-      if (issueSummary) {
-        parts.push(`Known Issues: ${issueSummary.slice(0, 300)}`);
-      }
-
-      const goalSummary = view.goalStack.getSummaryText();
-      if (goalSummary) {
-        parts.push(`Active Goals: ${goalSummary.slice(0, 200)}`);
-      }
-
-      if (parts.length > 0) {
-        reviewerContext = `\n\n## Reviewer Context\n\n${parts.join('\n')}`;
-      }
-    }
-
-    while (currentPass < totalPasses) {
-      const systemPrompt = currentPass === 0
-        ? REVIEW_SYSTEM_PROMPT
-        : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
-
-      // Read actual file contents from disk instead of relying on artifact
-      // summaries (which are truncated model conversation output, not real code).
-      // Falls back to scanning the project directory if the manifest is empty
-      // (e.g., files created via bash `cat >` that bypassed manifest tracking).
-      const fileArtifacts = await this.getReviewFileArtifacts(task);
-      const reviewArtifacts = fileArtifacts.length > 0 ? fileArtifacts : artifacts;
-
-      const manifest = task.workspaceManifest;
-      const baseReviewPrompt = buildReviewPrompt({
-        plan,
-        artifacts: reviewArtifacts,
-        ...(manifest ? { manifest } : {}),
-        ...(task.originalMessage ? { originalMessage: task.originalMessage } : {}),
-      });
-      const reviewPrompt = reviewerContext
-        ? baseReviewPrompt + reviewerContext
-        : baseReviewPrompt;
-
-      // Select tier based on measured content size
-      const tier = selectDeepReviewTier(
-        reviewPrompt.length,
-        systemPrompt.length,
-        this.config.tiers,
-        1024,
-      );
-
-      tracer.log('deep-loop', 'info',
-        `Self-review pass ${currentPass + 1}/${totalPasses} for ${task.id}`, {
-          tier,
-          promptChars: reviewPrompt.length,
-        });
-
-      let response: string;
-      try {
-        response = await this.callWithTier(tier, {
-          prompt: reviewPrompt,
-          systemPrompt,
-          temperature: 0.1,
-          maxTokens: 1024,
-          providerOptions: { format: REVIEW_FORMAT_SCHEMA, think: false },
-        });
-      } catch (error) {
-        // Don't fail the entire task for review infrastructure errors.
-        // Matches the pattern used in integrationReview.
-        tracer.log('deep-loop', 'warn',
-          `Self-review pass ${currentPass + 1} failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
-        return {
-          approved: true,
-          reviewResult: 'approved',
-          reviewNotes: `Auto-approved: review infrastructure error (${error instanceof Error ? error.message : String(error)})`,
+          reviewNotes: `Automated gates failed: ${failedNames}`,
+          ...(phase1.revisionFeedback ? { reviewFeedback: phase1.revisionFeedback } : {}),
+          passName: 'automated_gates',
         };
       }
 
-      const outcome = parseReviewResponse(response);
+      tracer.log('deep-loop', 'info', `Phase 2: Smoke tests for ${task.id}`, { projectType });
 
-      // Write intermediate review state to TaskBoard for visibility
+      const phase2 = await runSmokeTests(process.cwd(), projectDir, projectType, manifest);
+
       this.taskBoard.update(task.id, {
-        reviewResult: outcome.result,
-        reviewNotes: outcome.notes,
-        reviewFeedback: outcome.feedback,
-        currentVerificationPass: currentPass,
+        reviewNotes: `Phase 1: PASSED | Phase 2: ${phase2.passed ? 'PASSED' : 'FAILED'} (${phase2.totalDurationMs}ms)`,
       });
 
-      if (outcome.result !== 'approved') {
-        tracer.log('deep-loop', 'info',
-          `Self-review pass ${currentPass + 1} found issues for ${task.id}: ${outcome.result}`, {
-            notes: outcome.notes?.slice(0, 200),
-          });
+      if (!phase2.passed) {
+        const failedNames = phase2.gates
+          .filter((g) => !g.passed && !g.skipped)
+          .map((g) => g.gate)
+          .join(', ');
+
+        tracer.log('deep-loop', 'info', `Phase 2 failed for ${task.id}: ${failedNames}`);
         return {
           approved: false,
-          reviewResult: outcome.result,
-          reviewNotes: outcome.notes,
-          ...(outcome.feedback ? { reviewFeedback: outcome.feedback } : {}),
+          reviewResult: 'changes_requested',
+          reviewNotes: `Smoke tests failed: ${failedNames}`,
+          ...(phase2.revisionFeedback ? { reviewFeedback: phase2.revisionFeedback } : {}),
+          passName: 'smoke_tests',
         };
       }
-
-      tracer.log('deep-loop', 'info',
-        `Self-review pass ${currentPass + 1}/${totalPasses} approved for ${task.id}`);
-      currentPass++;
     }
 
+    // ── Phase 3: Intent Review (27B reasoner, thinking ON, tools) ───────
+    tracer.log('deep-loop', 'info', `Phase 3: Intent review for ${task.id}`);
+
+    const plan = task.plan ?? '(no plan)';
+    const reviewPrompt = buildIntentReviewPrompt({
+      ...(task.originalMessage ? { originalMessage: task.originalMessage } : {}),
+      plan,
+      manifest,
+      ...(projectDir ? { projectDir } : {}),
+    });
+
+    // Restrict reviewer to read-only tools
+    const reviewTools = this.toolkit?.schemas.filter(
+      (s) => ['read_file', 'grep', 'glob'].includes(s.name),
+    );
+
+    // Select tier based on prompt size
+    const tier = selectDeepReviewTier(
+      reviewPrompt.length,
+      INTENT_REVIEW_SYSTEM_PROMPT.length,
+      this.config.tiers,
+      1024,
+    );
+
+    let response: string;
+    try {
+      response = await this.callWithTier(tier, {
+        prompt: reviewPrompt,
+        systemPrompt: INTENT_REVIEW_SYSTEM_PROMPT,
+        temperature: 0.1,
+        maxTokens: 1024,
+        providerOptions: { think: true },
+      }, true, reviewTools, undefined, 8);
+    } catch (error) {
+      // Don't fail the entire task for review infrastructure errors.
+      tracer.log('deep-loop', 'warn',
+        `Phase 3 intent review failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+      return {
+        approved: true,
+        reviewResult: 'approved',
+        reviewNotes: `Auto-approved: intent review infrastructure error (${error instanceof Error ? error.message : String(error)})`,
+      };
+    }
+
+    const outcome = parseReviewResponse(response);
+
+    // Write review state to TaskBoard for visibility
+    this.taskBoard.update(task.id, {
+      reviewResult: outcome.result,
+      reviewNotes: outcome.notes,
+      reviewFeedback: outcome.feedback,
+    });
+
+    if (outcome.result !== 'approved') {
+      tracer.log('deep-loop', 'info',
+        `Phase 3 intent review found issues for ${task.id}: ${outcome.result}`, {
+          notes: outcome.notes?.slice(0, 200),
+        });
+      return {
+        approved: false,
+        reviewResult: outcome.result,
+        reviewNotes: outcome.notes,
+        ...(outcome.feedback ? { reviewFeedback: outcome.feedback } : {}),
+        passName: 'intent_review',
+      };
+    }
+
+    tracer.log('deep-loop', 'info', `All 3 phases passed for ${task.id}`);
     return {
       approved: true,
       reviewResult: 'approved',
-      reviewNotes: `All ${totalPasses} review pass(es) approved`,
+      reviewNotes: 'All verification phases passed (automated gates → smoke tests → intent review)',
     };
   }
 
-  // ── Integration Review ──────────────────────────────────────────────────
-
-  /**
-   * Integration review — single structured-output call with pre-read file
-   * contents injected into the prompt.
-   *
-   * Replaces the previous 15-turn tool-calling loop. Pre-reading files and
-   * injecting them directly is faster (~30s vs 15-20 min) and more reliable
-   * (no turn-limit prose fallback needed).
-   *
-   * Returns { result: 'approved' | 'changes_requested', issues: string[] }.
-   */
-  private async integrationReview(task: Task): Promise<{
-    result: 'approved' | 'changes_requested';
-    issues: string[];
-  }> {
-    const tracer = getTracer();
-    tracer.log('deep-loop', 'info', `Integration review for ${task.id}`);
-
-    // Read actual file contents from disk. Falls back to scanning the project
-    // directory if the manifest is empty (e.g., files created via bash `cat >`
-    // that bypassed manifest tracking).
-    const fileArtifacts = await this.getReviewFileArtifacts(task);
-    if (fileArtifacts.length === 0) {
-      tracer.log('deep-loop', 'info', 'Integration review: no files to review, auto-approving');
-      return { result: 'approved', issues: [] };
-    }
-
-    // Build file listing from discovered files (may differ from manifest)
-    const manifestLines = fileArtifacts.map(
-      (a) => `- ${a.path ?? '(unknown)'}`,
-    );
-
-    const fileSections = fileArtifacts.map(
-      (a) => `### ${a.path ?? '(unknown)'}\n\`\`\`\n${a.content ?? '(empty)'}\n\`\`\``,
-    );
-
-    const promptParts: string[] = [
-      `## Task\n\n${task.originalMessage ?? task.plan ?? '(no description)'}`,
-      `\n## Workspace Manifest\n\n${manifestLines.join('\n')}`,
-      `\n## File Contents\n\n${fileSections.join('\n\n')}`,
-    ];
-
-    // Inject reviewer context from StateManager if available
-    if (this.stateManager) {
-      const view = this.stateManager.reviewerView();
-      const contextParts: string[] = [];
-
-      const issueSummary = view.issueLog.getSummaryText();
-      if (issueSummary) {
-        contextParts.push(`Known Issues: ${issueSummary.slice(0, 300)}`);
-      }
-
-      const goalSummary = view.goalStack.getSummaryText();
-      if (goalSummary) {
-        contextParts.push(`Active Goals: ${goalSummary.slice(0, 200)}`);
-      }
-
-      if (contextParts.length > 0) {
-        promptParts.push(`\n## Reviewer Context\n\n${contextParts.join('\n')}`);
-      }
-    }
-
-    // Select context tier based on prompt size
-    const prompt = promptParts.join('\n');
-    const tier = selectDeepReviewTier(
-      prompt.length,
-      INTEGRATION_REVIEW_SYSTEM_PROMPT.length,
-      this.config.tiers,
-      2048,
-    );
-
-    try {
-      const responseText = await this.callWithTier(tier, {
-        prompt,
-        systemPrompt: INTEGRATION_REVIEW_SYSTEM_PROMPT,
-        temperature: 0.1,
-        maxTokens: 2048,
-        providerOptions: { format: INTEGRATION_REVIEW_FORMAT_SCHEMA, think: false },
-      });
-
-      // Parse as JSON — try structured first, then infer from prose
-      try {
-        const { json } = extractJsonFromResponse(responseText);
-        const result = json['result'] === 'approved' ? 'approved' as const : 'changes_requested' as const;
-        const issues = Array.isArray(json['issues'])
-          ? (json['issues'] as unknown[]).map(String)
-          : [];
-
-        tracer.log('deep-loop', 'info', `Integration review result: ${result}`, {
-          issueCount: issues.length,
-        });
-
-        return { result, issues };
-      } catch {
-        // Fallback: with format schema enforcing JSON, parse failures should be
-        // rare. Default to approved — the integration review is a quality gate,
-        // not a correctness gate. Blocking delivery for a parse failure wastes
-        // all the implementation work.
-        tracer.log('deep-loop', 'warn', 'Integration review JSON parse failed, defaulting to approved');
-        return { result: 'approved', issues: [] };
-      }
-    } catch (error) {
-      // On error, default to approved — don't block delivery for review infrastructure failures
-      tracer.log('deep-loop', 'warn', `Integration review failed: ${error instanceof Error ? error.message : String(error)}`);
-      return { result: 'approved', issues: [] };
-    }
-  }
+  // (integrationReview removed — subsumed by Phase 1 automated gates)
 
   // ── Coder Dispatch ──────────────────────────────────────────────────────
 
@@ -2389,6 +2265,9 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
     tier: ContextTier,
     request: Omit<GenerateRequest, 'providerOptions'> & { providerOptions?: Record<string, unknown> },
     useTools: boolean = false,
+    toolOverride?: ToolSchema[],
+    providerOverride?: LlmProvider,
+    maxTurns?: number,
   ): Promise<string> {
     const tracer = getTracer();
     const numCtx = resolveNumCtx(this.config.tiers, tier);
@@ -2451,7 +2330,7 @@ d. Check array/collection access: can indices go out of bounds? Are empty collec
     };
 
     if (useTools && this.toolkit) {
-      return this.executeWithTools(fullRequest);
+      return this.executeWithTools(fullRequest, maxTurns, toolOverride, providerOverride);
     }
 
     const response = await this.provider.generateWithTools(fullRequest, []);

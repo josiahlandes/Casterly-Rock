@@ -37,6 +37,10 @@
     "benchmark:compare": "tsx src/benchmark-cli.ts compare",
     "test:coverage": "vitest run --coverage",
     "tyrion:console": "tsx src/imessage-daemon.ts --console",
+    "start": "bash scripts/start-all.sh",
+    "start:servers": "bash scripts/start-all.sh --no-daemon",
+    "stop": "bash scripts/start-all.sh stop",
+    "stack:status": "bash scripts/start-all.sh status",
     "inspect": "tsx src/debug/inspector.ts"
   },
   "keywords": [],

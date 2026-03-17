@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DeepLoop } from '../src/dual-loop/deep-loop.js';
-import { parseReviewResponse, INTEGRATION_REVIEW_SYSTEM_PROMPT } from '../src/dual-loop/review-prompt.js';
+import { parseReviewResponse, INTENT_REVIEW_SYSTEM_PROMPT } from '../src/dual-loop/review-prompt.js';
 import type { LlmProvider } from '../src/providers/base.js';
 import type { ConcurrentProvider } from '../src/providers/concurrent.js';
 import type { TaskBoard } from '../src/dual-loop/task-board.js';
@@ -59,23 +59,10 @@ function makeMockToolkit(): AgentToolkit {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DeepLoop integration review existence
+// DeepLoop selfReview existence (3-phase pipeline)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('DeepLoop integration review', () => {
-  it('DeepLoop has integrationReview method', () => {
-    const deepLoop = new DeepLoop(
-      makeMockProvider(),
-      makeMockConcurrentProvider(),
-      makeMockTaskBoard(),
-      makeMockEventBus(),
-    );
-
-    // integrationReview is a private method, but we can verify it exists
-    // by checking the prototype
-    expect(typeof (deepLoop as any)['integrationReview']).toBe('function');
-  });
-
+describe('DeepLoop 3-phase verification pipeline', () => {
   it('DeepLoop has selfReview method', () => {
     const deepLoop = new DeepLoop(
       makeMockProvider(),
@@ -86,146 +73,17 @@ describe('DeepLoop integration review', () => {
 
     expect(typeof (deepLoop as any)['selfReview']).toBe('function');
   });
-});
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Integration review result format
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('Integration review result format', () => {
-  it('integrationReview returns { result, issues } when no toolkit', async () => {
+  it('integrationReview was removed (subsumed by Phase 1 automated gates)', () => {
     const deepLoop = new DeepLoop(
       makeMockProvider(),
       makeMockConcurrentProvider(),
       makeMockTaskBoard(),
       makeMockEventBus(),
-      undefined, // no config override
-      undefined, // no toolkit -> integrationReview returns approved
     );
 
-    const task: Task = {
-      id: 'test-task-1',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      status: 'reviewing',
-      owner: null,
-      origin: 'user',
-      priority: 0,
-      workspaceManifest: [
-        { path: 'src/a.js', action: 'created' },
-        { path: 'src/b.js', action: 'created' },
-      ] as FileOperation[],
-    };
-
-    // Call integrationReview directly (it's private, access via any)
-    const result = await (deepLoop as any).integrationReview(task);
-
-    expect(result).toHaveProperty('result');
-    expect(result).toHaveProperty('issues');
-    // Without toolkit, it returns approved
-    expect(result.result).toBe('approved');
-    expect(Array.isArray(result.issues)).toBe(true);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// selfReview integration pass logic
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('selfReview integration pass behavior', () => {
-  it('selfReview runs integration pass for multi-file tasks (workspaceManifest >= 2 files)', async () => {
-    const provider = makeMockProvider();
-    // Mock the provider to return valid JSON for the review pass
-    (provider.generateWithTools as any).mockResolvedValue(
-      JSON.stringify({ result: 'approved', notes: 'All good' }),
-    );
-
-    const taskBoard = makeMockTaskBoard();
-    const toolkit = makeMockToolkit();
-
-    const deepLoop = new DeepLoop(
-      provider,
-      makeMockConcurrentProvider(),
-      taskBoard,
-      makeMockEventBus(),
-      undefined,
-      toolkit,
-    );
-
-    const task: Task = {
-      id: 'multi-file-task',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      status: 'reviewing',
-      owner: 'deep',
-      origin: 'user',
-      priority: 0,
-      plan: 'Build a multi-file project',
-      artifacts: [],
-      workspaceManifest: [
-        { path: 'src/a.js', action: 'created' },
-        { path: 'src/b.js', action: 'created' },
-        { path: 'src/c.js', action: 'created' },
-      ] as FileOperation[],
-    };
-
-    (taskBoard.get as any).mockReturnValue(task);
-
-    // Spy on integrationReview
-    const integrationSpy = vi.spyOn(deepLoop as any, 'integrationReview');
-
-    // Call selfReview directly
-    await (deepLoop as any).selfReview(task);
-
-    // integrationReview should have been called (multi-file task with toolkit)
-    expect(integrationSpy).toHaveBeenCalled();
-
-    integrationSpy.mockRestore();
-  });
-
-  it('selfReview skips integration pass for single-file tasks', async () => {
-    const provider = makeMockProvider();
-    (provider.generateWithTools as any).mockResolvedValue(
-      JSON.stringify({ result: 'approved', notes: 'All good' }),
-    );
-
-    const taskBoard = makeMockTaskBoard();
-
-    const deepLoop = new DeepLoop(
-      provider,
-      makeMockConcurrentProvider(),
-      taskBoard,
-      makeMockEventBus(),
-      undefined,
-      makeMockToolkit(),
-    );
-
-    const task: Task = {
-      id: 'single-file-task',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      status: 'reviewing',
-      owner: 'deep',
-      origin: 'user',
-      priority: 0,
-      plan: 'Fix a single file',
-      artifacts: [],
-      workspaceManifest: [
-        { path: 'src/only.js', action: 'created' },
-      ] as FileOperation[],
-    };
-
-    (taskBoard.get as any).mockReturnValue(task);
-
-    // Spy on integrationReview
-    const integrationSpy = vi.spyOn(deepLoop as any, 'integrationReview');
-
-    await (deepLoop as any).selfReview(task);
-
-    // integrationReview should NOT have been called (single-file task)
-    expect(integrationSpy).not.toHaveBeenCalled();
-
-    integrationSpy.mockRestore();
+    // integrationReview should no longer exist as a method
+    expect(typeof (deepLoop as any)['integrationReview']).not.toBe('function');
   });
 });
 
@@ -251,19 +109,22 @@ describe('parseReviewResponse', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INTEGRATION_REVIEW_SYSTEM_PROMPT
+// INTENT_REVIEW_SYSTEM_PROMPT
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('INTEGRATION_REVIEW_SYSTEM_PROMPT', () => {
+describe('INTENT_REVIEW_SYSTEM_PROMPT', () => {
   it('is a non-empty string', () => {
-    expect(INTEGRATION_REVIEW_SYSTEM_PROMPT.length).toBeGreaterThan(100);
+    expect(INTENT_REVIEW_SYSTEM_PROMPT.length).toBeGreaterThan(100);
   });
 
-  it('mentions validate_project tool', () => {
-    expect(INTEGRATION_REVIEW_SYSTEM_PROMPT).toContain('validate_project');
+  it('mentions read-only tools (read_file, grep, glob)', () => {
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('read_file');
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('grep');
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('glob');
   });
 
-  it('mentions cross-module wiring', () => {
-    expect(INTEGRATION_REVIEW_SYSTEM_PROMPT).toContain('cross-module');
+  it('focuses on intent, not mechanical bugs', () => {
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('Intent Match');
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('DO NOT check');
   });
 });

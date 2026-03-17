@@ -12,7 +12,7 @@ import type { SensitiveCategory } from '../security/patterns.js';
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 export const INPUT_GUARD_CONFIG = {
-  MAX_MESSAGE_LENGTH: 10_000,
+  MAX_MESSAGE_LENGTH: 30_000,
   RATE_LIMIT_WINDOW_MS: 60_000,
   RATE_LIMIT_MAX_MESSAGES: 20,
 } as const;

@@ -1,22 +1,20 @@
 /**
- * Review Prompt — System prompts for code review.
+ * Review Prompt — System prompts and builders for the 3-phase verification pipeline.
  *
- * The DeepLoop self-reviews its own output before marking tasks as complete.
- * Reviews are single structured-output calls with real file contents injected
- * into the prompt (not iterative tool loops).
+ * Phase 1 (automated gates) and Phase 2 (smoke tests) are deterministic —
+ * no LLM involved, no prompts needed.
  *
- * Review pipeline:
- *   1. Integration review (multi-file only): cross-module wiring check
- *   2. Correctness review (all tasks): standard code review
- *   3. Security review (large projects only): second-pass cascade
+ * Phase 3 (intent review) uses the 27B reasoner with thinking ON and tools
+ * (read_file, grep, glob) to verify that the code matches the user's intent.
  *
  * Parse failures default to approved — phantom rejections from malformed JSON
  * were the primary cause of infinite revision loops.
  *
- * See docs/dual-loop-architecture.md Section 5.4 and Section 4 (Phase 4).
+ * See docs/dual-loop-architecture.md Section 5.4.
  */
 
 import type { TaskArtifact, ReviewResult, FileOperation } from './task-board-types.js';
+import { extractJsonFromResponse } from './deep-loop.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -56,31 +54,13 @@ export const REVIEW_FORMAT_SCHEMA: Record<string, unknown> = {
   required: ['result', 'notes'],
 };
 
-/**
- * JSON Schema for the integration review response.
- * Enforces structured JSON output matching the integration review's expected format.
- */
-export const INTEGRATION_REVIEW_FORMAT_SCHEMA: Record<string, unknown> = {
-  type: 'object',
-  properties: {
-    result: {
-      type: 'string',
-      enum: ['approved', 'changes_requested'],
-    },
-    issues: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-  },
-  required: ['result', 'issues'],
-};
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Prompts
+// FastLoop Review Prompt (single-shot, no tools)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * System prompt for the code review call.
+ * System prompt for FastLoop code review (single structured-output call).
+ * Used by the 35B fast model for lightweight review without tools.
  */
 export const REVIEW_SYSTEM_PROMPT = `You are a code reviewer. Review the provided diff(s) for:
 
@@ -106,55 +86,45 @@ Verification checklist:
 - Data flows are complete (return values captured, callbacks wired, events subscribed)
 - No standalone function calls that ignore return values needed by the system`;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3: Intent Review Prompt (DeepLoop 3-phase pipeline)
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Cascade review prompts — each pass focuses on a different concern.
- * Pass 0 is the standard review (REVIEW_SYSTEM_PROMPT above).
- * Additional passes use these specialized prompts.
+ * System prompt for the Phase 3 intent review.
  *
- * See docs/roadmap.md Tier 2, Item 7.
+ * The code has already passed automated gates (typecheck, lint, tests, static
+ * analysis) and runtime smoke tests. The reviewer focuses exclusively on
+ * intent matching and subtle logic errors that tools cannot catch.
+ *
+ * The reviewer has read-only tools (read_file, grep, glob) to inspect files
+ * on demand instead of relying on pre-injected content.
  */
-export const CASCADE_REVIEW_PROMPTS: string[] = [
-  // Pass 1: Security & robustness focus
-  `You are a security reviewer performing a second-pass review. The code has already passed a correctness review.
+export const INTENT_REVIEW_SYSTEM_PROMPT = `You are a code reviewer with access to tools. The code has already passed automated checks (typecheck, lint, tests, static analysis, and runtime smoke tests). It compiles and runs.
 
-Focus exclusively on:
-1. **Security** — Injection risks (SQL, command, path traversal), credential exposure, unsafe deserialization, missing input validation
-2. **Robustness** — Error handling gaps, uncaught exceptions, resource leaks (file handles, connections), race conditions
-3. **API surface** — Every cross-file method/property call must exist in the target module. Check imports against actual exports.
+Your job is ONLY to verify intent and catch subtle logic errors that tools cannot detect:
 
-Do NOT repeat correctness feedback — that was handled in the first pass.
-Only request changes for genuine security vulnerabilities or robustness gaps.
-When in doubt, request changes. API surface mismatches are security-relevant.
+1. **Intent Match** — Does the code do what the user originally asked for? Read the original request carefully and verify each requirement is met.
+2. **Architecture** — Is the approach appropriate for the problem? Are there simpler solutions the implementation missed?
+3. **Logic Errors** — Subtle bugs: wrong comparisons, off-by-one, missing edge cases, incorrect state transitions, race conditions.
+4. **Completeness** — Are all requested features implemented? Are important edge cases handled?
 
-Respond with a JSON object:
+You have tools: read_file, grep, glob. Use them to inspect specific files on demand instead of relying on the manifest alone.
+
+DO NOT check for:
+- Type errors (already caught by typecheck)
+- Import/export mismatches (already caught by validate_project)
+- Runtime crashes (already caught by smoke tests)
+- Lint violations (already caught by linter)
+
+After inspecting the relevant files, respond with a JSON object:
 {
-  "result": "approved" | "changes_requested" | "rejected",
-  "notes": "Security/robustness findings",
-  "feedback": "Specific fixes needed (only for changes_requested)"
-}`,
-];
+  "result": "approved" | "changes_requested",
+  "notes": "Summary of what you found",
+  "feedback": "Specific changes needed (only for changes_requested)"
+}
 
-/**
- * System prompt for the tool-calling integration review pass.
- * This pass uses tool calls (validate_project, read_file) to verify
- * cross-module wiring before final approval.
- *
- * See docs/roadmap.md Tier 2, Item 7 (cascade review).
- */
-export const INTEGRATION_REVIEW_SYSTEM_PROMPT = `You are a code integration reviewer. Your job is to verify that a multi-file project works correctly by checking cross-module wiring.
-
-PROCEDURE:
-1. First, run validate_project on the project directory to get a static analysis report
-2. For each issue found, read the relevant files to verify
-3. Trace critical data flows end-to-end:
-   - Are all imported functions/methods actually exported by their source module?
-   - Are return values from functions captured and used where needed?
-   - Are event handlers and callbacks properly wired?
-   - Do constructor calls match the class signatures?
-4. Check that the entry point (index.html, main.js, etc.) correctly imports and initializes all modules
-
-OUTPUT: Respond with JSON: { "result": "approved" | "changes_requested", "issues": string[] }
-If any cross-module wiring issue is found, result MUST be "changes_requested".`;
+When in doubt, approve. The automated gates caught the mechanical bugs — only reject for genuine intent mismatches or logic errors that would surprise the user.`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Prompt Builders
@@ -162,6 +132,7 @@ If any cross-module wiring issue is found, result MUST be "changes_requested".`;
 
 /**
  * Build the review prompt from a task's plan, artifacts, and optional context.
+ * Used by processRevision() and legacy callers.
  */
 export function buildReviewPrompt(params: {
   plan: string;
@@ -203,6 +174,47 @@ export function buildReviewPrompt(params: {
 }
 
 /**
+ * Build a lightweight prompt for Phase 3 intent review.
+ *
+ * Includes the original request, plan, and manifest listing but NO file contents.
+ * The reviewer reads files on demand via tools, eliminating truncation issues.
+ */
+export function buildIntentReviewPrompt(params: {
+  originalMessage?: string;
+  plan: string;
+  manifest: FileOperation[];
+  projectDir?: string;
+}): string {
+  const parts: string[] = [];
+
+  if (params.originalMessage) {
+    parts.push('## Original Request\n');
+    parts.push(params.originalMessage);
+  }
+
+  parts.push('\n## Plan\n');
+  parts.push(params.plan);
+
+  if (params.manifest.length > 0) {
+    parts.push('\n## Files Created/Modified\n');
+    for (const file of params.manifest) {
+      const lineInfo = file.lines !== undefined ? `, ${file.lines} lines` : '';
+      const exports = file.exports?.length ? `, exports: ${file.exports.join(', ')}` : '';
+      parts.push(`- \`${file.path}\` (${file.action}${lineInfo}${exports})`);
+    }
+  }
+
+  if (params.projectDir) {
+    parts.push(`\n## Project Directory: \`${params.projectDir}\``);
+  }
+
+  parts.push('\n## Instructions\n');
+  parts.push('Use read_file, grep, and glob to inspect the actual files. Verify the implementation matches the original request. Do NOT rely on the plan alone — read the code.');
+
+  return parts.join('\n');
+}
+
+/**
  * Count the total lines across all diff artifacts.
  * Used by FastLoop to select the review context tier.
  */
@@ -217,21 +229,22 @@ export function countDiffLines(artifacts: TaskArtifact[]): number {
 }
 
 /**
- * Parse the review response from the LLM. Falls back to 'changes_requested' on parse failure.
+ * Parse the review response from the LLM.
+ *
+ * Handles <think>...</think> tags from the reasoner (thinking ON) by using
+ * extractJsonFromResponse. Falls back to 'approved' on parse failure.
  */
 export function parseReviewResponse(text: string): ReviewOutcome {
   try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const { json: parsed } = extractJsonFromResponse(text);
     return {
       result: (parsed['result'] as ReviewResult) ?? 'changes_requested',
       notes: (parsed['notes'] as string) ?? '',
       feedback: parsed['feedback'] as string | undefined,
     };
   } catch {
-    // On parse failure, default to approved. The format schema should
-    // guarantee valid JSON; if parsing still fails, the model is confused —
-    // not the code. Phantom rejections from parse failures were the primary
-    // cause of infinite revision loops.
+    // On parse failure, default to approved. Phantom rejections from
+    // malformed JSON were the primary cause of infinite revision loops.
     return {
       result: 'approved',
       notes: 'Review parse failure — defaulting to approved (model output was not valid JSON)',

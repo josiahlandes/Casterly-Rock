@@ -1,216 +1,129 @@
 import { describe, expect, it } from 'vitest';
 import {
   REVIEW_SYSTEM_PROMPT,
-  CASCADE_REVIEW_PROMPTS,
+  INTENT_REVIEW_SYSTEM_PROMPT,
   REVIEW_FORMAT_SCHEMA,
   buildReviewPrompt,
+  buildIntentReviewPrompt,
   parseReviewResponse,
 } from '../src/dual-loop/review-prompt.js';
-import type { Task } from '../src/dual-loop/task-board-types.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// REVIEW_SYSTEM_PROMPT (FastLoop)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function makeTask(overrides?: Partial<Task>): Task {
-  return {
-    id: 'task-cascade-test',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    status: 'reviewing',
-    owner: null,
-    origin: 'user',
-    priority: 0,
-    ...overrides,
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CASCADE_REVIEW_PROMPTS
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('CASCADE_REVIEW_PROMPTS', () => {
-  it('has at least one cascade prompt', () => {
-    expect(CASCADE_REVIEW_PROMPTS.length).toBeGreaterThanOrEqual(1);
+describe('REVIEW_SYSTEM_PROMPT (FastLoop)', () => {
+  it('is a non-empty string', () => {
+    expect(REVIEW_SYSTEM_PROMPT.length).toBeGreaterThan(100);
   });
 
-  it('cascade pass 1 is security-focused', () => {
-    const pass1 = CASCADE_REVIEW_PROMPTS[0]!;
-    expect(pass1).toContain('security');
-    expect(pass1).toContain('second-pass');
+  it('mentions correctness and security', () => {
+    expect(REVIEW_SYSTEM_PROMPT).toContain('Correctness');
+    expect(REVIEW_SYSTEM_PROMPT).toContain('Security');
   });
 
-  it('cascade prompts include JSON output format instructions', () => {
-    for (const prompt of CASCADE_REVIEW_PROMPTS) {
-      expect(prompt).toContain('approved');
-      expect(prompt).toContain('changes_requested');
-    }
-  });
-
-  it('cascade prompts are distinct from the standard review prompt', () => {
-    for (const prompt of CASCADE_REVIEW_PROMPTS) {
-      expect(prompt).not.toBe(REVIEW_SYSTEM_PROMPT);
-    }
+  it('includes JSON output format instructions', () => {
+    expect(REVIEW_SYSTEM_PROMPT).toContain('approved');
+    expect(REVIEW_SYSTEM_PROMPT).toContain('changes_requested');
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Verification Cascade Task Fields
+// INTENT_REVIEW_SYSTEM_PROMPT (Phase 3)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Verification Cascade Task Fields', () => {
-  it('task defaults to no cascade (undefined)', () => {
-    const task = makeTask();
-    expect(task.verificationPasses).toBeUndefined();
-    expect(task.currentVerificationPass).toBeUndefined();
+describe('INTENT_REVIEW_SYSTEM_PROMPT (Phase 3)', () => {
+  it('is a non-empty string', () => {
+    expect(INTENT_REVIEW_SYSTEM_PROMPT.length).toBeGreaterThan(100);
   });
 
-  it('task can be configured for multi-pass verification', () => {
-    const task = makeTask({
-      verificationPasses: 2,
-      currentVerificationPass: 0,
-    });
-    expect(task.verificationPasses).toBe(2);
-    expect(task.currentVerificationPass).toBe(0);
+  it('mentions tools (read_file, grep, glob)', () => {
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('read_file');
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('grep');
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('glob');
   });
 
-  it('single-pass tasks use default behavior', () => {
-    const task = makeTask();
-    const totalPasses = task.verificationPasses ?? 1;
-    const currentPass = task.currentVerificationPass ?? 0;
-
-    // currentPass + 1 < totalPasses → 1 < 1 → false → no cascade
-    expect(currentPass + 1 < totalPasses).toBe(false);
+  it('mentions that automated checks already passed', () => {
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('typecheck');
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('lint');
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('smoke tests');
   });
 
-  it('multi-pass tasks advance through cascade', () => {
-    const task = makeTask({
-      verificationPasses: 2,
-      currentVerificationPass: 0,
-    });
-    const totalPasses = task.verificationPasses ?? 1;
-    const currentPass = task.currentVerificationPass ?? 0;
-
-    // currentPass + 1 < totalPasses → 1 < 2 → true → advance cascade
-    expect(currentPass + 1 < totalPasses).toBe(true);
+  it('focuses on intent matching', () => {
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('Intent Match');
   });
 
-  it('cascade completes on final pass', () => {
-    const task = makeTask({
-      verificationPasses: 2,
-      currentVerificationPass: 1,
-    });
-    const totalPasses = task.verificationPasses ?? 1;
-    const currentPass = task.currentVerificationPass ?? 0;
+  it('tells reviewer NOT to check for type errors', () => {
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('DO NOT check');
+  });
 
-    // currentPass + 1 < totalPasses → 2 < 2 → false → cascade complete
-    expect(currentPass + 1 < totalPasses).toBe(false);
+  it('defaults to approve when in doubt', () => {
+    expect(INTENT_REVIEW_SYSTEM_PROMPT).toContain('When in doubt, approve');
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cascade Prompt Selection Logic
+// REVIEW_FORMAT_SCHEMA
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Cascade Prompt Selection', () => {
-  it('pass 0 uses standard review prompt', () => {
-    const currentPass = 0;
-    const systemPrompt = currentPass === 0
-      ? REVIEW_SYSTEM_PROMPT
-      : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
-
-    expect(systemPrompt).toBe(REVIEW_SYSTEM_PROMPT);
+describe('REVIEW_FORMAT_SCHEMA', () => {
+  it('is a valid JSON schema object', () => {
+    expect(REVIEW_FORMAT_SCHEMA).toHaveProperty('type', 'object');
+    expect(REVIEW_FORMAT_SCHEMA).toHaveProperty('properties');
+    expect(REVIEW_FORMAT_SCHEMA).toHaveProperty('required');
   });
 
-  it('pass 1 uses first cascade prompt (security)', () => {
-    const currentPass: number = 1;
-    const systemPrompt = currentPass === 0
-      ? REVIEW_SYSTEM_PROMPT
-      : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
-
-    expect(systemPrompt).toBe(CASCADE_REVIEW_PROMPTS[0]);
-    expect(systemPrompt).toContain('security');
-  });
-
-  it('out-of-bounds pass falls back to standard review prompt', () => {
-    const currentPass: number = 10; // Way beyond available prompts
-    const systemPrompt = currentPass === 0
-      ? REVIEW_SYSTEM_PROMPT
-      : CASCADE_REVIEW_PROMPTS[currentPass - 1] ?? REVIEW_SYSTEM_PROMPT;
-
-    expect(systemPrompt).toBe(REVIEW_SYSTEM_PROMPT);
+  it('includes result, notes, and feedback properties', () => {
+    const props = REVIEW_FORMAT_SCHEMA['properties'] as Record<string, unknown>;
+    expect(props).toHaveProperty('result');
+    expect(props).toHaveProperty('notes');
+    expect(props).toHaveProperty('feedback');
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cascade Pass Reset on Revision
+// buildIntentReviewPrompt
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Cascade Pass Reset', () => {
-  it('revision resets cascade pass to 0', () => {
-    const task = makeTask({
-      verificationPasses: 2,
-      currentVerificationPass: 1,
-      reviewResult: 'changes_requested',
+describe('buildIntentReviewPrompt', () => {
+  it('includes instructions to use tools', () => {
+    const result = buildIntentReviewPrompt({
+      plan: 'Build something',
+      manifest: [],
     });
-
-    // Simulate reset (as done in deep-loop selfReview)
-    const resetPass = 0;
-    expect(resetPass).toBe(0);
-    expect(task.currentVerificationPass).toBe(1); // Before reset
-  });
-
-  it('approved on non-final pass advances without resetting', () => {
-    const task = makeTask({
-      verificationPasses: 2,
-      currentVerificationPass: 0,
-    });
-    const totalPasses = task.verificationPasses ?? 1;
-    const currentPass = task.currentVerificationPass ?? 0;
-
-    const shouldAdvance = currentPass + 1 < totalPasses;
-    expect(shouldAdvance).toBe(true);
-
-    const nextPass = currentPass + 1;
-    expect(nextPass).toBe(1);
+    expect(result).toContain('read_file');
+    expect(result).toContain('grep');
+    expect(result).toContain('glob');
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// High-Stakes Task Detection
+// parseReviewResponse
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('High-Stakes Task Detection', () => {
-  it('tasks with 3+ files are high-stakes', () => {
-    const fileCount = 3;
-    const stepCount = 1;
-    const isHighStakes = fileCount >= 3 || stepCount >= 3;
-    expect(isHighStakes).toBe(true);
+describe('parseReviewResponse', () => {
+  it('fallback is approved on invalid JSON (prevents phantom rejection loops)', () => {
+    const result = parseReviewResponse('not valid json at all');
+    expect(result.result).toBe('approved');
+    expect(result.notes).toContain('parse failure');
   });
 
-  it('tasks with 3+ plan steps are high-stakes', () => {
-    const fileCount = 1;
-    const stepCount = 3;
-    const isHighStakes = fileCount >= 3 || stepCount >= 3;
-    expect(isHighStakes).toBe(true);
+  it('parses valid approved response', () => {
+    const result = parseReviewResponse(JSON.stringify({
+      result: 'approved',
+      notes: 'Ship it',
+    }));
+    expect(result.result).toBe('approved');
+    expect(result.notes).toBe('Ship it');
   });
 
-  it('tasks with fewer than 3 files and steps are not high-stakes', () => {
-    const fileCount = 2;
-    const stepCount = 2;
-    const isHighStakes = fileCount >= 3 || stepCount >= 3;
-    expect(isHighStakes).toBe(false);
-  });
-
-  it('high-stakes tasks get 2 verification passes', () => {
-    const isHighStakes = true;
-    const verificationPasses = isHighStakes ? 2 : 1;
-    expect(verificationPasses).toBe(2);
-  });
-
-  it('regular tasks get 1 verification pass', () => {
-    const isHighStakes = false;
-    const verificationPasses = isHighStakes ? 2 : 1;
-    expect(verificationPasses).toBe(1);
+  it('handles <think> tags from reasoner with thinking ON', () => {
+    const response = `<think>
+Analyzing the code carefully...
+</think>
+{"result": "changes_requested", "notes": "Missing edge case", "feedback": "Handle empty array"}`;
+    const result = parseReviewResponse(response);
+    expect(result.result).toBe('changes_requested');
+    expect(result.feedback).toBe('Handle empty array');
   });
 });
